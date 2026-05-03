@@ -2,6 +2,8 @@
 
 Use Claude Code's autonomous agent loop with **DeepSeek V4 Pro**, **OpenRouter**, or any Anthropic-compatible backend. Same UX, 17x cheaper.
 
+![Remote control running DeepSeek V4 Pro in the browser](screenshots/remote-control-deepseek.png)
+
 ## What this does
 
 Claude Code is the best autonomous coding agent — but it costs $200/month with usage caps. DeepSeek V4 Pro scores 96.4% on LiveCodeBench and costs $0.87/M output tokens.
