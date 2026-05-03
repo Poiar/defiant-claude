@@ -1,4 +1,4 @@
-# cheapclaude
+# deepclaude
 
 Use Claude Code's autonomous agent loop with **DeepSeek V4 Pro**, **OpenRouter**, or any Anthropic-compatible backend. Same UX, 17x cheaper.
 
@@ -8,7 +8,7 @@ Use Claude Code's autonomous agent loop with **DeepSeek V4 Pro**, **OpenRouter**
 
 Claude Code is the best autonomous coding agent — but it costs $200/month with usage caps. DeepSeek V4 Pro scores 96.4% on LiveCodeBench and costs $0.87/M output tokens.
 
-**cheapclaude** swaps the brain while keeping the body:
+**deepclaude** swaps the brain while keeping the body:
 
 ```
 Your terminal
@@ -42,28 +42,28 @@ source ~/.bashrc
 **Windows:**
 ```powershell
 # Copy the script to a directory in your PATH
-Copy-Item cheapclaude.ps1 "$env:USERPROFILE\.local\bin\cheapclaude.ps1"
+Copy-Item deepclaude.ps1 "$env:USERPROFILE\.local\bin\deepclaude.ps1"
 
 # Or add the repo directory to PATH
-setx PATH "$env:PATH;C:\path\to\cheapclaude"
+setx PATH "$env:PATH;C:\path\to\deepclaude"
 ```
 
 **macOS/Linux:**
 ```bash
-chmod +x cheapclaude.sh
-sudo ln -s "$(pwd)/cheapclaude.sh" /usr/local/bin/cheapclaude
+chmod +x deepclaude.sh
+sudo ln -s "$(pwd)/deepclaude.sh" /usr/local/bin/deepclaude
 ```
 
 ### 4. Use it
 
 ```bash
-cheapclaude                  # Launch Claude Code with DeepSeek V4 Pro
-cheapclaude --status         # Show available backends and keys
-cheapclaude --backend or     # Use OpenRouter (cheapest, $0.44/M input)
-cheapclaude --backend fw     # Use Fireworks AI (fastest, US servers)
-cheapclaude --backend anthropic  # Normal Claude Code (when you need Opus)
-cheapclaude --cost           # Show pricing comparison
-cheapclaude --benchmark      # Latency test across all providers
+deepclaude                  # Launch Claude Code with DeepSeek V4 Pro
+deepclaude --status         # Show available backends and keys
+deepclaude --backend or     # Use OpenRouter (cheapest, $0.44/M input)
+deepclaude --backend fw     # Use Fireworks AI (fastest, US servers)
+deepclaude --backend anthropic  # Normal Claude Code (when you need Opus)
+deepclaude --cost           # Show pricing comparison
+deepclaude --benchmark      # Latency test across all providers
 ```
 
 ## How it works
@@ -79,7 +79,7 @@ Claude Code reads these environment variables to determine where to send API cal
 | `ANTHROPIC_DEFAULT_HAIKU_MODEL` | Model name for Haiku-tier (subagents) |
 | `CLAUDE_CODE_SUBAGENT_MODEL` | Model for spawned subagents |
 
-**cheapclaude** sets these per-session (not permanently), launches Claude Code, then restores your original settings on exit.
+**deepclaude** sets these per-session (not permanently), launches Claude Code, then restores your original settings on exit.
 
 ## Supported backends
 
@@ -112,7 +112,7 @@ export FIREWORKS_API_KEY="fw_..."        # macOS/Linux
 
 ## Cost comparison
 
-| Usage level | Anthropic Max | cheapclaude (DeepSeek) | Savings |
+| Usage level | Anthropic Max | deepclaude (DeepSeek) | Savings |
 |---|---|---|---|
 | Light (10 days/mo) | $200/mo (capped) | ~$20/mo | 90% |
 | Heavy (25 days/mo) | $200/mo (capped) | ~$50/mo | 75% |
@@ -146,7 +146,7 @@ DeepSeek's automatic context caching makes agent loops extremely cheap — after
 
 ## VS Code / Cursor integration
 
-Add terminal profiles so you can launch cheapclaude from the IDE:
+Add terminal profiles so you can launch deepclaude from the IDE:
 
 **Settings > JSON:**
 ```json
@@ -154,7 +154,7 @@ Add terminal profiles so you can launch cheapclaude from the IDE:
   "terminal.integrated.profiles.windows": {
     "DeepSeek Agent": {
       "path": "powershell.exe",
-      "args": ["-ExecutionPolicy", "Bypass", "-NoExit", "-File", "C:\\path\\to\\cheapclaude.ps1"]
+      "args": ["-ExecutionPolicy", "Bypass", "-NoExit", "-File", "C:\\path\\to\\deepclaude.ps1"]
     }
   }
 }
@@ -165,7 +165,7 @@ Or on macOS/Linux:
 {
   "terminal.integrated.profiles.linux": {
     "DeepSeek Agent": {
-      "path": "/usr/local/bin/cheapclaude"
+      "path": "/usr/local/bin/deepclaude"
     }
   }
 }
@@ -176,16 +176,16 @@ Or on macOS/Linux:
 Open a Claude Code session in any browser — with DeepSeek as the brain:
 
 ```bash
-cheapclaude --remote                # Remote control + DeepSeek
-cheapclaude --remote -b or          # Remote control + OpenRouter
-cheapclaude --remote -b anthropic   # Remote control + Anthropic (normal)
+deepclaude --remote                # Remote control + DeepSeek
+deepclaude --remote -b or          # Remote control + OpenRouter
+deepclaude --remote -b anthropic   # Remote control + Anthropic (normal)
 ```
 
 This prints a `https://claude.ai/code/session_...` URL you can open on your phone, tablet, or any browser.
 
 ### How it works
 
-Remote control needs Anthropic's bridge for the WebSocket connection, but model calls can go elsewhere. cheapclaude starts a local proxy that splits the traffic:
+Remote control needs Anthropic's bridge for the WebSocket connection, but model calls can go elsewhere. deepclaude starts a local proxy that splits the traffic:
 
 ```
 claude remote-control

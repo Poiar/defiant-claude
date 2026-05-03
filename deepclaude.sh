@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# cheapclaude — Use Claude Code with DeepSeek V4 Pro or other cheap backends
-# Usage: cheapclaude [--backend ds|or|fw|anthropic] [--remote] [--status] [--cost] [--benchmark]
+# deepclaude — Use Claude Code with DeepSeek V4 Pro or other cheap backends
+# Usage: deepclaude [--backend ds|or|fw|anthropic] [--remote] [--status] [--cost] [--benchmark]
 
 set -euo pipefail
 
@@ -85,7 +85,7 @@ set_model_env() {
 
 show_status() {
     echo ""
-    echo "  cheapclaude — Backend Status"
+    echo "  deepclaude — Backend Status"
     echo "  ============================"
     echo ""
     echo "  Keys:"
@@ -94,12 +94,12 @@ show_status() {
     echo "    FIREWORKS_API_KEY:   $(mask_key "${FIREWORKS_API_KEY:-}")"
     echo ""
     echo "  Backends:"
-    echo "    cheapclaude                  # DeepSeek V4 Pro (default)"
-    echo "    cheapclaude -b or            # OpenRouter (cheapest)"
-    echo "    cheapclaude -b fw            # Fireworks AI (fastest)"
-    echo "    cheapclaude -b anthropic     # Normal Claude Code"
-    echo "    cheapclaude --remote         # Remote control + DeepSeek"
-    echo "    cheapclaude --remote -b or   # Remote control + OpenRouter"
+    echo "    deepclaude                  # DeepSeek V4 Pro (default)"
+    echo "    deepclaude -b or            # OpenRouter (cheapest)"
+    echo "    deepclaude -b fw            # Fireworks AI (fastest)"
+    echo "    deepclaude -b anthropic     # Normal Claude Code"
+    echo "    deepclaude --remote         # Remote control + DeepSeek"
+    echo "    deepclaude --remote -b or   # Remote control + OpenRouter"
     echo ""
 }
 
@@ -120,9 +120,9 @@ show_cost() {
 }
 
 show_help() {
-    echo "cheapclaude — Claude Code with cheap backends"
+    echo "deepclaude — Claude Code with cheap backends"
     echo ""
-    echo "Usage: cheapclaude [options] [-- claude-args...]"
+    echo "Usage: deepclaude [options] [-- claude-args...]"
     echo ""
     echo "Options:"
     echo "  -b, --backend <ds|or|fw|anthropic>  Backend (default: ds)"

@@ -1,17 +1,17 @@
 <#
 .SYNOPSIS
-    cheapclaude — Use Claude Code with DeepSeek V4 Pro or other cheap backends.
+    deepclaude — Use Claude Code with DeepSeek V4 Pro or other cheap backends.
 
 .USAGE
-    cheapclaude                      # DeepSeek V4 Pro (default)
-    cheapclaude --backend or         # OpenRouter (cheapest)
-    cheapclaude --backend fw         # Fireworks AI (fastest)
-    cheapclaude --backend anthropic  # Normal Claude Code
-    cheapclaude --remote             # Remote control + DeepSeek (browser URL)
-    cheapclaude --remote -b or       # Remote control + OpenRouter
-    cheapclaude --status             # Show keys and backends
-    cheapclaude --cost               # Pricing comparison
-    cheapclaude --benchmark          # Latency test
+    deepclaude                      # DeepSeek V4 Pro (default)
+    deepclaude --backend or         # OpenRouter (cheapest)
+    deepclaude --backend fw         # Fireworks AI (fastest)
+    deepclaude --backend anthropic  # Normal Claude Code
+    deepclaude --remote             # Remote control + DeepSeek (browser URL)
+    deepclaude --remote -b or       # Remote control + OpenRouter
+    deepclaude --status             # Show keys and backends
+    deepclaude --cost               # Pricing comparison
+    deepclaude --benchmark          # Latency test
 #>
 
 param(
@@ -75,17 +75,17 @@ function Get-KeyDisplay($k) {
 
 # --- Status ---
 if ($Status) {
-    Write-Host "`n  cheapclaude - Backend Status" -ForegroundColor Cyan
+    Write-Host "`n  deepclaude - Backend Status" -ForegroundColor Cyan
     Write-Host "  ============================" -ForegroundColor DarkGray
     Write-Host "`n  Keys:" -ForegroundColor Yellow
     Write-Host "    DEEPSEEK_API_KEY:    $(Get-KeyDisplay $DeepSeekKey)"
     Write-Host "    OPENROUTER_API_KEY:  $(Get-KeyDisplay $OpenRouterKey)"
     Write-Host "    FIREWORKS_API_KEY:   $(Get-KeyDisplay $FireworksKey)"
     Write-Host "`n  Backends:" -ForegroundColor Yellow
-    Write-Host "    cheapclaude              # DeepSeek V4 Pro (default)"
-    Write-Host "    cheapclaude -b or        # OpenRouter (cheapest)"
-    Write-Host "    cheapclaude -b fw        # Fireworks AI (fastest)"
-    Write-Host "    cheapclaude -b anthropic # Normal Claude Code"
+    Write-Host "    deepclaude              # DeepSeek V4 Pro (default)"
+    Write-Host "    deepclaude -b or        # OpenRouter (cheapest)"
+    Write-Host "    deepclaude -b fw        # Fireworks AI (fastest)"
+    Write-Host "    deepclaude -b anthropic # Normal Claude Code"
     Write-Host ""
     exit 0
 }
@@ -109,9 +109,9 @@ if ($Cost) {
 
 # --- Help ---
 if ($Help) {
-    Write-Host "cheapclaude - Claude Code with cheap backends"
+    Write-Host "deepclaude - Claude Code with cheap backends"
     Write-Host ""
-    Write-Host "Usage: cheapclaude [-b backend] [--status] [--cost] [--benchmark]"
+    Write-Host "Usage: deepclaude [-b backend] [--status] [--cost] [--benchmark]"
     Write-Host ""
     Write-Host "  -b, --backend   ds (default), or, fw, anthropic"
     Write-Host "  --status        Show keys and backends"
@@ -172,20 +172,20 @@ if ($Remote) {
     Write-Host "`n  Starting model proxy for $($p.name)..." -ForegroundColor Cyan
 
     $proxyScript = Join-Path $ScriptDir "proxy\start-proxy.js"
-    $proxyProc = Start-Process -FilePath "node" -ArgumentList $proxyScript,$p.url,$p.key -PassThru -WindowStyle Hidden -RedirectStandardOutput "$env:TEMP\cheapclaude-proxy-port.txt"
+    $proxyProc = Start-Process -FilePath "node" -ArgumentList $proxyScript,$p.url,$p.key -PassThru -WindowStyle Hidden -RedirectStandardOutput "$env:TEMP\deepclaude-proxy-port.txt"
 
     $tries = 0
     while ($tries -lt 30) {
         Start-Sleep -Milliseconds 200
         $tries++
-        if (Test-Path "$env:TEMP\cheapclaude-proxy-port.txt") {
-            $content = Get-Content "$env:TEMP\cheapclaude-proxy-port.txt" -ErrorAction SilentlyContinue
+        if (Test-Path "$env:TEMP\deepclaude-proxy-port.txt") {
+            $content = Get-Content "$env:TEMP\deepclaude-proxy-port.txt" -ErrorAction SilentlyContinue
             if ($content) { break }
         }
     }
 
-    $proxyPort = (Get-Content "$env:TEMP\cheapclaude-proxy-port.txt" -ErrorAction SilentlyContinue | Select-Object -First 1)
-    Remove-Item "$env:TEMP\cheapclaude-proxy-port.txt" -ErrorAction SilentlyContinue
+    $proxyPort = (Get-Content "$env:TEMP\deepclaude-proxy-port.txt" -ErrorAction SilentlyContinue | Select-Object -First 1)
+    Remove-Item "$env:TEMP\deepclaude-proxy-port.txt" -ErrorAction SilentlyContinue
 
     if (-not $proxyPort) {
         Write-Host "ERROR: Proxy failed to start" -ForegroundColor Red
