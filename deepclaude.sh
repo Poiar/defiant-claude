@@ -13,12 +13,14 @@ FIREWORKS_URL="https://api.fireworks.ai/inference"
 
 BACKEND="${CHEAPCLAUDE_DEFAULT_BACKEND:-ds}"
 ACTION="launch"
+SWITCH_BACKEND=""
 PROXY_PID=""
 
 # --- Parse args ---
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --backend|-b) BACKEND="$2"; shift 2 ;;
+        --switch|-s)  ACTION="switch"; SWITCH_BACKEND="$2"; shift 2 ;;
         --remote|-r)  ACTION="remote"; shift ;;
         --status)     ACTION="status"; shift ;;
         --cost)       ACTION="cost"; shift ;;
@@ -101,6 +103,15 @@ show_status() {
     echo "    deepclaude --remote         # Remote control + DeepSeek"
     echo "    deepclaude --remote -b or   # Remote control + OpenRouter"
     echo ""
+    local proxy_status
+    proxy_status=$(curl -s http://127.0.0.1:3200/_proxy/status 2>/dev/null) || proxy_status=""
+    if [[ -n "$proxy_status" ]]; then
+        echo "  Proxy: running"
+        echo "    $proxy_status"
+    else
+        echo "  Proxy: not running"
+    fi
+    echo ""
 }
 
 show_cost() {
@@ -130,6 +141,7 @@ show_help() {
     echo "  --status                             Show keys and backends"
     echo "  --cost                               Pricing comparison"
     echo "  --benchmark                          Latency test"
+    echo "  -s, --switch <backend>               Switch proxy mid-session"
     echo "  -h, --help                           This help"
     echo ""
     echo "Environment variables:"
@@ -137,6 +149,22 @@ show_help() {
     echo "  OPENROUTER_API_KEY    OpenRouter API key (required for or)"
     echo "  FIREWORKS_API_KEY     Fireworks API key (required for fw)"
     echo "  CHEAPCLAUDE_DEFAULT_BACKEND  Default backend (default: ds)"
+}
+
+do_switch() {
+    local backend="$SWITCH_BACKEND"
+    case "$backend" in
+        ds|deepseek)   backend="deepseek" ;;
+        or|openrouter) backend="openrouter" ;;
+        fw|fireworks)  backend="fireworks" ;;
+        anthropic)     backend="anthropic" ;;
+        *) echo "ERROR: Unknown backend '$backend'. Use: ds, or, fw, anthropic" >&2; exit 1 ;;
+    esac
+    local resp
+    resp=$(curl -sX POST http://127.0.0.1:3200/_proxy/mode -d "backend=$backend" 2>/dev/null) || {
+        echo "  Proxy not running. Start with: deepclaude" >&2; exit 1
+    }
+    echo "  $resp"
 }
 
 run_benchmark() {
@@ -244,6 +272,7 @@ case "$ACTION" in
     cost)      show_cost ;;
     benchmark) run_benchmark ;;
     help)      show_help ;;
+    switch)    do_switch ;;
     remote)    launch_remote "$@" ;;
     launch)    launch_claude "$@" ;;
 esac

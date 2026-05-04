@@ -7,15 +7,26 @@ const ANTHROPIC_FALLBACK = 'https://api.anthropic.com';
 const MODEL_PATHS = ['/v1/messages'];
 const REQUEST_TIMEOUT_MS = 5 * 60 * 1000; // 5 min per request
 
+const PRICING_PER_M = {
+    deepseek:   { input: 0.44,  output: 0.87 },
+    openrouter: { input: 0.44,  output: 0.87 },
+    fireworks:  { input: 1.74,  output: 3.48 },
+    anthropic:  { input: 3.00,  output: 15.00 },
+    _single:    { input: 0.44,  output: 0.87 },
+};
+
 /**
  * Transform stream that intercepts SSE events and injects missing `usage`
  * fields. DeepSeek/OpenRouter may omit `usage` in message_start or
  * message_delta, which crashes Claude Code ("$.input_tokens" is undefined).
  */
 class UsageNormalizer extends Transform {
-    constructor() {
+    constructor(onUsage) {
         super();
         this._buf = '';
+        this._onUsage = onUsage;
+        this._inputTokens = 0;
+        this._outputTokens = 0;
     }
 
     _transform(chunk, _enc, cb) {
@@ -28,28 +39,37 @@ class UsageNormalizer extends Transform {
         cb();
     }
 
-    _flush(cb) {
-        if (this._buf.trim()) this.push(this._fix(this._buf) + '\n\n');
-        cb();
-    }
-
     _fix(event) {
         const m = event.match(/^data: (.+)$/m);
         if (!m) return event;
         try {
             const d = JSON.parse(m[1]);
             let changed = false;
-            if (d.type === 'message_start' && d.message && !d.message.usage) {
-                d.message.usage = { input_tokens: 0, output_tokens: 0 };
-                changed = true;
+            if (d.type === 'message_start' && d.message) {
+                if (d.message.usage) {
+                    this._inputTokens = d.message.usage.input_tokens || 0;
+                } else {
+                    d.message.usage = { input_tokens: 0, output_tokens: 0 };
+                    changed = true;
+                }
             }
-            if (d.type === 'message_delta' && !d.usage) {
-                d.usage = { output_tokens: 0 };
-                changed = true;
+            if (d.type === 'message_delta') {
+                if (d.usage) {
+                    this._outputTokens = d.usage.output_tokens || 0;
+                } else {
+                    d.usage = { output_tokens: 0 };
+                    changed = true;
+                }
             }
-            if (changed) return event.replace(m[1], JSON.stringify(d));
+            if (changed) return event.replace(m[1], () => JSON.stringify(d));
         } catch { /* not JSON, pass through */ }
         return event;
+    }
+
+    _flush(cb) {
+        if (this._buf.trim()) this.push(this._fix(this._buf) + '\n\n');
+        if (this._onUsage) this._onUsage(this._inputTokens, this._outputTokens);
+        cb();
     }
 }
 
@@ -94,6 +114,41 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
 
         let reqCount = 0;
         const t0Global = Date.now();
+        const costs = {};
+
+        function recordUsage(backend, inputTokens, outputTokens) {
+            if (!costs[backend]) costs[backend] = { input: 0, output: 0, requests: 0 };
+            costs[backend].input += inputTokens || 0;
+            costs[backend].output += outputTokens || 0;
+            costs[backend].requests++;
+        }
+
+        function getCostSummary() {
+            const summary = {};
+            let totalActual = 0;
+            let totalAnthropic = 0;
+            for (const [backend, tokens] of Object.entries(costs)) {
+                const p = PRICING_PER_M[backend] || PRICING_PER_M._single;
+                const ap = PRICING_PER_M.anthropic;
+                const actual = (tokens.input * p.input + tokens.output * p.output) / 1_000_000;
+                const anthropicEq = (tokens.input * ap.input + tokens.output * ap.output) / 1_000_000;
+                totalActual += actual;
+                totalAnthropic += anthropicEq;
+                summary[backend] = {
+                    input_tokens: tokens.input,
+                    output_tokens: tokens.output,
+                    requests: tokens.requests,
+                    cost: +actual.toFixed(4),
+                    anthropic_equivalent: +anthropicEq.toFixed(4),
+                };
+            }
+            return {
+                backends: summary,
+                total_cost: +totalActual.toFixed(4),
+                anthropic_equivalent: +totalAnthropic.toFixed(4),
+                savings: +((totalAnthropic - totalActual).toFixed(4)),
+            };
+        }
 
         function switchMode(name) {
             if (name === 'anthropic') {
@@ -129,9 +184,25 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                     }));
                     return;
                 }
+                if (urlPath === '/_proxy/cost') {
+                    clientRes.writeHead(200, { 'content-type': 'application/json' });
+                    clientRes.end(JSON.stringify(getCostSummary()));
+                    return;
+                }
                 if (urlPath === '/_proxy/mode' && clientReq.method === 'POST') {
+                    const origin = clientReq.headers['origin'] || '';
+                    if (origin && !origin.startsWith('http://127.0.0.1') && !origin.startsWith('http://localhost')) {
+                        clientRes.writeHead(403, { 'content-type': 'application/json' });
+                        clientRes.end(JSON.stringify({ error: 'Forbidden' }));
+                        return;
+                    }
                     const chunks = [];
-                    clientReq.on('data', c => chunks.push(c));
+                    let bodySize = 0;
+                    clientReq.on('data', c => {
+                        bodySize += c.length;
+                        if (bodySize > 1024) { clientReq.destroy(); return; }
+                        chunks.push(c);
+                    });
                     clientReq.on('end', () => {
                         const body = Buffer.concat(chunks).toString();
                         const m = body.match(/backend=([a-z]+)/);
@@ -173,14 +244,11 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
             let fullPath;
             if (isModelCall) {
                 const base = state.target.pathname.replace(/\/$/, '');
-                const req = clientReq.url;
-                // If base ends with the start of req (e.g. /api/v1 and /v1/…),
-                // find the overlap and merge.
                 let overlap = '';
-                for (let i = 1; i <= Math.min(base.length, req.length); i++) {
-                    if (base.endsWith(req.substring(0, i))) overlap = req.substring(0, i);
+                for (let i = 1; i <= Math.min(base.length, urlPath.length); i++) {
+                    if (base.endsWith(urlPath.substring(0, i))) overlap = urlPath.substring(0, i);
                 }
-                fullPath = overlap ? base + req.substring(overlap.length) : base + req;
+                fullPath = overlap ? base + urlPath.substring(overlap.length) : base + urlPath;
             } else {
                 fullPath = clientReq.url;
             }
@@ -228,19 +296,22 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                     const isSSE = ct.includes('text/event-stream');
 
                     if (isModelCall && isSSE) {
-                        // Streaming: pipe through usage normalizer
                         clientRes.writeHead(proxyRes.statusCode, proxyRes.headers);
-                        proxyRes.pipe(new UsageNormalizer()).pipe(clientRes);
+                        const norm = new UsageNormalizer((inp, out) => recordUsage(state.mode, inp, out));
+                        proxyRes.pipe(norm).pipe(clientRes);
                         proxyRes.on('end', () => {
-                            console.log(`[MODEL-PROXY] #${reqId} done in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+                            console.log(`[MODEL-PROXY] #${reqId} done in ${((Date.now() - t0) / 1000).toFixed(1)}s (${norm._inputTokens}in/${norm._outputTokens}out)`);
                         });
                     } else if (isModelCall && ct.includes('application/json')) {
-                        // Non-streaming JSON: buffer, fix usage, forward
                         const respChunks = [];
                         proxyRes.on('data', c => respChunks.push(c));
                         proxyRes.on('end', () => {
                             const raw = Buffer.concat(respChunks);
                             const fixed = normalizeJsonBody(raw);
+                            try {
+                                const j = JSON.parse(fixed);
+                                if (j.usage) recordUsage(state.mode, j.usage.input_tokens, j.usage.output_tokens);
+                            } catch {}
                             const outHeaders = { ...proxyRes.headers, 'content-length': fixed.length };
                             clientRes.writeHead(proxyRes.statusCode, outHeaders);
                             clientRes.end(fixed);
@@ -269,7 +340,7 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                     if (!clientRes.headersSent) {
                         clientRes.writeHead(502, { 'content-type': 'application/json' });
                     }
-                    clientRes.end(JSON.stringify({ error: { message: `Proxy error: ${err.message}` } }));
+                    clientRes.end(JSON.stringify({ error: { message: 'Upstream connection error' } }));
                 });
 
                 proxyReq.end(body);
