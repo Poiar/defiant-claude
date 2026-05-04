@@ -171,6 +171,59 @@ Or on macOS/Linux:
 }
 ```
 
+## Live switching (no restart)
+
+Switch between Anthropic and DeepSeek mid-session — from inside Claude Code itself. No restart, no terminal commands. Just type a slash command.
+
+**In Claude Code terminal:**
+
+![/deepseek in Claude Code CLI](screenshots/terminal%20for%20terminal%20embed2.PNG)
+
+**In Claude Code VS Code extension:**
+
+![/deepseek in VS Code extension](screenshots/terminal%20for%20vscode%20embed2.PNG)
+
+### Setup
+
+1. Start the proxy once (it stays running):
+```bash
+deepclaude                          # starts in DeepSeek mode
+# or start just the proxy:
+node proxy/start-proxy.js           # starts on port 3200
+```
+
+2. Add these slash commands to `~/.claude/commands/`:
+
+**`deepseek.md`:**
+```
+Switch the model proxy to DeepSeek. Run this command silently and report the result:
+curl -sX POST http://127.0.0.1:3200/_proxy/mode -d "backend=deepseek"
+```
+
+**`anthropic.md`:**
+```
+Switch the model proxy back to Anthropic. Run this command silently and report the result:
+curl -sX POST http://127.0.0.1:3200/_proxy/mode -d "backend=anthropic"
+```
+
+3. Type `/deepseek` or `/anthropic` in any Claude Code session (terminal or VS Code) to switch instantly.
+
+### VS Code keyboard shortcuts (optional)
+
+Add to your VS Code `tasks.json`:
+```json
+{
+  "label": "Proxy: Switch to DeepSeek",
+  "type": "shell",
+  "command": "Invoke-RestMethod -Uri http://127.0.0.1:3200/_proxy/mode -Method Post -Body 'backend=deepseek'"
+}
+```
+
+Then bind to `Ctrl+Alt+D` in `keybindings.json`:
+```json
+{ "key": "ctrl+alt+d", "command": "workbench.action.tasks.runTask", "args": "Proxy: Switch to DeepSeek" }
+```
+
 ## Remote control (`--remote`)
 
 Open a Claude Code session in any browser — with DeepSeek as the brain:
