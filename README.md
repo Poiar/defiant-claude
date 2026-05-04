@@ -137,7 +137,7 @@ DeepSeek's automatic context caching makes agent loops extremely cheap - after t
 | Feature | Reason |
 |---|---|
 | Image/vision input | DeepSeek's Anthropic endpoint doesn't support images |
-| Parallel tool use | Disabled - tools execute one at a time |
+| Parallel tool use | Supported by DeepSeek (up to 128 per call), but Claude Code sends tools sequentially by default |
 | MCP server tools | Not supported through compatibility layer |
 | Prompt caching savings | DeepSeek has its own caching (automatic), but Anthropic's `cache_control` is ignored |
 
