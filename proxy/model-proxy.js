@@ -104,6 +104,24 @@ function normalizeJsonBody(buf) {
     return buf;
 }
 
+function stripAllThinkingBlocks(body) {
+    if (!body?.messages) return;
+    for (const msg of body.messages) {
+        if (!Array.isArray(msg.content)) continue;
+        msg.content = msg.content.filter(b => b.type !== 'thinking');
+    }
+}
+
+function stripUnsignedThinkingBlocks(body) {
+    if (!body?.messages) return;
+    for (const msg of body.messages) {
+        if (!Array.isArray(msg.content)) continue;
+        msg.content = msg.content.filter(
+            block => block.type !== 'thinking' || block.signature
+        );
+    }
+}
+
 export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends, defaultMode }) {
     return new Promise((resolve, reject) => {
         const initialTarget = new URL(targetUrl);
@@ -127,6 +145,7 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
             target: startBackend ? startBackend.target : initialTarget,
             apiKey: startBackend ? startBackend.apiKey : apiKey,
             useBearer: startBackend ? startBackend.useBearer : initialBearer,
+            hadNonAnthropicSession: !!startBackend,
         };
 
         let reqCount = 0;
@@ -184,6 +203,7 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
             state.target = b.target;
             state.apiKey = b.apiKey;
             state.useBearer = b.useBearer;
+            state.hadNonAnthropicSession = true;
             return { mode: name, previous: prev };
         }
 
@@ -306,6 +326,31 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                             body = Buffer.from(JSON.stringify(parsed));
                         }
                     } catch { /* not JSON or parse error, pass through */ }
+                }
+
+                // Strip thinking blocks before forwarding.
+                // Non-Anthropic: strip ALL blocks — backends reject thinking blocks
+                // they didn't generate, even unsigned ones.
+                // Anthropic after a non-Anthropic session: also strip ALL, because
+                // foreign backends generate signed-but-invalid thinking blocks that
+                // stripUnsignedThinkingBlocks passes through, causing Anthropic 400s.
+                if (isAnthropicMode && MODEL_PATHS.includes(urlPath)) {
+                    try {
+                        const parsed = JSON.parse(body);
+                        if (state.hadNonAnthropicSession) {
+                            stripAllThinkingBlocks(parsed);
+                        } else {
+                            stripUnsignedThinkingBlocks(parsed);
+                        }
+                        body = Buffer.from(JSON.stringify(parsed));
+                    } catch { /* pass through */ }
+                }
+                if (isModelCall) {
+                    try {
+                        const parsed = JSON.parse(body);
+                        stripAllThinkingBlocks(parsed);
+                        body = Buffer.from(JSON.stringify(parsed));
+                    } catch { /* pass through */ }
                 }
 
                 const opts = {
