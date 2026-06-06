@@ -159,6 +159,28 @@ System health check — verifies Node.js, proxy script, state directory, API key
 deepclaude --doctor
 ```
 
+## Statusline
+
+Shows the real model, provider, context usage, effort level, and git branch — with slot override resolution so you see what's actually running:
+
+![statusline example](statusline/example.png)
+
+```
+1. Copy statusline/statusline.sh → ~/.claude/statusline.sh
+2. Add to ~/.claude/settings.json:
+```
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "bash ~/.claude/statusline.sh"
+  }
+}
+```
+
+Resolves slot overrides from `~/.deepclaude/slot-overrides.json` and context limits from `~/.deepclaude/current-routes.json`, so the token gauge and model display always reflect reality.
+
 ## Environment
 
 | Variable | Purpose |
