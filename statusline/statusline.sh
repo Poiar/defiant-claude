@@ -3,7 +3,9 @@ input=$(cat)
 cwd=$(echo "$input" | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8')); process.stdout.write(d?.workspace?.current_dir||d?.cwd||'')" 2>/dev/null)
 branch=$(git -C "$cwd" --no-optional-locks rev-parse --abbrev-ref HEAD 2>/dev/null)
 
-echo "$input" | OVERRIDES_FILE="$USERPROFILE/.deepclaude/slot-overrides.json" ROUTES_FILE="$USERPROFILE/.deepclaude/current-routes.json" GIT_BRANCH="$branch" node -e "
+DEEPCLAUDE_DIR="${HOME}/.deepclaude"
+[[ -n "${USERPROFILE:-}" ]] && DEEPCLAUDE_DIR="${USERPROFILE}/.deepclaude"
+echo "$input" | OVERRIDES_FILE="$DEEPCLAUDE_DIR/slot-overrides.json" ROUTES_FILE="$DEEPCLAUDE_DIR/current-routes.json" GIT_BRANCH="$branch" node -e "
 const path = require('path');
 const fs   = require('fs');
 const d    = JSON.parse(require('fs').readFileSync(0, 'utf8'));
@@ -14,7 +16,8 @@ const bold  = '\x1b[1m';
 const dim   = '\x1b[2m';
 
 const cwd    = d?.workspace?.current_dir || d?.cwd || '';
-const dir    = path.win32.basename(cwd) || path.posix.basename(cwd) || '';
+const sep    = cwd.includes('\\') ? '\\' : '/';
+const dir    = cwd.split(sep).filter(Boolean).pop() || '';
 const branch = process.env.GIT_BRANCH || '';
 let   model     = d?.model?.id || d?.model?.display_name || '';
 const effort    = d?.effort?.level || '';
@@ -33,7 +36,7 @@ try {
   }
 } catch(e) {}
 
-// Strip providerKey: prefix for token lookup (modelKey is used for display)
+// Resolve slot + providerKey for display
 const modelKey = model;
 const modelLookup = modelKey.replace(/^[a-z][a-z0-9_-]*:/, '');
 
