@@ -1,58 +1,228 @@
-#!/usr/bin/env node
-import { startModelProxy } from './model-proxy.js';
+const http = require('http');
+const https = require('https');
+const fs = require('fs');
+const { URL } = require('url');
 
-const BACKEND_DEFS = {
-    deepseek: { url: 'https://api.deepseek.com/anthropic', keyEnv: 'DEEPSEEK_API_KEY' },
-    openrouter: { url: 'https://openrouter.ai/api/v1', keyEnv: 'OPENROUTER_API_KEY' },
-    fireworks: { url: 'https://api.fireworks.ai/inference/v1', keyEnv: 'FIREWORKS_API_KEY' },
-};
+const args = process.argv.slice(2);
 
-// Legacy mode: start-proxy.js <targetUrl> <apiKey> (used by deepclaude.sh/ps1)
-const targetUrl = process.argv[2] || process.env.CHEAPCLAUDE_TARGET_URL;
-const apiKey = process.argv[3] || process.env.CHEAPCLAUDE_API_KEY;
-
-if (targetUrl && apiKey) {
-    // Legacy single-backend mode
-    const backends = {};
-    for (const [name, def] of Object.entries(BACKEND_DEFS)) {
-        const key = process.env[def.keyEnv];
-        if (key) backends[name] = { url: def.url, apiKey: key };
-    }
-    const hasBackends = Object.keys(backends).length > 0;
-
-    const { port } = await startModelProxy({
-        targetUrl,
-        apiKey,
-        backends: hasBackends ? backends : undefined,
-        defaultMode: hasBackends ? undefined : undefined,
-    });
-    console.log(port);
-} else {
-    // Standalone mode with live toggle
-    const backends = {};
-    for (const [name, def] of Object.entries(BACKEND_DEFS)) {
-        const key = process.env[def.keyEnv];
-        backends[name] = { url: def.url, apiKey: key || null };
-    }
-
-    const fallbackUrl = backends.deepseek?.url || 'https://api.deepseek.com/anthropic';
-    const fallbackKey = backends.deepseek?.apiKey || 'unused';
-
-    const args = process.argv.slice(2);
-    const modeFlag = args.indexOf('--mode');
-    const defaultMode = modeFlag >= 0 ? args[modeFlag + 1] : 'anthropic';
-    const portFlag = args.indexOf('--port');
-    const port = portFlag >= 0 ? parseInt(args[portFlag + 1], 10) : 3200;
-
-    const proxy = await startModelProxy({
-        targetUrl: fallbackUrl,
-        apiKey: fallbackKey,
-        startPort: port,
-        backends,
-        defaultMode,
-    });
-
-    console.log(`Proxy on :${proxy.port} (mode: ${defaultMode})`);
-    console.log(`Switch: curl -sX POST http://127.0.0.1:${proxy.port}/_proxy/mode -d backend=deepseek`);
-    console.log(`Status: curl -s http://127.0.0.1:${proxy.port}/_proxy/status`);
+function readJson(path) {
+    const raw = fs.readFileSync(path, 'utf-8').replace(/^﻿/, '');
+    return JSON.parse(raw);
 }
+
+let routesFile = null;
+let routesMtime = 0;
+let overridesFile = null;
+let overridesMtime = 0;
+let singleUrl = null;
+let singleKey = null;
+
+if (args[0] === '--routes' && args[1]) {
+    routesFile = args[1];
+    if (args[2] === '--overrides' && args[3]) {
+        overridesFile = args[3];
+    }
+} else if (args.length >= 2) {
+    singleUrl = args[0];
+    singleKey = args[1];
+} else {
+    console.error('Usage: node start-proxy.js <provider_url> <api_key>');
+    console.error('       node start-proxy.js --routes <routes.json> [--overrides <overrides.json>]');
+    process.exit(1);
+}
+
+let routing = null;
+if (routesFile) {
+    routing = readJson(routesFile);
+    routesMtime = fs.statSync(routesFile).mtimeMs;
+}
+
+let slotOverrides = {};
+if (overridesFile) {
+    try {
+        slotOverrides = readJson(overridesFile);
+        overridesMtime = fs.statSync(overridesFile).mtimeMs;
+    } catch (e) {
+        // Overrides file optional — may not exist yet
+    }
+}
+
+function checkReload() {
+    if (routesFile) {
+        try {
+            const stat = fs.statSync(routesFile);
+            if (stat.mtimeMs > routesMtime) {
+                routing = readJson(routesFile);
+                routesMtime = stat.mtimeMs;
+            }
+        } catch (e) { /* keep old routes */ }
+    }
+    if (overridesFile) {
+        try {
+            const stat = fs.statSync(overridesFile);
+            if (stat.mtimeMs > overridesMtime) {
+                slotOverrides = readJson(overridesFile);
+                overridesMtime = stat.mtimeMs;
+            }
+        } catch (e) { /* keep old overrides */ }
+    }
+}
+
+function resolveTarget(model) {
+    if (!routing) {
+        const targetUrl = new URL(singleUrl);
+        const isBearer = !targetUrl.hostname.includes('deepseek.com');
+        return { url: singleUrl, key: singleKey, isBearer, rewriteModel: null };
+    }
+
+    // Slot prefix: "sonnet:oc:big-pickle" → check overrides, fall back to model after prefix
+    const slotMatch = model && model.match(/^(sonnet|opus|haiku|subagent):(.+)$/);
+    if (slotMatch) {
+        const slot = slotMatch[1];
+        const fallback = slotMatch[2];
+        model = slotOverrides[slot] || fallback;
+    }
+
+    let providerKey, rewriteModel = null;
+
+    // Check for providerKey:modelId prefix (explicit provider override from /model)
+    const prefixMatch = model && model.match(/^([a-z][a-z0-9_-]*):(.+)$/);
+    if (prefixMatch && routing.providers[prefixMatch[1]]) {
+        providerKey = prefixMatch[1];
+        rewriteModel = prefixMatch[2];
+    } else {
+        // Fall back to routes table lookup
+        const route = (model && routing.routes[model]) || null;
+
+        if (!route) {
+            providerKey = routing.defaultProvider || null;
+        } else if (typeof route === 'string') {
+            providerKey = route;
+        } else if (route && typeof route === 'object' && route.provider) {
+            providerKey = route.provider;
+            rewriteModel = route.rewrite || null;
+        } else {
+            providerKey = routing.defaultProvider || null;
+        }
+    }
+
+    const provider = providerKey ? routing.providers[providerKey] : null;
+    if (!provider) {
+        // No matching provider — return error payload so the proxy sends 502
+        return { url: null, key: null, isBearer: true, rewriteModel: null, error: providerKey ? `Unknown provider: ${providerKey}` : 'No default provider configured' };
+    }
+
+    const targetUrl = new URL(provider.url);
+    return {
+        url: provider.url,
+        key: process.env[provider.keyEnv] || provider.key,
+        isBearer: provider.auth === 'bearer',
+        targetUrl: targetUrl,
+        rewriteModel: rewriteModel,
+    };
+}
+
+const startTime = Date.now();
+
+const server = http.createServer((req, res) => {
+    if (req.method === 'GET' && req.url === '/health') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ status: 'ok', uptime: Date.now() - startTime }));
+        return;
+    }
+
+    checkReload();
+
+    let body = '';
+    req.on('data', chunk => {
+        body += chunk;
+        if (body.length > 10_000_000) { res.writeHead(413); res.end(); req.destroy(); }
+    });
+    req.on('end', () => {
+        const start = Date.now();
+        let model = null;
+        try { model = JSON.parse(body).model; } catch (e) {}
+
+        const target = resolveTarget(model);
+
+        if (target.error) {
+            res.writeHead(502);
+            res.end(JSON.stringify({ error: target.error }));
+            return;
+        }
+
+        // Rewrite model in body if needed
+        let forwardedBody = body;
+        if (target.rewriteModel) {
+            try {
+                const parsed = JSON.parse(body);
+                if (parsed.model !== target.rewriteModel) {
+                    parsed.model = target.rewriteModel;
+                    forwardedBody = JSON.stringify(parsed);
+                }
+            } catch (e) {
+                forwardedBody = body;
+            }
+        }
+
+        const upstreamPath = target.targetUrl.pathname.replace(/\/+$/, '') + req.url;
+
+        const options = {
+            hostname: target.targetUrl.hostname,
+            port: target.targetUrl.port || (target.targetUrl.protocol === 'https:' ? 443 : 80),
+            path: upstreamPath,
+            method: req.method,
+            headers: { ...req.headers },
+            timeout: 60000,
+        };
+
+        delete options.headers['host'];
+        delete options.headers['connection'];
+        delete options.headers['proxy-authorization'];
+        delete options.headers['content-length'];
+        delete options.headers['transfer-encoding'];
+
+        if (target.isBearer) {
+            options.headers['authorization'] = `Bearer ${target.key}`;
+            delete options.headers['x-api-key'];
+        } else {
+            options.headers['x-api-key'] = target.key;
+            delete options.headers['authorization'];
+        }
+
+        const transport = options.port === 443 ? https : http;
+        const proxy = transport.request(options, (proxyRes) => {
+            const ms = Date.now() - start;
+            console.error(`${req.method} ${model || '-'} → ${proxyRes.statusCode} ${ms}ms`);
+            res.writeHead(proxyRes.statusCode, proxyRes.headers);
+            proxyRes.pipe(res);
+        });
+
+        proxy.on('timeout', () => {
+            proxy.destroy();
+            res.writeHead(504);
+            res.end(JSON.stringify({ error: 'Upstream timeout after 60s' }));
+        });
+
+        proxy.on('error', (err) => {
+            console.error(`${req.method} ${model || '-'} → ERR ${err.message}`);
+            res.writeHead(502);
+            res.end(JSON.stringify({ error: `Proxy error: ${err.message}` }));
+        });
+
+        proxy.write(forwardedBody);
+        proxy.end();
+    });
+});
+
+server.listen(0, '127.0.0.1', () => {
+    const port = server.address().port;
+    process.stdout.write('PORT:' + String(port));
+});
+
+process.on('SIGTERM', () => {
+    server.close(() => process.exit(0));
+});
+process.on('SIGINT', () => {
+    server.close(() => process.exit(0));
+});
