@@ -429,6 +429,39 @@ const server = http.createServer((req, res) => {
         let parsed = null;
         try { parsed = JSON.parse(body); model = parsed.model; } catch (e) {}
 
+        const urlPath = req.url.split('?')[0];
+        const isModelCall = urlPath === '/v1/messages';
+
+        // Non-model calls (OAuth, agent infrastructure, etc.) → passthrough to Anthropic directly.
+        // Claude Code sends many API endpoint types through ANTHROPIC_BASE_URL — routing
+        // non-/v1/messages calls to non-Anthropic backends causes ConnectionRefused errors.
+        if (!isModelCall) {
+            const anthro = new URL('https://api.anthropic.com');
+            const anthroPath = anthro.pathname.replace(/\/+$/, '') + req.url;
+            const anthroHeaders = { ...req.headers };
+            delete anthroHeaders['host'];
+            delete anthroHeaders['connection'];
+            delete anthroHeaders['content-length'];
+
+            const anthroTransport = anthro.protocol === 'https:' ? https : http;
+            const anthroReq = anthroTransport.request({
+                hostname: anthro.hostname,
+                port: 443,
+                path: anthroPath,
+                method: req.method,
+                headers: anthroHeaders,
+                timeout: 60000,
+            }, (anthroRes) => {
+                res.writeHead(anthroRes.statusCode, anthroRes.headers);
+                anthroRes.pipe(res);
+            });
+            anthroReq.on('timeout', () => { anthroReq.destroy(); if (!res.headersSent) { res.writeHead(504); res.end(); } });
+            anthroReq.on('error', (err) => { if (!res.headersSent) { res.writeHead(502); res.end(JSON.stringify({ error: err.message })); } });
+            anthroReq.write(body);
+            anthroReq.end();
+            return;
+        }
+
         const resolved = resolveTarget(model);
 
         if (resolved.error) {
