@@ -1,6 +1,6 @@
 # deepclaude
 
-Provider-agnostic Claude Code wrapper. Route each model slot (Opus, Sonnet, Haiku, subagent) to a different provider. Mix DeepSeek, OpenRouter, OpenCode Zen, Fireworks, and Anthropic in one session.
+Provider-agnostic Claude Code wrapper. Route each model slot (Opus, Sonnet, Haiku, subagent) to a different provider. Mix DeepSeek, OpenRouter, OpenCode Zen, Fireworks, Kimi, Mimo, Umans, and Anthropic in one session.
 
 ## Quick start
 
@@ -16,7 +16,7 @@ npm install -g .                             # if you prefer npm link
 deepclaude                                    # Launch with DeepSeek V4 Pro
 ```
 
-**Requires PowerShell 7+** on Windows (the `.ps1` uses `??`, `-Parallel`, ternary). On macOS/Linux, use `deepclaude.sh`.
+**Requires PowerShell 7+** on Windows (the `.ps1` uses `??`, `-Parallel`, ternary). On macOS/Linux, use `deepclaude.sh` — requires `jq`, `node`, and `nc` (or `lsof`/`fuser`).
 
 ## Usage
 
@@ -29,6 +29,9 @@ deepclaude -b or2           # OpenRouter (DeepSeek)
 deepclaude -b or3           # OpenRouter (best free)
 deepclaude -b fw            # Fireworks AI
 deepclaude -b oc            # OpenCode Zen
+deepclaude -b km            # Kimi K2.6
+deepclaude -b mm            # Xiaomi Mimo V2.5 Pro
+deepclaude -b um            # Umans AI (Kimi K2.6)
 deepclaude -b ds+oc         # DeepSeek main + OpenCode subs
 deepclaude -b ds+or         # DeepSeek main + OpenRouter subs
 deepclaude -b anthropic     # Normal Claude Code
@@ -50,7 +53,7 @@ deepclaude ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free  # 3 specs 
 --status        Show keys, configs, and active slot mapping
 --doctor        System health check (prereqs, keys, proxy test)
 --cost          Pricing comparison
---benchmark     Parallel latency test across all configs
+--benchmark     Latency test across all configs (parallel on .ps1, sequential on .sh)
 --models        List all available model IDs (for /model in CC)
 --remote        Browser-based remote control (starts proxy automatically)
 --persist       Keep proxy alive after CC exits
@@ -58,7 +61,7 @@ deepclaude ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free  # 3 specs 
 --set-slot SLOT MODEL  Override a slot (opus/sonnet/haiku/subagent)
 --stop-proxy    Kill the persistent proxy
 --version       Print version and proxy path
---lint          Self-lint with PSScriptAnalyzer
+--lint          Self-lint (PSScriptAnalyzer on .ps1, shellcheck on .sh)
 --fix-av        Print Windows Defender exclusion commands
 ```
 
@@ -71,6 +74,9 @@ deepclaude ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free  # 3 specs 
 | `FIREWORKS_API_KEY` | Fireworks AI | `fw` | bearer |
 | `OPENCODE_API_KEY` | OpenCode Zen | `oc` | bearer |
 | `ALIBABA_DASHSCOPE_API_KEY` | Alibaba/DashScope | `al` | bearer |
+| `KIMI_API_KEY` | Kimi/Moonshot | `km` | bearer |
+| `MIMO_API_KEY` | Xiaomi Mimo | `mm` | bearer |
+| `UMANS_API_KEY` | Umans AI | `um` | bearer |
 
 Keys are read from both process env and machine/user environment variables.
 
@@ -83,6 +89,9 @@ or2    opus=or:deepseek/deepseek-v4-pro  sonnet=or:deepseek/deepseek-v4-pro  hai
 or3    opus=or:openai/gpt-oss-120b:free  sonnet=or:poolside/laguna-m.1:free  haiku=or:z-ai/glm-4.5-air:free  sub=or:liquid/lfm-2.5-1.2b-instruct:free
 fw     opus=fw:accounts/fireworks/models/deepseek-v4-pro  (all slots same)
 oc     opus=oc:big-pickle  (all slots same)
+km     opus=km:kimi-k2.6  (all slots same)
+mm     opus=mm:mimo-v2.5-pro  (all slots same)
+um     opus=um:umans-kimi-k2.6  (all slots same)
 ds+oc  opus=ds:deepseek-v4-pro  sonnet=ds:deepseek-v4-pro  haiku=oc:big-pickle  sub=oc:big-pickle
 ds+or  opus=ds:deepseek-v4-pro  sonnet=ds:deepseek-v4-pro  haiku=or:z-ai/glm-4.5-air:free  sub=or:z-ai/glm-4.5-air:free
 ```
@@ -115,6 +124,7 @@ Per-model context limits are configured automatically:
 | `openrouter/owl-alpha` | 200K |
 | `openai/gpt-oss-120b:free`, `poolside/laguna-m.1:free`, `z-ai/glm-4.5-air:free` | 128K |
 | `big-pickle` | 128K |
+| `kimi-k2.6`, `mimo-v2.5-pro`, `umans-kimi-k2.6` | 128K |
 | `liquid/lfm-2.5-1.2b-instruct:free` | 32K |
 
 Models at 1M tokens get `CLAUDE_CODE_AUTO_COMPACT_WINDOW` set. Models between 128K–1M get `CLAUDE_CODE_MAX_CONTEXT_TOKENS` with compaction disabled.
@@ -161,22 +171,20 @@ deepclaude --doctor
 
 ## Statusline
 
-Shows the real model, provider, context usage, effort level, and git branch — with slot override resolution so you see what's actually running:
-
-![statusline example](statusline/example.png)
+Shows the real model, provider, context usage, effort level, and git branch — with slot override resolution so you see what's actually running.
 
 ```
+# Windows (PowerShell)
+1. Copy statusline/statusline.ps1 → ~/.claude/statusline.ps1
+2. Add to ~/.claude/settings.json:
+
+  { "statusLine": { "type": "command", "command": "pwsh ~/.claude/statusline.ps1" } }
+
+# macOS/Linux (bash)
 1. Copy statusline/statusline.sh → ~/.claude/statusline.sh
 2. Add to ~/.claude/settings.json:
-```
 
-```json
-{
-  "statusLine": {
-    "type": "command",
-    "command": "bash ~/.claude/statusline.sh"
-  }
-}
+  { "statusLine": { "type": "command", "command": "bash ~/.claude/statusline.sh" } }
 ```
 
 Resolves slot overrides from `~/.deepclaude/slot-overrides.json` and context limits from `~/.deepclaude/current-routes.json`, so the token gauge and model display always reflect reality.
