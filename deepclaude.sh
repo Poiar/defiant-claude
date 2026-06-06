@@ -46,7 +46,7 @@ clear_anthropic_env() {
     unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_MODEL \
           ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL \
           ANTHROPIC_DEFAULT_HAIKU_MODEL CLAUDE_CODE_SUBAGENT_MODEL \
-          CLAUDE_CODE_EFFORT_LEVEL ANTHROPIC_API_KEY 2>/dev/null || true
+          ANTHROPIC_API_KEY 2>/dev/null || true
 }
 
 resolve_backend() {
@@ -92,7 +92,7 @@ case "$BACKEND" in
             sonnet="alibaba/your-sonnet-model"
             haiku="alibaba/your-haiku-model"
             subagent="alibaba/your-subagent-model"
-            ;
+            ;;
         fw|fireworks)
             key="${FIREWORKS_API_KEY:-}"
             [[ -z "$key" ]] && { echo "ERROR: FIREWORKS_API_KEY not set" >&2; exit 1; }
@@ -126,7 +126,6 @@ set_model_env() {
     export ANTHROPIC_DEFAULT_SONNET_MODEL="$RESOLVED_SONNET"
     export ANTHROPIC_DEFAULT_HAIKU_MODEL="$RESOLVED_HAIKU"
     export CLAUDE_CODE_SUBAGENT_MODEL="$RESOLVED_SUBAGENT"
-    export CLAUDE_CODE_EFFORT_LEVEL="max"
     unset ANTHROPIC_API_KEY 2>/dev/null || true
 }
 
@@ -227,7 +226,7 @@ launch_claude() {
         echo ""
         echo "  Launching Claude Code (normal Anthropic)..."
         echo ""
-        exec claude --dangerously-skip-permissions "$@"
+        exec claude --effort max --dangerously-skip-permissions "$@"
     fi
 
     resolve_backend
@@ -240,7 +239,7 @@ launch_claude() {
 
     set_model_env
 
-    exec claude --dangerously-skip-permissions "$@"
+    exec claude --effort max --dangerously-skip-permissions "$@"
 
     clear_anthropic_env
 }
@@ -251,7 +250,7 @@ launch_remote() {
         echo ""
         echo "  Launching remote control (Anthropic)..."
         echo ""
-        exec claude --dangerously-skip-permissions remote-control "$@"
+        exec claude --effort max --dangerously-skip-permissions remote-control "$@"
     fi
 
     resolve_backend
@@ -305,7 +304,7 @@ launch_remote() {
     set_model_env
     unset ANTHROPIC_AUTH_TOKEN 2>/dev/null || true
 
-    claude --dangerously-skip-permissions remote-control "$@"
+    claude --effort max --dangerously-skip-permissions remote-control "$@"
 }
 
 # --- Main ---

@@ -154,7 +154,7 @@ $env:ALIBABA_DASHSCOPE_API_KEY = $AlibabaKey
 function Clear-AnthropicEnv {
     foreach ($v in @("ANTHROPIC_BASE_URL","ANTHROPIC_AUTH_TOKEN","ANTHROPIC_MODEL",
         "ANTHROPIC_DEFAULT_OPUS_MODEL","ANTHROPIC_DEFAULT_SONNET_MODEL",
-        "ANTHROPIC_DEFAULT_HAIKU_MODEL","CLAUDE_CODE_SUBAGENT_MODEL","CLAUDE_CODE_EFFORT_LEVEL",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL","CLAUDE_CODE_SUBAGENT_MODEL",
         "ANTHROPIC_API_KEY")) {
         Remove-Item "Env:$v" -ErrorAction SilentlyContinue
     }
@@ -1145,7 +1145,7 @@ if ($Remote) {
     if ($IsAnthropic) {
         Write-Host "`n  Launching remote control (Anthropic)...`n" -ForegroundColor Cyan
         Clear-AnthropicEnv
-        & claude --dangerously-skip-permissions remote-control @Args
+        & claude --effort max --dangerously-skip-permissions remote-control @Args
         exit 0
     }
 
@@ -1179,7 +1179,6 @@ if ($Remote) {
     $env:ANTHROPIC_DEFAULT_SONNET_MODEL = "sonnet:" + ($overrides.sonnet ?? $overrides._defaults.sonnet ?? "$($resolved.slots['sonnet'].provider):$($resolved.slots['sonnet'].model)")
     $env:ANTHROPIC_DEFAULT_HAIKU_MODEL = "haiku:" + ($overrides.haiku ?? $overrides._defaults.haiku ?? "$($resolved.slots['haiku'].provider):$($resolved.slots['haiku'].model)")
     $env:CLAUDE_CODE_SUBAGENT_MODEL = "subagent:" + ($overrides.subagent ?? $overrides._defaults.subagent ?? "$($resolved.slots['subagent'].provider):$($resolved.slots['subagent'].model)")
-    $env:CLAUDE_CODE_EFFORT_LEVEL = "max"
     $opusCtx = $ModelCtx[$resolved.slots["opus"].model]
     if ($opusCtx) {
         if ($opusCtx -gt 131072 -and $opusCtx -lt 1048576) {
@@ -1192,10 +1191,10 @@ if ($Remote) {
     Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
 
     try {
-        & claude --dangerously-skip-permissions remote-control @Args
-    } finally {
-        Stop-RoutingProxy $proxyInfo
-        Clear-AnthropicEnv
+        & claude --effort max --dangerously-skip-permissions remote-control @Args
+    } catch {
+        Test-ContextLengthError $_.Exception.Message
+        throw $_
     }
     exit 0
 }
@@ -1205,7 +1204,7 @@ if ($IsAnthropic) {
     Clear-AnthropicEnv
     Write-Host "`n  Launching Claude Code (normal Anthropic)...`n" -ForegroundColor Cyan
     try {
-        & claude --dangerously-skip-permissions @Args
+        & claude --effort max --dangerously-skip-permissions @Args
     } catch {
         Test-ContextLengthError $_.Exception.Message
         throw $_
@@ -1265,7 +1264,6 @@ $env:ANTHROPIC_DEFAULT_OPUS_MODEL = $opusM
 $env:ANTHROPIC_DEFAULT_SONNET_MODEL = $sonnetM
 $env:ANTHROPIC_DEFAULT_HAIKU_MODEL = $haikuM
 $env:CLAUDE_CODE_SUBAGENT_MODEL = $subM
-$env:CLAUDE_CODE_EFFORT_LEVEL = "max"
 $opusCtx = $ModelCtx[$resolved.slots["opus"].model]
 if ($opusCtx) {
     if ($opusCtx -gt 131072 -and $opusCtx -lt 1048576) {
@@ -1278,7 +1276,7 @@ if ($opusCtx) {
 Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
 
 try {
-    & claude --dangerously-skip-permissions @Args
+    & claude --effort max --dangerously-skip-permissions @Args
 } catch {
     Test-ContextLengthError $_.Exception.Message
     throw $_
