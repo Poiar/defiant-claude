@@ -122,6 +122,218 @@ function resolveTarget(model) {
     };
 }
 
+// --- Anthropic server-side tool handling ---
+
+const SERVER_TOOL_PREFIXES = [
+    'web_search_',
+    'web_fetch_',
+    'url_fetch_',
+    'computer_',
+    'bash_',
+    'text_editor_',
+    'memory_',
+    'tool_search_tool_',
+];
+
+function isServerToolType(type) {
+    if (!type || typeof type !== 'string') return false;
+    return SERVER_TOOL_PREFIXES.some(prefix => type.startsWith(prefix));
+}
+
+const WEB_SEARCH_SCHEMA = {
+    type: 'object',
+    properties: {
+        query: { type: 'string', description: 'The search query' },
+    },
+    required: ['query'],
+};
+
+const WEB_FETCH_SCHEMA = {
+    type: 'object',
+    properties: {
+        url: { type: 'string', description: 'URL to fetch content from' },
+    },
+    required: ['url'],
+};
+
+function convertServerTools(tools) {
+    if (!tools || !Array.isArray(tools)) return { tools, hasWebSearch: false, hasWebFetch: false };
+
+    let hasWebSearch = false;
+    let hasWebFetch = false;
+
+    const converted = tools.map(tool => {
+        if (!tool || typeof tool !== 'object') return tool;
+
+        const type = tool.type || '';
+        if (type.startsWith('web_search_')) {
+            hasWebSearch = true;
+            return {
+                type: 'custom',
+                name: 'web_search',
+                description: 'Search the web for current, up-to-date information. Returns relevant text snippets and URLs.',
+                input_schema: WEB_SEARCH_SCHEMA,
+            };
+        }
+        if (type.startsWith('web_fetch_') || type.startsWith('url_fetch_')) {
+            hasWebFetch = true;
+            return {
+                type: 'custom',
+                name: 'web_fetch',
+                description: 'Fetch and read content from a URL. Returns the text content of the page.',
+                input_schema: WEB_FETCH_SCHEMA,
+            };
+        }
+        return tool;
+    });
+
+    return { tools: converted, hasWebSearch, hasWebFetch };
+}
+
+// --- Web search execution (DuckDuckGo — free, no API key) ---
+
+function webSearch(query) {
+    return new Promise((resolve) => {
+        const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&no_redirect=1`;
+        https.get(url, { headers: { 'User-Agent': 'deepclaude-proxy/1.0' }, timeout: 15000 }, (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+                try {
+                    const parsed = JSON.parse(data);
+                    const results = [];
+                    if (parsed.AbstractText) results.push(parsed.AbstractText);
+                    if (parsed.AbstractURL) results.push(`Source: ${parsed.AbstractURL}`);
+                    if (parsed.Answer) results.push(`Answer: ${parsed.Answer}`);
+                    const topics = parsed.RelatedTopics || [];
+                    for (const topic of topics.slice(0, 8)) {
+                        if (topic.Text) results.push(`- ${topic.Text}`);
+                        if (topic.FirstURL) results.push(`  ${topic.FirstURL}`);
+                    }
+                    const text = results.join('\n') || `No results found for query: "${query}"`;
+                    resolve(text);
+                } catch {
+                    resolve(`Search completed but results could not be parsed for: "${query}"`);
+                }
+            });
+        }).on('error', (err) => {
+            resolve(`Web search failed: ${err.message}. Query was: "${query}"`);
+        }).on('timeout', () => {
+            resolve(`Web search timed out for query: "${query}"`);
+        });
+    });
+}
+
+// --- Web fetch execution ---
+
+function webFetch(url) {
+    return new Promise((resolve) => {
+        const parsedUrl = new URL(url);
+        const transport = parsedUrl.protocol === 'https:' ? https : http;
+        const req = transport.get(url, { headers: { 'User-Agent': 'deepclaude-proxy/1.0' }, timeout: 20000, maxRedirects: 5 }, (res) => {
+            // Follow redirects
+            if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                webFetch(new URL(res.headers.location, url).href).then(resolve);
+                return;
+            }
+            let data = '';
+            res.on('data', chunk => {
+                data += chunk;
+                if (data.length > 1_000_000) { res.destroy(); resolve(data.slice(0, 1_000_000) + '\n\n[Content truncated at 1MB]'); }
+            });
+            res.on('end', () => {
+                // Simple HTML → text extraction
+                const text = data.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+                    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+                    .replace(/<[^>]+>/g, ' ')
+                    .replace(/&amp;/g, '&')
+                    .replace(/&lt;/g, '<')
+                    .replace(/&gt;/g, '>')
+                    .replace(/&quot;/g, '"')
+                    .replace(/&#39;/g, "'")
+                    .replace(/\s+/g, ' ')
+                    .trim()
+                    .slice(0, 50000);
+                resolve(text || `Fetched ${url} but could not extract text content.`);
+            });
+        });
+        req.on('error', (err) => resolve(`Web fetch failed: ${err.message}. URL was: ${url}`));
+        req.on('timeout', () => { req.destroy(); resolve(`Web fetch timed out for URL: ${url}`); });
+    });
+}
+
+// --- Check and populate empty tool results for web_search / web_fetch ---
+
+function hasPendingToolResult(messages) {
+    if (!messages || !Array.isArray(messages)) return { needsPopulation: false };
+
+    const toolUseIds = new Map(); // tool_use_id → { name, input }
+
+    // Collect all tool_use blocks from assistant messages
+    for (const msg of messages) {
+        if (msg.role !== 'assistant') continue;
+        const content = Array.isArray(msg.content) ? msg.content : [];
+        for (const block of content) {
+            if (block.type === 'tool_use' && (block.name === 'web_search' || block.name === 'web_fetch')) {
+                toolUseIds.set(block.id, { name: block.name, input: block.input || {} });
+            }
+        }
+    }
+
+    if (toolUseIds.size === 0) return { needsPopulation: false };
+
+    // Check for empty/error tool_results matching our tool_use blocks
+    const emptyResults = [];
+    for (const msg of messages) {
+        if (msg.role !== 'user') continue;
+        const content = Array.isArray(msg.content) ? msg.content : [];
+        for (const block of content) {
+            if (block.type !== 'tool_result') continue;
+            const toolUseId = block.tool_use_id;
+            const toolInfo = toolUseIds.get(toolUseId);
+            if (!toolInfo) continue;
+
+            const resultContent = block.content;
+            const isEmpty = !resultContent ||
+                (typeof resultContent === 'string' && resultContent.trim() === '') ||
+                (typeof resultContent === 'string' && resultContent.includes('not recognized')) ||
+                (typeof resultContent === 'string' && resultContent.includes('No tool implementation found')) ||
+                (Array.isArray(resultContent) && resultContent.length === 0);
+
+            if (isEmpty) {
+                emptyResults.push({ block, toolInfo });
+            }
+        }
+    }
+
+    return { needsPopulation: emptyResults.length > 0, emptyResults };
+}
+
+async function populateToolResults(messages) {
+    const { emptyResults } = hasPendingToolResult(messages);
+    if (!emptyResults || emptyResults.length === 0) return false;
+
+    for (const { block, toolInfo } of emptyResults) {
+        if (toolInfo.name === 'web_search') {
+            const query = toolInfo.input.query || toolInfo.input.q || toolInfo.input.search || '';
+            if (query) {
+                const result = await webSearch(query);
+                block.content = result;
+            }
+        } else if (toolInfo.name === 'web_fetch') {
+            const url = toolInfo.input.url || toolInfo.input.uri || '';
+            if (url) {
+                const result = await webFetch(url);
+                block.content = result;
+            }
+        }
+    }
+
+    return true;
+}
+
+// --- Main server ---
+
 const startTime = Date.now();
 
 const server = http.createServer((req, res) => {
@@ -138,7 +350,7 @@ const server = http.createServer((req, res) => {
         body += chunk;
         if (body.length > 10_000_000) { res.writeHead(413); res.end(); req.destroy(); }
     });
-    req.on('end', () => {
+    req.on('end', async () => {
         const start = Date.now();
         let model = null;
         try { model = JSON.parse(body).model; } catch (e) {}
@@ -151,28 +363,29 @@ const server = http.createServer((req, res) => {
             return;
         }
 
-        // Rewrite model + strip Anthropic server-side tools
+        // Process request body: rewrite model, convert server tools, populate tool results
         let forwardedBody = body;
         try {
             const parsed = JSON.parse(body);
             let modified = false;
 
+            // Rewrite model if needed
             if (target.rewriteModel && parsed.model !== target.rewriteModel) {
                 parsed.model = target.rewriteModel;
                 modified = true;
             }
 
-            // Strip Anthropic server-side tools (web_search, url_fetch, computer)
-            // These only work with the Anthropic API and cause 500s from other backends
-            if (parsed.tools && Array.isArray(parsed.tools)) {
-                const filtered = parsed.tools.filter(t => {
-                    const type = (t && t.type) || '';
-                    return type === 'custom' || type === 'function' || !type;
-                });
-                if (filtered.length !== parsed.tools.length) {
-                    parsed.tools = filtered;
-                    modified = true;
-                }
+            // Populate empty tool results from previous turns
+            if (parsed.messages) {
+                const populated = await populateToolResults(parsed.messages);
+                if (populated) modified = true;
+            }
+
+            // Convert Anthropic server-side tools → custom tools
+            const conv = convertServerTools(parsed.tools);
+            if (conv.hasWebSearch || conv.hasWebFetch) {
+                parsed.tools = conv.tools;
+                modified = true;
             }
 
             if (modified) forwardedBody = JSON.stringify(parsed);
