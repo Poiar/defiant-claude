@@ -337,10 +337,10 @@ $ModelCtx = @{
 $Configs = [ordered]@{
     ds = @{
         name     = "DeepSeek V4 Pro"
-        opus     = "ds:deepseek-v4-pro"
-        sonnet   = "ds:deepseek-v4-pro"
-        haiku    = "ds:deepseek-v4-flash"
-        subagent = "ds:deepseek-v4-flash"
+        opus     = "ds:deepseek-v4-pro[1m]"
+        sonnet   = "ds:deepseek-v4-pro[1m]"
+        haiku    = "ds:deepseek-v4-flash[1m]"
+        subagent = "ds:deepseek-v4-flash[1m]"
     }
     or = @{
         name     = "OpenRouter (owl-alpha)"
@@ -351,10 +351,10 @@ $Configs = [ordered]@{
     }
     or2 = @{
         name     = "OpenRouter (DeepSeek)"
-        opus     = "or:deepseek/deepseek-v4-pro"
-        sonnet   = "or:deepseek/deepseek-v4-pro"
-        haiku    = "or:deepseek/deepseek-v4-flash"
-        subagent = "or:deepseek/deepseek-v4-flash"
+        opus     = "or:deepseek/deepseek-v4-pro[1m]"
+        sonnet   = "or:deepseek/deepseek-v4-pro[1m]"
+        haiku    = "or:deepseek/deepseek-v4-flash[1m]"
+        subagent = "or:deepseek/deepseek-v4-flash[1m]"
     }
     or3 = @{
         name     = "OpenRouter (best free)"
@@ -365,10 +365,10 @@ $Configs = [ordered]@{
     }
     fw = @{
         name     = "Fireworks AI"
-        opus     = "fw:accounts/fireworks/models/deepseek-v4-pro"
-        sonnet   = "fw:accounts/fireworks/models/deepseek-v4-pro"
-        haiku    = "fw:accounts/fireworks/models/deepseek-v4-pro"
-        subagent = "fw:accounts/fireworks/models/deepseek-v4-pro"
+        opus     = "fw:accounts/fireworks/models/deepseek-v4-pro[1m]"
+        sonnet   = "fw:accounts/fireworks/models/deepseek-v4-pro[1m]"
+        haiku    = "fw:accounts/fireworks/models/deepseek-v4-pro[1m]"
+        subagent = "fw:accounts/fireworks/models/deepseek-v4-pro[1m]"
     }
     oc = @{
         name     = "OpenCode Zen"
@@ -401,15 +401,15 @@ $Configs = [ordered]@{
     # --- Mixed-provider configs ---
     "ds+or" = @{
         name     = "DeepSeek + OpenRouter subs"
-        opus     = "ds:deepseek-v4-pro"
-        sonnet   = "ds:deepseek-v4-pro"
+        opus     = "ds:deepseek-v4-pro[1m]"
+        sonnet   = "ds:deepseek-v4-pro[1m]"
         haiku    = "or:z-ai/glm-4.5-air:free"
         subagent = "or:z-ai/glm-4.5-air:free"
     }
     "ds+oc" = @{
         name     = "DeepSeek + OpenCode subs"
-        opus     = "ds:deepseek-v4-pro"
-        sonnet   = "ds:deepseek-v4-pro"
+        opus     = "ds:deepseek-v4-pro[1m]"
+        sonnet   = "ds:deepseek-v4-pro[1m]"
         haiku    = "oc:big-pickle"
         subagent = "oc:big-pickle"
     }
