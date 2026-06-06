@@ -2,7 +2,9 @@ const http = require('http');
 const https = require('https');
 const fs = require('fs');
 const { URL } = require('url');
+const { Transform } = require('stream');
 const { translateRequest, translateResponse, createStreamTransformer } = require('./protocol-translate');
+const { injectThinkingBlocks, extractThinkingBlocks, store } = require('./thinking-cache');
 
 const args = process.argv.slice(2);
 
@@ -401,11 +403,16 @@ function peekFirstChunk(proxyRes, timeoutMs = 15000) {
 // --- Main server ---
 
 const startTime = Date.now();
+const providerStats = {}; // providerKey → { requests, successes, fails, totalMs }
 
 const server = http.createServer((req, res) => {
     if (req.method === 'GET' && req.url === '/health') {
         res.writeHead(200, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ status: 'ok', uptime: Date.now() - startTime }));
+        const healthStats = {};
+        for (const [k, v] of Object.entries(providerStats)) {
+            healthStats[k] = { requests: v.requests, successes: v.successes, fails: v.fails, avgMs: v.requests ? Math.round(v.totalMs / v.requests) : 0 };
+        }
+        res.end(JSON.stringify({ status: 'ok', uptime: Date.now() - startTime, providers: healthStats }));
         return;
     }
 
@@ -506,11 +513,34 @@ const server = http.createServer((req, res) => {
                 delete options.headers['authorization'];
             }
 
+            if (options.hostname.includes('openrouter')) {
+                options.headers['http-referer'] = 'https://github.com/Poiar/deepclaude';
+                options.headers['x-title'] = 'deepclaude';
+            }
+
+            // Inject cached thinking blocks and strip all before forwarding
+            if (target.format !== 'openai') {
+                try {
+                    const reqParsed = JSON.parse(forwardedBody);
+                    if (reqParsed.messages) {
+                        injectThinkingBlocks(reqParsed.messages);
+                        reqParsed.messages = reqParsed.messages.map(m => {
+                            if (m.role === 'assistant' && Array.isArray(m.content)) {
+                                m.content = m.content.filter(b => b.type !== 'thinking');
+                            }
+                            return m;
+                        });
+                        forwardedBody = JSON.stringify(reqParsed);
+                    }
+                } catch (e) {}
+            }
+
             const transport = options.port === 443 ? https : http;
             const result = await tryForward(transport, options, forwardedBody, streamTransformer, target.format === 'openai');
             const ms = Date.now() - t0;
 
             if (result.success) {
+                recordStat(target.providerKey, true, ms);
                 if (isRetry) {
                     console.error(`${req.method} ${model || '-'} → ${target.providerKey} ${result.status} ${ms}ms (fallback #${attempt})`);
                 } else {
@@ -525,6 +555,7 @@ const server = http.createServer((req, res) => {
                 return;
             }
 
+            recordStat(target.providerKey, false, ms);
             lastError = result.error;
             const label = target.providerKey || 'upstream';
             if (result.status) {
@@ -540,6 +571,53 @@ const server = http.createServer((req, res) => {
             res.end(JSON.stringify({ error: lastError || 'All providers failed' }));
         }
     });
+
+    function createUsageNormalizer() {
+        return new Transform({
+            transform(chunk, encoding, callback) {
+                const str = (this._buf || '') + chunk.toString();
+                const parts = str.split('\n\n');
+                this._buf = parts.pop() || '';
+                let output = '';
+                for (const part of parts) {
+                    const m = part.match(/^data: (.+)$/m);
+                    if (!m) { output += part + '\n\n'; continue; }
+                    try {
+                        const d = JSON.parse(m[1]);
+                        let changed = false;
+                        if (d.type === 'message_start' && d.message && !d.message.usage) {
+                            d.message.usage = { input_tokens: 0, output_tokens: 0 };
+                            changed = true;
+                        }
+                        if (d.type === 'message_delta' && !d.usage) {
+                            d.usage = { output_tokens: 0 };
+                            changed = true;
+                        }
+                        output += changed
+                            ? `data: ${JSON.stringify(d)}\n\n`
+                            : part + '\n\n';
+                    } catch { output += part + '\n\n'; }
+                }
+                callback(null, output);
+            },
+            flush(callback) {
+                if (this._buf && this._buf.trim()) {
+                    callback(null, this._buf + '\n\n');
+                } else {
+                    callback(null);
+                }
+            },
+        });
+    }
+
+    function recordStat(providerKey, success, ms) {
+        if (!providerKey) return;
+        if (!providerStats[providerKey]) providerStats[providerKey] = { requests: 0, successes: 0, fails: 0, totalMs: 0 };
+        const s = providerStats[providerKey];
+        s.requests++;
+        s.totalMs += ms;
+        if (success) s.successes++; else s.fails++;
+    }
 
     function tryForward(transport, options, forwardedBody, streamTransformer, isOpenAI) {
         return new Promise((resolve) => {
@@ -562,8 +640,12 @@ const server = http.createServer((req, res) => {
 
                         const outHeaders = { ...proxyRes.headers };
                         let outStream = proxyRes;
+
+                        const usageNorm = createUsageNormalizer();
+                        outStream = outStream.pipe(usageNorm);
+
                         if (streamTransformer) {
-                            outStream = proxyRes.pipe(streamTransformer);
+                            outStream = outStream.pipe(streamTransformer);
                         }
 
                         resolve({ success: true, status: proxyRes.statusCode, headers: outHeaders, stream: outStream });
@@ -578,6 +660,18 @@ const server = http.createServer((req, res) => {
                                 const openaiResp = JSON.parse(responseBody.toString());
                                 const anthropicResp = translateResponse(openaiResp, model);
                                 responseBody = Buffer.from(JSON.stringify(anthropicResp));
+                            } catch (e) {}
+                        } else {
+                            try {
+                                const resp = JSON.parse(responseBody.toString());
+                                if (resp.content && Array.isArray(resp.content)) {
+                                    const tc = extractThinkingBlocks([{ role: 'assistant', content: resp.content }]);
+                                    if (tc) {
+                                        store(tc.sk, tc.firstToolUseId, tc.blocks);
+                                        resp.content = resp.content.filter(b => b.type !== 'thinking' && b.type !== 'redacted_thinking');
+                                        responseBody = Buffer.from(JSON.stringify(resp));
+                                    }
+                                }
                             } catch (e) {}
                         }
                         const outHeaders = { ...proxyRes.headers, 'content-length': responseBody.length };
