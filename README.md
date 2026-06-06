@@ -76,7 +76,7 @@ deepclaude ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free  # 3 specs 
 | `ALIBABA_DASHSCOPE_API_KEY` | Alibaba/DashScope | `al` | bearer |
 | `KIMI_API_KEY` | Kimi/Moonshot | `km` | bearer |
 | `MIMO_API_KEY` | Xiaomi Mimo | `mm` | bearer |
-| `UMANS_API_KEY` | Umans AI | `um` | bearer |
+| `UMANS_API_KEY` | Umans AI | `um` | x-api-key |
 
 Keys are read from both process env and machine/user environment variables.
 
@@ -91,7 +91,7 @@ fw     opus=fw:accounts/fireworks/models/deepseek-v4-pro  (all slots same)
 oc     opus=oc:big-pickle  (all slots same)
 km     opus=km:kimi-k2.6  (all slots same)
 mm     opus=mm:mimo-v2.5-pro  (all slots same)
-um     opus=um:umans-kimi-k2.6  (all slots same)
+um     opus=um:umans-coder  (all slots same)
 ds+oc  opus=ds:deepseek-v4-pro  sonnet=ds:deepseek-v4-pro  haiku=oc:big-pickle  sub=oc:big-pickle
 ds+or  opus=ds:deepseek-v4-pro  sonnet=ds:deepseek-v4-pro  haiku=or:z-ai/glm-4.5-air:free  sub=or:z-ai/glm-4.5-air:free
 ```
@@ -124,7 +124,8 @@ Per-model context limits are configured automatically:
 | `openrouter/owl-alpha` | 200K |
 | `openai/gpt-oss-120b:free`, `poolside/laguna-m.1:free`, `z-ai/glm-4.5-air:free` | 128K |
 | `big-pickle` | 128K |
-| `kimi-k2.6`, `mimo-v2.5-pro`, `umans-kimi-k2.6` | 128K |
+| `kimi-k2.6`, `umans-kimi-k2.6`, `umans-coder` | 256K |
+| `mimo-v2.5-pro`, `umans-flash`, `umans-glm-5.1` | 128K |
 | `liquid/lfm-2.5-1.2b-instruct:free` | 32K |
 
 Models at 1M tokens get `CLAUDE_CODE_AUTO_COMPACT_WINDOW` set. Models between 128K–1M get `CLAUDE_CODE_MAX_CONTEXT_TOKENS` with compaction disabled.

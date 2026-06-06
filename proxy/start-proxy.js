@@ -151,18 +151,33 @@ const server = http.createServer((req, res) => {
             return;
         }
 
-        // Rewrite model in body if needed
+        // Rewrite model + strip Anthropic server-side tools
         let forwardedBody = body;
-        if (target.rewriteModel) {
-            try {
-                const parsed = JSON.parse(body);
-                if (parsed.model !== target.rewriteModel) {
-                    parsed.model = target.rewriteModel;
-                    forwardedBody = JSON.stringify(parsed);
-                }
-            } catch (e) {
-                forwardedBody = body;
+        try {
+            const parsed = JSON.parse(body);
+            let modified = false;
+
+            if (target.rewriteModel && parsed.model !== target.rewriteModel) {
+                parsed.model = target.rewriteModel;
+                modified = true;
             }
+
+            // Strip Anthropic server-side tools (web_search, url_fetch, computer)
+            // These only work with the Anthropic API and cause 500s from other backends
+            if (parsed.tools && Array.isArray(parsed.tools)) {
+                const filtered = parsed.tools.filter(t => {
+                    const type = (t && t.type) || '';
+                    return type === 'custom' || type === 'function' || !type;
+                });
+                if (filtered.length !== parsed.tools.length) {
+                    parsed.tools = filtered;
+                    modified = true;
+                }
+            }
+
+            if (modified) forwardedBody = JSON.stringify(parsed);
+        } catch (e) {
+            forwardedBody = body;
         }
 
         const upstreamPath = target.targetUrl.pathname.replace(/\/+$/, '') + req.url;

@@ -308,7 +308,7 @@ $Providers = @{
         name = "Umans AI"
         url  = "https://api.code.umans.ai"
         key  = $UmansKey; keyName = "UMANS_API_KEY"
-        auth = "bearer"
+        auth = "x-api-key"
     }
 }
 
@@ -325,9 +325,12 @@ $ModelCtx = @{
     "z-ai/glm-4.5-air:free"                 = 131072   # 128K
     "liquid/lfm-2.5-1.2b-instruct:free"     = 32768    # 32K
     "big-pickle"                             = 131072   # 128K (conservative)
-    "kimi-k2.6"                              = 131072   # 128K
+    "kimi-k2.6"                              = 262144   # 256K
     "mimo-v2.5-pro"                          = 131072   # 128K (conservative)
-    "umans-kimi-k2.6"                        = 131072   # 128K
+    "umans-kimi-k2.6"                        = 262144   # 256K (Kimi K2.6)
+    "umans-coder"                            = 262144   # 256K (Kimi K2.6)
+    "umans-flash"                            = 131072   # 128K (Qwen3.6-35B-A3B)
+    "umans-glm-5.1"                          = 131072   # 128K (GLM 5.1)
 }
 
 # --- Configuration Registry ---
@@ -392,11 +395,11 @@ $Configs = [ordered]@{
         subagent = "mm:mimo-v2.5-pro"
     }
     um = @{
-        name     = "Umans Kimi K2.6"
-        opus     = "um:umans-kimi-k2.6"
-        sonnet   = "um:umans-kimi-k2.6"
-        haiku    = "um:umans-kimi-k2.6"
-        subagent = "um:umans-kimi-k2.6"
+        name     = "Umans Coder (Kimi K2.6)"
+        opus     = "um:umans-coder"
+        sonnet   = "um:umans-coder"
+        haiku    = "um:umans-coder"
+        subagent = "um:umans-coder"
     }
     # --- Mixed-provider configs ---
     "ds+or" = @{
