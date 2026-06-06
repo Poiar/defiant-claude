@@ -143,6 +143,15 @@ $OpenCodeKey = if ($env:OPENCODE_API_KEY) { $env:OPENCODE_API_KEY } else {
 $AlibabaKey = if ($env:ALIBABA_DASHSCOPE_API_KEY) { $env:ALIBABA_DASHSCOPE_API_KEY } else {
     [Environment]::GetEnvironmentVariable("ALIBABA_DASHSCOPE_API_KEY", "User")
 }
+$KimiKey = if ($env:KIMI_API_KEY) { $env:KIMI_API_KEY } else {
+    [Environment]::GetEnvironmentVariable("KIMI_API_KEY", "User")
+}
+$MimoKey = if ($env:MIMO_API_KEY) { $env:MIMO_API_KEY } else {
+    [Environment]::GetEnvironmentVariable("MIMO_API_KEY", "User")
+}
+$UmansKey = if ($env:UMANS_API_KEY) { $env:UMANS_API_KEY } else {
+    [Environment]::GetEnvironmentVariable("UMANS_API_KEY", "User")
+}
 
 # Push keys into process env so child processes (proxy) inherit them
 $env:DEEPSEEK_API_KEY = $DeepSeekKey
@@ -150,6 +159,9 @@ $env:OPENROUTER_API_KEY = $OpenRouterKey
 $env:FIREWORKS_API_KEY = $FireworksKey
 $env:OPENCODE_API_KEY = $OpenCodeKey
 $env:ALIBABA_DASHSCOPE_API_KEY = $AlibabaKey
+$env:KIMI_API_KEY = $KimiKey
+$env:MIMO_API_KEY = $MimoKey
+$env:UMANS_API_KEY = $UmansKey
 
 function Clear-AnthropicEnv {
     foreach ($v in @("ANTHROPIC_BASE_URL","ANTHROPIC_AUTH_TOKEN","ANTHROPIC_MODEL",
@@ -280,6 +292,24 @@ $Providers = @{
         key  = $AlibabaKey; keyName = "ALIBABA_DASHSCOPE_API_KEY"
         auth = "bearer"
     }
+    km = @{
+        name = "Kimi/Moonshot"
+        url  = "https://api.moonshot.ai/anthropic"
+        key  = $KimiKey; keyName = "KIMI_API_KEY"
+        auth = "bearer"
+    }
+    mm = @{
+        name = "Xiaomi Mimo"
+        url  = "https://token-plan-sgp.xiaomimimo.com/anthropic"
+        key  = $MimoKey; keyName = "MIMO_API_KEY"
+        auth = "bearer"
+    }
+    um = @{
+        name = "Umans AI"
+        url  = "https://api.code.umans.ai"
+        key  = $UmansKey; keyName = "UMANS_API_KEY"
+        auth = "bearer"
+    }
 }
 
 # --- Per-model context window limits (tokens) ---
@@ -295,6 +325,9 @@ $ModelCtx = @{
     "z-ai/glm-4.5-air:free"                 = 131072   # 128K
     "liquid/lfm-2.5-1.2b-instruct:free"     = 32768    # 32K
     "big-pickle"                             = 131072   # 128K (conservative)
+    "kimi-k2.6"                              = 131072   # 128K
+    "mimo-v2.5-pro"                          = 131072   # 128K (conservative)
+    "umans-kimi-k2.6"                        = 131072   # 128K
 }
 
 # --- Configuration Registry ---
@@ -343,6 +376,27 @@ $Configs = [ordered]@{
         sonnet   = "oc:big-pickle"
         haiku    = "oc:big-pickle"
         subagent = "oc:big-pickle"
+    }
+    km = @{
+        name     = "Kimi K2.6"
+        opus     = "km:kimi-k2.6"
+        sonnet   = "km:kimi-k2.6"
+        haiku    = "km:kimi-k2.6"
+        subagent = "km:kimi-k2.6"
+    }
+    mm = @{
+        name     = "Xiaomi Mimo V2.5 Pro"
+        opus     = "mm:mimo-v2.5-pro"
+        sonnet   = "mm:mimo-v2.5-pro"
+        haiku    = "mm:mimo-v2.5-pro"
+        subagent = "mm:mimo-v2.5-pro"
+    }
+    um = @{
+        name     = "Umans Kimi K2.6"
+        opus     = "um:umans-kimi-k2.6"
+        sonnet   = "um:umans-kimi-k2.6"
+        haiku    = "um:umans-kimi-k2.6"
+        subagent = "um:umans-kimi-k2.6"
     }
     # --- Mixed-provider configs ---
     "ds+or" = @{
@@ -619,6 +673,9 @@ if ($Status) {
     Write-Host "    FIREWORKS_API_KEY:          $(Get-KeyDisplay $FireworksKey)"
     Write-Host "    OPENCODE_API_KEY:           $(Get-KeyDisplay $OpenCodeKey)"
     Write-Host "    ALIBABA_DASHSCOPE_API_KEY:  $(Get-KeyDisplay $AlibabaKey)"
+    Write-Host "    KIMI_API_KEY:               $(Get-KeyDisplay $KimiKey)"
+    Write-Host "    MIMO_API_KEY:               $(Get-KeyDisplay $MimoKey)"
+    Write-Host "    UMANS_API_KEY:              $(Get-KeyDisplay $UmansKey)"
     Write-Host "`n  Configurations:" -ForegroundColor Yellow
     foreach ($kv in $Configs.GetEnumerator()) {
         $label = if ($kv.Key -eq "ds") { " (default)" } else { "" }
@@ -637,7 +694,13 @@ if ($Status) {
             $slots = @("opus","sonnet","haiku","subagent")
             $slotLines = foreach ($s in $slots) {
                 $val = if ($overrides.$s) { $overrides.$s } elseif ($overrides._defaults.$s) { $overrides._defaults.$s } else { "—" }
-                "    $($s.PadRight(10)) $val"
+                $pk = ($val -split ':')[0]
+                $pname = if ($pk -and $Providers[$pk]) { $Providers[$pk].name } else { $null }
+                if ($pname) {
+                    "    $($s.PadRight(10)) $val  ->  $pname"
+                } else {
+                    "    $($s.PadRight(10)) $val"
+                }
             }
             Write-Host "`n  Active slot mapping:" -ForegroundColor Yellow
             Write-Host ($slotLines -join "`n")
@@ -764,7 +827,7 @@ if ($Doctor) {
 
     # 5. API keys
     Write-Host "`n  API Keys:" -ForegroundColor Yellow
-    $keyProviders = @("ds","or","fw","oc","al")
+    $keyProviders = @("ds","or","fw","oc","al","km","mm","um")
     $keysOk = 0
     $keysTotal = 0
     foreach ($pk in $keyProviders) {
@@ -904,7 +967,7 @@ if ($Benchmark) {
     Write-Host "  ==================" -ForegroundColor DarkGray
 
     # Pre-resolve configs (can't call script functions in -Parallel runspaces)
-    $benchJobs = foreach ($id in @("ds","or","or2","or3","fw","oc")) {
+    $benchJobs = foreach ($id in @("ds","or","or2","or3","fw","oc","km","mm","um")) {
         try {
             $r = Resolve-Config $id
             if (-not $r) { continue }
