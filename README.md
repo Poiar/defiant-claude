@@ -189,6 +189,16 @@ Resolves slot overrides from `~/.deepclaude/slot-overrides.json` and context lim
 
 All provider env vars are pushed into the process so the proxy (child process) inherits them.
 
+## Windows Defender
+
+The proxy starts a local HTTP server and forwards requests — Windows Defender often flags this as suspicious behavior. If the proxy gets blocked:
+
+```
+deepclaude --fix-av       # Prints the exact exclusion commands to run
+```
+
+Then run the printed commands in an **admin** PowerShell window. You'll need to exclude both the `proxy/` directory and potentially `node.exe`.
+
 ## License
 
 MIT
