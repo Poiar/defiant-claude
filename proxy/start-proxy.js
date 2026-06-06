@@ -2,6 +2,7 @@ const http = require('http');
 const https = require('https');
 const fs = require('fs');
 const { URL } = require('url');
+const { translateRequest, translateResponse, createStreamTransformer } = require('./protocol-translate');
 
 const args = process.argv.slice(2);
 
@@ -72,7 +73,8 @@ function resolveTarget(model) {
     if (!routing) {
         const targetUrl = new URL(singleUrl);
         const isBearer = !targetUrl.hostname.includes('deepseek.com');
-        return { url: singleUrl, key: singleKey, isBearer, rewriteModel: null };
+        const primary = { providerKey: 'direct', url: singleUrl, key: singleKey, isBearer, targetUrl, rewriteModel: null, format: 'anthropic' };
+        return { primary, fallbacks: [] };
     }
 
     // Slot prefix: "sonnet:oc:big-pickle" → check overrides, fall back to model after prefix
@@ -108,18 +110,40 @@ function resolveTarget(model) {
 
     const provider = providerKey ? routing.providers[providerKey] : null;
     if (!provider) {
-        // No matching provider — return error payload so the proxy sends 502
-        return { url: null, key: null, isBearer: true, rewriteModel: null, error: providerKey ? `Unknown provider: ${providerKey}` : 'No default provider configured' };
+        return { error: providerKey ? `Unknown provider: ${providerKey}` : 'No default provider configured' };
     }
 
     const targetUrl = new URL(provider.url);
-    return {
+    const primary = {
+        providerKey,
         url: provider.url,
         key: process.env[provider.keyEnv] || provider.key,
         isBearer: provider.auth === 'bearer',
         targetUrl: targetUrl,
         rewriteModel: rewriteModel,
+        format: provider.format || 'anthropic',
     };
+
+    const fallbacks = [];
+    if (provider.fallback && Array.isArray(provider.fallback)) {
+        for (const fbKey of provider.fallback) {
+            if (fbKey === providerKey) continue;
+            const fb = routing.providers[fbKey];
+            if (!fb || !(process.env[fb.keyEnv] || fb.key)) continue;
+            const fbUrl = new URL(fb.url);
+            fallbacks.push({
+                providerKey: fbKey,
+                url: fb.url,
+                key: process.env[fb.keyEnv] || fb.key,
+                isBearer: fb.auth === 'bearer',
+                targetUrl: fbUrl,
+                rewriteModel: rewriteModel,
+                format: fb.format || 'anthropic',
+            });
+        }
+    }
+
+    return { primary, fallbacks };
 }
 
 // --- Anthropic server-side tool handling ---
@@ -332,6 +356,48 @@ async function populateToolResults(messages) {
     return true;
 }
 
+// --- Stream warmup: peek first SSE chunk before committing headers ---
+
+function peekFirstChunk(proxyRes, timeoutMs = 15000) {
+  return new Promise((resolve) => {
+    const contentType = proxyRes.headers['content-type'] || '';
+    if (!contentType.includes('text/event-stream')) {
+      return resolve({ ok: true, firstChunk: null });
+    }
+
+    let resolved = false;
+    const timer = setTimeout(() => {
+      if (resolved) return;
+      resolved = true;
+      proxyRes.removeListener('data', onData);
+      proxyRes.removeListener('error', onError);
+      proxyRes.destroy();
+      resolve({ ok: false, reason: 'timeout' });
+    }, timeoutMs);
+
+    const onData = (chunk) => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(timer);
+      proxyRes.removeListener('data', onData);
+      proxyRes.removeListener('error', onError);
+      resolve({ ok: true, firstChunk: chunk });
+    };
+
+    const onError = (err) => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(timer);
+      proxyRes.removeListener('data', onData);
+      proxyRes.removeListener('error', onError);
+      resolve({ ok: false, reason: 'error', message: err.message });
+    };
+
+    proxyRes.on('data', onData);
+    proxyRes.on('error', onError);
+  });
+}
+
 // --- Main server ---
 
 const startTime = Date.now();
@@ -351,96 +417,188 @@ const server = http.createServer((req, res) => {
         if (body.length > 10_000_000) { res.writeHead(413); res.end(); req.destroy(); }
     });
     req.on('end', async () => {
-        const start = Date.now();
+        const t0 = Date.now();
         let model = null;
-        try { model = JSON.parse(body).model; } catch (e) {}
+        let parsed = null;
+        try { parsed = JSON.parse(body); model = parsed.model; } catch (e) {}
 
-        const target = resolveTarget(model);
+        const resolved = resolveTarget(model);
 
-        if (target.error) {
+        if (resolved.error) {
             res.writeHead(502);
-            res.end(JSON.stringify({ error: target.error }));
+            res.end(JSON.stringify({ error: resolved.error }));
             return;
         }
 
-        // Process request body: rewrite model, convert server tools, populate tool results
-        let forwardedBody = body;
-        try {
-            const parsed = JSON.parse(body);
-            let modified = false;
+        // Pre-process request body once (tool results, server tools)
+        let baseBody = body;
+        let bodyPreprocessed = false;
+        if (parsed) {
+            try {
+                let modified = false;
 
-            // Rewrite model if needed
-            if (target.rewriteModel && parsed.model !== target.rewriteModel) {
-                parsed.model = target.rewriteModel;
-                modified = true;
-            }
+                if (parsed.messages) {
+                    const populated = await populateToolResults(parsed.messages);
+                    if (populated) modified = true;
+                }
 
-            // Populate empty tool results from previous turns
-            if (parsed.messages) {
-                const populated = await populateToolResults(parsed.messages);
-                if (populated) modified = true;
-            }
+                const conv = convertServerTools(parsed.tools);
+                if (conv.hasWebSearch || conv.hasWebFetch) {
+                    parsed.tools = conv.tools;
+                    modified = true;
+                }
 
-            // Convert Anthropic server-side tools → custom tools
-            const conv = convertServerTools(parsed.tools);
-            if (conv.hasWebSearch || conv.hasWebFetch) {
-                parsed.tools = conv.tools;
-                modified = true;
-            }
-
-            if (modified) forwardedBody = JSON.stringify(parsed);
-        } catch (e) {
-            forwardedBody = body;
+                if (modified) { baseBody = JSON.stringify(parsed); bodyPreprocessed = true; }
+            } catch (e) {}
         }
 
-        const upstreamPath = target.targetUrl.pathname.replace(/\/+$/, '') + req.url;
+        const chain = [resolved.primary, ...resolved.fallbacks];
+        if (chain.length > 3) chain.length = 3;
 
-        const options = {
-            hostname: target.targetUrl.hostname,
-            port: target.targetUrl.port || (target.targetUrl.protocol === 'https:' ? 443 : 80),
-            path: upstreamPath,
-            method: req.method,
-            headers: { ...req.headers },
-            timeout: 60000,
-        };
+        let lastError = null;
 
-        delete options.headers['host'];
-        delete options.headers['connection'];
-        delete options.headers['proxy-authorization'];
-        delete options.headers['content-length'];
-        delete options.headers['transfer-encoding'];
+        for (let attempt = 0; attempt < chain.length; attempt++) {
+            const target = chain[attempt];
+            const isRetry = attempt > 0;
 
-        if (target.isBearer) {
-            options.headers['authorization'] = `Bearer ${target.key}`;
-            delete options.headers['x-api-key'];
-        } else {
-            options.headers['x-api-key'] = target.key;
-            delete options.headers['authorization'];
+            // Rewrite model for this target
+            let forwardedBody = baseBody;
+            if (target.rewriteModel) {
+                try {
+                    const p = bodyPreprocessed ? JSON.parse(baseBody) : JSON.parse(body);
+                    if (p.model !== target.rewriteModel) { p.model = target.rewriteModel; forwardedBody = JSON.stringify(p); }
+                } catch (e) {}
+            }
+
+            // Protocol translation
+            let streamTransformer = null;
+            if (target.format === 'openai') {
+                try {
+                    const reqParsed = JSON.parse(forwardedBody);
+                    const { openaiBody } = translateRequest(reqParsed);
+                    forwardedBody = JSON.stringify(openaiBody);
+                    if (reqParsed.stream) streamTransformer = createStreamTransformer(model || reqParsed.model);
+                } catch (e) {}
+            }
+
+            const upstreamPath = target.targetUrl.pathname.replace(/\/+$/, '') + req.url;
+
+            const options = {
+                hostname: target.targetUrl.hostname,
+                port: target.targetUrl.port || (target.targetUrl.protocol === 'https:' ? 443 : 80),
+                path: upstreamPath,
+                method: req.method,
+                headers: { ...req.headers },
+                timeout: 60000,
+            };
+
+            delete options.headers['host'];
+            delete options.headers['connection'];
+            delete options.headers['proxy-authorization'];
+            delete options.headers['content-length'];
+            delete options.headers['transfer-encoding'];
+
+            if (target.isBearer) {
+                options.headers['authorization'] = `Bearer ${target.key}`;
+                delete options.headers['x-api-key'];
+            } else {
+                options.headers['x-api-key'] = target.key;
+                delete options.headers['authorization'];
+            }
+
+            const transport = options.port === 443 ? https : http;
+            const result = await tryForward(transport, options, forwardedBody, streamTransformer, target.format === 'openai');
+            const ms = Date.now() - t0;
+
+            if (result.success) {
+                if (isRetry) {
+                    console.error(`${req.method} ${model || '-'} → ${target.providerKey} ${result.status} ${ms}ms (fallback #${attempt})`);
+                } else {
+                    console.error(`${req.method} ${model || '-'} → ${target.providerKey} ${result.status} ${ms}ms`);
+                }
+                res.writeHead(result.status, result.headers);
+                if (result.body) {
+                    res.end(result.body);
+                } else if (result.stream) {
+                    result.stream.pipe(res);
+                }
+                return;
+            }
+
+            lastError = result.error;
+            const label = target.providerKey || 'upstream';
+            if (result.status) {
+                console.error(`${req.method} ${model || '-'} → ${label} ${result.status} ${ms}ms, trying next...`);
+            } else {
+                console.error(`${req.method} ${model || '-'} → ${label} ERR ${result.error} ${ms}ms, trying next...`);
+            }
         }
 
-        const transport = options.port === 443 ? https : http;
-        const proxy = transport.request(options, (proxyRes) => {
-            const ms = Date.now() - start;
-            console.error(`${req.method} ${model || '-'} → ${proxyRes.statusCode} ${ms}ms`);
-            res.writeHead(proxyRes.statusCode, proxyRes.headers);
-            proxyRes.pipe(res);
-        });
-
-        proxy.on('timeout', () => {
-            proxy.destroy();
-            res.writeHead(504);
-            res.end(JSON.stringify({ error: 'Upstream timeout after 60s' }));
-        });
-
-        proxy.on('error', (err) => {
-            console.error(`${req.method} ${model || '-'} → ERR ${err.message}`);
+        // All attempts failed
+        if (!res.headersSent) {
             res.writeHead(502);
-            res.end(JSON.stringify({ error: `Proxy error: ${err.message}` }));
-        });
-
-        proxy.write(forwardedBody);
-        proxy.end();
+            res.end(JSON.stringify({ error: lastError || 'All providers failed' }));
+        }
     });
+
+    function tryForward(transport, options, forwardedBody, streamTransformer, isOpenAI) {
+        return new Promise((resolve) => {
+            const proxy = transport.request(options, (proxyRes) => {
+                if (proxyRes.statusCode >= 500 || proxyRes.statusCode === 429) {
+                    proxyRes.resume();
+                    return resolve({ success: false, status: proxyRes.statusCode, error: `HTTP ${proxyRes.statusCode}` });
+                }
+
+                const ct = proxyRes.headers['content-type'] || '';
+                const isStream = ct.includes('text/event-stream');
+
+                if (isStream) {
+                    peekFirstChunk(proxyRes).then(peek => {
+                        if (!peek.ok) {
+                            proxy.destroy();
+                            return resolve({ success: false, error: `Stream peek: ${peek.reason}` });
+                        }
+                        if (peek.firstChunk) proxyRes.unshift(peek.firstChunk);
+
+                        const outHeaders = { ...proxyRes.headers };
+                        let outStream = proxyRes;
+                        if (streamTransformer) {
+                            outStream = proxyRes.pipe(streamTransformer);
+                        }
+
+                        resolve({ success: true, status: proxyRes.statusCode, headers: outHeaders, stream: outStream });
+                    });
+                } else {
+                    const chunks = [];
+                    proxyRes.on('data', c => chunks.push(c));
+                    proxyRes.on('end', () => {
+                        let responseBody = Buffer.concat(chunks);
+                        if (isOpenAI) {
+                            try {
+                                const openaiResp = JSON.parse(responseBody.toString());
+                                const anthropicResp = translateResponse(openaiResp, model);
+                                responseBody = Buffer.from(JSON.stringify(anthropicResp));
+                            } catch (e) {}
+                        }
+                        const outHeaders = { ...proxyRes.headers, 'content-length': responseBody.length };
+                        resolve({ success: true, status: proxyRes.statusCode, headers: outHeaders, body: responseBody });
+                    });
+                }
+            });
+
+            proxy.on('timeout', () => {
+                proxy.destroy();
+                resolve({ success: false, error: 'Upstream timeout after 60s' });
+            });
+
+            proxy.on('error', (err) => {
+                resolve({ success: false, error: err.message });
+            });
+
+            proxy.write(forwardedBody);
+            proxy.end();
+        });
+    }
 });
 
 server.listen(0, '127.0.0.1', () => {

@@ -32,6 +32,13 @@ deepclaude -b oc            # OpenCode Zen
 deepclaude -b km            # Kimi K2.6
 deepclaude -b mm            # Xiaomi Mimo V2.5 Pro
 deepclaude -b um            # Umans AI (Kimi K2.6)
+deepclaude -b gr            # Groq (Llama 4 Maverick)
+deepclaude -b mt            # Mistral Large
+deepclaude -b mx            # MiniMax M1
+deepclaude -b za            # Z.ai GLM 4.5
+deepclaude -b bp            # BytePlus Doubao 1.5 Pro
+deepclaude -b sf            # SiliconFlow (DeepSeek V4 Pro)
+deepclaude -b nv            # Novita (DeepSeek V4 Pro)
 deepclaude -b ds+oc         # DeepSeek main + OpenCode subs
 deepclaude -b ds+or         # DeepSeek main + OpenRouter subs
 deepclaude -b anthropic     # Normal Claude Code
@@ -77,8 +84,29 @@ deepclaude ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free  # 3 specs 
 | `KIMI_API_KEY` | Kimi/Moonshot | `km` | bearer |
 | `MIMO_API_KEY` | Xiaomi Mimo | `mm` | bearer |
 | `UMANS_API_KEY` | Umans AI | `um` | x-api-key |
+| `GROQ_API_KEY` | Groq | `gr` | bearer |
+| `MISTRAL_API_KEY` | Mistral | `mt` | bearer |
+| `MINIMAX_API_KEY` | MiniMax | `mx` | bearer |
+| `ZAI_API_KEY` | Z.ai / GLM | `za` | bearer |
+| `BYTEPLUS_API_KEY` | BytePlus/Doubao | `bp` | bearer |
+| `SILICONFLOW_API_KEY` | SiliconFlow | `sf` | bearer |
+| `NOVITA_API_KEY` | Novita | `nv` | bearer |
 
 Keys are read from both process env and machine/user environment variables.
+
+Providers with `format = "openai"` (Kimi, Mimo, Alibaba, Groq, Mistral, MiniMax, Z.ai, BytePlus, SiliconFlow, Novita) use OpenAI-compatible endpoints. The proxy automatically translates between Anthropic and OpenAI protocols — no configuration needed.
+
+## Provider fallback
+
+Providers can specify a `fallback` list — if the primary provider fails (500, 429, timeout, dead stream), the proxy automatically retries with the fallback:
+
+```
+km → fallback: ds        # Kimi fails → DeepSeek
+mm → fallback: oc        # Mimo fails → OpenCode
+gr → fallback: ds        # Groq fails → DeepSeek
+```
+
+Fallbacks are configured per-provider and transparent to Claude Code. Max 3 attempts per request.
 
 ## Named configs reference
 
@@ -92,6 +120,13 @@ oc     opus=oc:big-pickle  (all slots same)
 km     opus=km:kimi-k2.6  (all slots same)
 mm     opus=mm:mimo-v2.5-pro  (all slots same)
 um     opus=um:umans-coder  (all slots same)
+gr     opus=gr:groq/llama-4-maverick  sonnet=gr:groq/llama-4-maverick  haiku=gr:groq/deepseek-r1-distill-qwen-32b  sub=gr:groq/deepseek-r1-distill-qwen-32b
+mt     opus=mt:mistral/mistral-large  sonnet=mt:mistral/mistral-large  haiku=mt:mistral/mistral-small  sub=mt:mistral/mistral-small
+mx     opus=mx:minimax/minimax-m1  (all slots same)
+za     opus=za:zai/glm-4.5  (all slots same)
+bp     opus=bp:byteplus/doubao-1.5-pro  (all slots same)
+sf     opus=sf:siliconflow/deepseek-v4-pro[1m]  (all slots same)
+nv     opus=nv:novita/deepseek-v4-pro[1m]  (all slots same)
 ds+oc  opus=ds:deepseek-v4-pro  sonnet=ds:deepseek-v4-pro  haiku=oc:big-pickle  sub=oc:big-pickle
 ds+or  opus=ds:deepseek-v4-pro  sonnet=ds:deepseek-v4-pro  haiku=or:z-ai/glm-4.5-air:free  sub=or:z-ai/glm-4.5-air:free
 ```
@@ -127,6 +162,15 @@ Per-model context limits are configured automatically:
 | `kimi-k2.6`, `umans-kimi-k2.6`, `umans-coder` | 256K |
 | `mimo-v2.5-pro`, `umans-flash`, `umans-glm-5.1` | 128K |
 | `liquid/lfm-2.5-1.2b-instruct:free` | 32K |
+| `groq/llama-4-maverick` | 128K |
+| `groq/deepseek-r1-distill-qwen-32b` | 128K |
+| `mistral/mistral-large` | 128K |
+| `mistral/mistral-small` | 128K |
+| `minimax/minimax-m1` | 256K |
+| `zai/glm-4.5` | 128K |
+| `byteplus/doubao-1.5-pro` | 128K |
+| `siliconflow/deepseek-v4-pro` | 1M |
+| `novita/deepseek-v4-pro` | 1M |
 
 Models at 1M tokens get `CLAUDE_CODE_AUTO_COMPACT_WINDOW` set. Models between 128K–1M get `CLAUDE_CODE_MAX_CONTEXT_TOKENS` with compaction disabled.
 

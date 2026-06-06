@@ -152,6 +152,27 @@ $MimoKey = if ($env:MIMO_API_KEY) { $env:MIMO_API_KEY } else {
 $UmansKey = if ($env:UMANS_API_KEY) { $env:UMANS_API_KEY } else {
     [Environment]::GetEnvironmentVariable("UMANS_API_KEY", "User")
 }
+$GroqKey = if ($env:GROQ_API_KEY) { $env:GROQ_API_KEY } else {
+    [Environment]::GetEnvironmentVariable("GROQ_API_KEY", "User")
+}
+$MistralKey = if ($env:MISTRAL_API_KEY) { $env:MISTRAL_API_KEY } else {
+    [Environment]::GetEnvironmentVariable("MISTRAL_API_KEY", "User")
+}
+$MiniMaxKey = if ($env:MINIMAX_API_KEY) { $env:MINIMAX_API_KEY } else {
+    [Environment]::GetEnvironmentVariable("MINIMAX_API_KEY", "User")
+}
+$ZaiKey = if ($env:ZAI_API_KEY) { $env:ZAI_API_KEY } else {
+    [Environment]::GetEnvironmentVariable("ZAI_API_KEY", "User")
+}
+$BytePlusKey = if ($env:BYTEPLUS_API_KEY) { $env:BYTEPLUS_API_KEY } else {
+    [Environment]::GetEnvironmentVariable("BYTEPLUS_API_KEY", "User")
+}
+$SiliconFlowKey = if ($env:SILICONFLOW_API_KEY) { $env:SILICONFLOW_API_KEY } else {
+    [Environment]::GetEnvironmentVariable("SILICONFLOW_API_KEY", "User")
+}
+$NovitaKey = if ($env:NOVITA_API_KEY) { $env:NOVITA_API_KEY } else {
+    [Environment]::GetEnvironmentVariable("NOVITA_API_KEY", "User")
+}
 
 # Push keys into process env so child processes (proxy) inherit them
 $env:DEEPSEEK_API_KEY = $DeepSeekKey
@@ -162,6 +183,13 @@ $env:ALIBABA_DASHSCOPE_API_KEY = $AlibabaKey
 $env:KIMI_API_KEY = $KimiKey
 $env:MIMO_API_KEY = $MimoKey
 $env:UMANS_API_KEY = $UmansKey
+$env:GROQ_API_KEY = $GroqKey
+$env:MISTRAL_API_KEY = $MistralKey
+$env:MINIMAX_API_KEY = $MiniMaxKey
+$env:ZAI_API_KEY = $ZaiKey
+$env:BYTEPLUS_API_KEY = $BytePlusKey
+$env:SILICONFLOW_API_KEY = $SiliconFlowKey
+$env:NOVITA_API_KEY = $NovitaKey
 
 function Clear-AnthropicEnv {
     foreach ($v in @("ANTHROPIC_BASE_URL","ANTHROPIC_AUTH_TOKEN","ANTHROPIC_MODEL",
@@ -267,48 +295,115 @@ $Providers = @{
         url  = "https://api.deepseek.com/anthropic"
         key  = $DeepSeekKey; keyName = "DEEPSEEK_API_KEY"
         auth = "x-api-key"
+        format = "anthropic"
     }
     or = @{
         name = "OpenRouter"
         url  = "https://openrouter.ai/api"
         key  = $OpenRouterKey; keyName = "OPENROUTER_API_KEY"
         auth = "bearer"
+        format = "anthropic"
     }
     fw = @{
         name = "Fireworks AI"
         url  = "https://api.fireworks.ai/inference"
         key  = $FireworksKey; keyName = "FIREWORKS_API_KEY"
         auth = "bearer"
+        format = "anthropic"
     }
     oc = @{
         name = "OpenCode Zen"
         url  = "https://opencode.ai/zen"
         key  = $OpenCodeKey; keyName = "OPENCODE_API_KEY"
         auth = "bearer"
+        format = "anthropic"
     }
     al = @{
         name = "Alibaba/DashScope"
         url  = "https://dashscope.aliyuncs.com/api/v1/chat/completions"
         key  = $AlibabaKey; keyName = "ALIBABA_DASHSCOPE_API_KEY"
         auth = "bearer"
+        format = "openai"
+        fallback = @("ds")
     }
     km = @{
         name = "Kimi/Moonshot"
-        url  = "https://api.moonshot.ai/anthropic"
+        url  = "https://api.moonshot.ai/v1"
         key  = $KimiKey; keyName = "KIMI_API_KEY"
         auth = "bearer"
+        format = "openai"
+        fallback = @("ds")
     }
     mm = @{
         name = "Xiaomi Mimo"
-        url  = "https://token-plan-sgp.xiaomimimo.com/anthropic"
+        url  = "https://api.xiaomimimo.com/v1"
         key  = $MimoKey; keyName = "MIMO_API_KEY"
         auth = "bearer"
+        format = "openai"
+        fallback = @("oc")
     }
     um = @{
         name = "Umans AI"
         url  = "https://api.code.umans.ai"
         key  = $UmansKey; keyName = "UMANS_API_KEY"
         auth = "x-api-key"
+        format = "anthropic"
+    }
+    gr = @{
+        name = "Groq"
+        url  = "https://api.groq.com/openai/v1"
+        key  = $GroqKey; keyName = "GROQ_API_KEY"
+        auth = "bearer"
+        format = "openai"
+        fallback = @("ds")
+    }
+    mt = @{
+        name = "Mistral"
+        url  = "https://api.mistral.ai/v1"
+        key  = $MistralKey; keyName = "MISTRAL_API_KEY"
+        auth = "bearer"
+        format = "openai"
+        fallback = @("ds")
+    }
+    mx = @{
+        name = "MiniMax"
+        url  = "https://api.minimax.chat/v1"
+        key  = $MiniMaxKey; keyName = "MINIMAX_API_KEY"
+        auth = "bearer"
+        format = "openai"
+        fallback = @("ds")
+    }
+    za = @{
+        name = "Z.ai / GLM"
+        url  = "https://open.bigmodel.cn/api/paas/v4"
+        key  = $ZaiKey; keyName = "ZAI_API_KEY"
+        auth = "bearer"
+        format = "openai"
+        fallback = @("ds")
+    }
+    bp = @{
+        name = "BytePlus/Doubao"
+        url  = "https://ark.cn-beijing.volces.com/api/v3"
+        key  = $BytePlusKey; keyName = "BYTEPLUS_API_KEY"
+        auth = "bearer"
+        format = "openai"
+        fallback = @("ds")
+    }
+    sf = @{
+        name = "SiliconFlow"
+        url  = "https://api.siliconflow.cn/v1"
+        key  = $SiliconFlowKey; keyName = "SILICONFLOW_API_KEY"
+        auth = "bearer"
+        format = "openai"
+        fallback = @("ds")
+    }
+    nv = @{
+        name = "Novita"
+        url  = "https://api.novita.ai/v3/openai"
+        key  = $NovitaKey; keyName = "NOVITA_API_KEY"
+        auth = "bearer"
+        format = "openai"
+        fallback = @("ds")
     }
 }
 
@@ -331,6 +426,15 @@ $ModelCtx = @{
     "umans-coder"                            = 262144   # 256K (Kimi K2.6)
     "umans-flash"                            = 131072   # 128K (Qwen3.6-35B-A3B)
     "umans-glm-5.1"                          = 131072   # 128K (GLM 5.1)
+    "groq/llama-4-maverick"                  = 131072   # 128K
+    "groq/deepseek-r1-distill-qwen-32b"      = 131072   # 128K
+    "mistral/mistral-large"                  = 131072   # 128K
+    "mistral/mistral-small"                  = 131072   # 128K
+    "minimax/minimax-m1"                     = 262144   # 256K
+    "zai/glm-4.5"                            = 131072   # 128K
+    "byteplus/doubao-1.5-pro"                = 131072   # 128K
+    "siliconflow/deepseek-v4-pro"            = 1048576  # 1M
+    "novita/deepseek-v4-pro"                 = 1048576  # 1M
 }
 
 # --- Configuration Registry ---
@@ -415,6 +519,55 @@ $Configs = [ordered]@{
         sonnet   = "ds:deepseek-v4-pro[1m]"
         haiku    = "oc:big-pickle"
         subagent = "oc:big-pickle"
+    }
+    gr = @{
+        name     = "Groq (Llama 4 Maverick)"
+        opus     = "gr:groq/llama-4-maverick"
+        sonnet   = "gr:groq/llama-4-maverick"
+        haiku    = "gr:groq/deepseek-r1-distill-qwen-32b"
+        subagent = "gr:groq/deepseek-r1-distill-qwen-32b"
+    }
+    mt = @{
+        name     = "Mistral Large"
+        opus     = "mt:mistral/mistral-large"
+        sonnet   = "mt:mistral/mistral-large"
+        haiku    = "mt:mistral/mistral-small"
+        subagent = "mt:mistral/mistral-small"
+    }
+    mx = @{
+        name     = "MiniMax M1"
+        opus     = "mx:minimax/minimax-m1"
+        sonnet   = "mx:minimax/minimax-m1"
+        haiku    = "mx:minimax/minimax-m1"
+        subagent = "mx:minimax/minimax-m1"
+    }
+    za = @{
+        name     = "Z.ai GLM 4.5"
+        opus     = "za:zai/glm-4.5"
+        sonnet   = "za:zai/glm-4.5"
+        haiku    = "za:zai/glm-4.5"
+        subagent = "za:zai/glm-4.5"
+    }
+    bp = @{
+        name     = "BytePlus Doubao 1.5 Pro"
+        opus     = "bp:byteplus/doubao-1.5-pro"
+        sonnet   = "bp:byteplus/doubao-1.5-pro"
+        haiku    = "bp:byteplus/doubao-1.5-pro"
+        subagent = "bp:byteplus/doubao-1.5-pro"
+    }
+    sf = @{
+        name     = "SiliconFlow (DeepSeek V4 Pro)"
+        opus     = "sf:siliconflow/deepseek-v4-pro[1m]"
+        sonnet   = "sf:siliconflow/deepseek-v4-pro[1m]"
+        haiku    = "sf:siliconflow/deepseek-v4-pro[1m]"
+        subagent = "sf:siliconflow/deepseek-v4-pro[1m]"
+    }
+    nv = @{
+        name     = "Novita (DeepSeek V4 Pro)"
+        opus     = "nv:novita/deepseek-v4-pro[1m]"
+        sonnet   = "nv:novita/deepseek-v4-pro[1m]"
+        haiku    = "nv:novita/deepseek-v4-pro[1m]"
+        subagent = "nv:novita/deepseek-v4-pro[1m]"
     }
 }
 
@@ -545,19 +698,25 @@ function Build-RoutesJson {
         # Include ALL providers with valid keys so /model providerKey:modelId works
         foreach ($kv in $Providers.GetEnumerator()) {
             if ($kv.Value.key) {
+                $fb = if ($kv.Value.fallback) { $kv.Value.fallback } else { $null }
                 $providerEntries[$kv.Key] = @{
-                    url  = $kv.Value.url
-                    keyEnv = $kv.Value.keyName
-                    auth   = $kv.Value.auth
+                    url      = $kv.Value.url
+                    keyEnv   = $kv.Value.keyName
+                    auth     = $kv.Value.auth
+                    format   = if ($kv.Value.format) { $kv.Value.format } else { "anthropic" }
+                    fallback = $fb
                 }
             }
         }
     } else {
         foreach ($kv in $resolved.providers.GetEnumerator()) {
+            $fb = if ($kv.Value.fallback) { $kv.Value.fallback } else { $null }
             $providerEntries[$kv.Key] = @{
-                url    = $kv.Value.url
-                keyEnv = $kv.Value.keyName
-                auth   = $kv.Value.auth
+                url      = $kv.Value.url
+                keyEnv   = $kv.Value.keyName
+                auth     = $kv.Value.auth
+                format   = if ($kv.Value.format) { $kv.Value.format } else { "anthropic" }
+                fallback = $fb
             }
         }
     }
@@ -679,6 +838,13 @@ if ($Status) {
     Write-Host "    KIMI_API_KEY:               $(Get-KeyDisplay $KimiKey)"
     Write-Host "    MIMO_API_KEY:               $(Get-KeyDisplay $MimoKey)"
     Write-Host "    UMANS_API_KEY:              $(Get-KeyDisplay $UmansKey)"
+    Write-Host "    GROQ_API_KEY:               $(Get-KeyDisplay $GroqKey)"
+    Write-Host "    MISTRAL_API_KEY:            $(Get-KeyDisplay $MistralKey)"
+    Write-Host "    MINIMAX_API_KEY:            $(Get-KeyDisplay $MiniMaxKey)"
+    Write-Host "    ZAI_API_KEY:                $(Get-KeyDisplay $ZaiKey)"
+    Write-Host "    BYTEPLUS_API_KEY:           $(Get-KeyDisplay $BytePlusKey)"
+    Write-Host "    SILICONFLOW_API_KEY:        $(Get-KeyDisplay $SiliconFlowKey)"
+    Write-Host "    NOVITA_API_KEY:             $(Get-KeyDisplay $NovitaKey)"
     Write-Host "`n  Configurations:" -ForegroundColor Yellow
     foreach ($kv in $Configs.GetEnumerator()) {
         $label = if ($kv.Key -eq "ds") { " (default)" } else { "" }
@@ -830,7 +996,7 @@ if ($Doctor) {
 
     # 5. API keys
     Write-Host "`n  API Keys:" -ForegroundColor Yellow
-    $keyProviders = @("ds","or","fw","oc","al","km","mm","um")
+    $keyProviders = @("ds","or","fw","oc","al","km","mm","um","gr","mt","mx","za","bp","sf","nv")
     $keysOk = 0
     $keysTotal = 0
     foreach ($pk in $keyProviders) {
@@ -970,7 +1136,7 @@ if ($Benchmark) {
     Write-Host "  ==================" -ForegroundColor DarkGray
 
     # Pre-resolve configs (can't call script functions in -Parallel runspaces)
-    $benchJobs = foreach ($id in @("ds","or","or2","or3","fw","oc","km","mm","um")) {
+    $benchJobs = foreach ($id in @("ds","or","or2","or3","fw","oc","km","mm","um","gr","mt","mx","za","bp","sf","nv")) {
         try {
             $r = Resolve-Config $id
             if (-not $r) { continue }
