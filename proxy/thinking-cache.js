@@ -24,23 +24,28 @@ function sessionKey(reqBody) {
     const content = typeof firstUserMsg.content === 'string'
         ? firstUserMsg.content
         : (Array.isArray(firstUserMsg.content) ? firstUserMsg.content.map(b => b.text || '').join('') : '');
-    return crypto.createHash('md5').update(content.slice(0, 200)).digest('hex');
+    const systemHint = reqBody.system
+        ? (typeof reqBody.system === 'string' ? reqBody.system : (Array.isArray(reqBody.system) ? reqBody.system.map(b => b.text || '').join('') : '')).slice(0, 100)
+        : '';
+    return crypto.createHash('sha256').update(content + '|' + systemHint).digest('hex').slice(0, 32);
 }
 
-function store(sessionKey, firstToolUseId, blocks) {
+function store(sessionKey, firstToolUseId, blocks, messageCount = 0) {
     if (!blocks || blocks.length === 0 || !firstToolUseId) return;
     cleanExpired();
     cache.set(`${sessionKey}:${firstToolUseId}`, {
         blocks: blocks.map(b => ({ type: b.type, thinking: b.thinking, signature: b.signature || '' })),
         expiresAt: Date.now() + TTL_MS,
+        messageCount,
     });
 }
 
-function retrieve(sessionKey, firstToolUseId) {
+function retrieve(sessionKey, firstToolUseId, currentMsgCount = -1) {
     cleanExpired();
     const entry = cache.get(`${sessionKey}:${firstToolUseId}`);
     if (!entry) return null;
     if (Date.now() > entry.expiresAt) { cache.delete(`${sessionKey}:${firstToolUseId}`); return null; }
+    if (entry.messageCount > 0 && currentMsgCount >= 0 && entry.messageCount !== currentMsgCount) return null;
     return entry.blocks;
 }
 
@@ -62,7 +67,7 @@ function injectThinkingBlocks(messages) {
         if (toolUses.length === 0) continue;
 
         const firstId = toolUses[0].id;
-        const cached = retrieve(sk, firstId);
+        const cached = retrieve(sk, firstId, messages.length);
         if (cached) {
             msg.content = [...cached, ...msg.content];
             injected++;

@@ -6,6 +6,8 @@ const { Transform } = require('stream');
 const { translateRequest, translateResponse, createStreamTransformer } = require('./protocol-translate');
 const { injectThinkingBlocks, extractThinkingBlocks, store } = require('./thinking-cache');
 
+const keepAliveAgent = new https.Agent({ keepAlive: true, maxSockets: 50, keepAliveMsecs: 30000 });
+
 const args = process.argv.slice(2);
 
 function readJson(path) {
@@ -50,7 +52,11 @@ if (overridesFile) {
     }
 }
 
+let lastStatCheck = 0;
 function checkReload() {
+    const now = Date.now();
+    if (now - lastStatCheck < 1000) return;
+    lastStatCheck = now;
     if (routesFile) {
         try {
             const stat = fs.statSync(routesFile);
@@ -58,7 +64,9 @@ function checkReload() {
                 routing = readJson(routesFile);
                 routesMtime = stat.mtimeMs;
             }
-        } catch (e) { /* keep old routes */ }
+        } catch (e) {
+            console.error('Failed to reload routes:', e.message);
+        }
     }
     if (overridesFile) {
         try {
@@ -67,8 +75,18 @@ function checkReload() {
                 slotOverrides = readJson(overridesFile);
                 overridesMtime = stat.mtimeMs;
             }
-        } catch (e) { /* keep old overrides */ }
+        } catch (e) {
+            console.error(`Failed to reload ${overridesFile}:`, e.message);
+        }
     }
+}
+
+function isProviderHealthy(key) {
+    const s = providerStats[key];
+    if (!s || s.requests < 3) return true;
+    const failRate = s.fails / s.requests;
+    if (failRate >= 0.5) return false;
+    return true;
 }
 
 function resolveTarget(model) {
@@ -87,7 +105,7 @@ function resolveTarget(model) {
         model = slotOverrides[slot] || fallback;
     }
 
-    let providerKey, rewriteModel = null;
+    let providerKey = null, rewriteModel = null;
 
     // Check for providerKey:modelId prefix (explicit provider override from /model)
     const prefixMatch = model && model.match(/^([a-z][a-z0-9_-]*):(.+)$/);
@@ -116,7 +134,7 @@ function resolveTarget(model) {
     }
 
     const targetUrl = new URL(provider.url);
-    const primary = {
+    let primary = {
         providerKey,
         url: provider.url,
         key: process.env[provider.keyEnv] || provider.key,
@@ -156,6 +174,16 @@ function resolveTarget(model) {
                 rewriteModel: fbRewrite,
                 format: fb.format || 'anthropic',
             });
+        }
+    }
+
+    // Circuit breaker: skip unhealthy primary
+    if (fallbacks.length > 0 && !isProviderHealthy(primary.providerKey)) {
+        const healthyFallbackIdx = fallbacks.findIndex(f => isProviderHealthy(f.providerKey));
+        if (healthyFallbackIdx >= 0) {
+            const tmp = primary;
+            primary = fallbacks[healthyFallbackIdx];
+            fallbacks[healthyFallbackIdx] = tmp;
         }
     }
 
@@ -266,15 +294,47 @@ function webSearch(query) {
 
 // --- Web fetch execution ---
 
-function webFetch(url, _depth = 0) {
-    if (_depth > 5) return Promise.resolve('Too many redirects fetching: ' + url);
+function isPrivateIPv4(host) {
+    return host === '127.0.0.1' || host === '0.0.0.0' ||
+        /^10\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
+        /^192\.168\./.test(host) || /^169\.254\./.test(host);
+}
+
+function webFetch(url, _depth = 0, _visited = new Set()) {
+    try {
+        const parsed = new URL(url);
+        const hostname = parsed.hostname;
+        if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]' ||
+            /^10\./.test(hostname) || /^172\.(1[6-9]|2\d|3[01])\./.test(hostname) ||
+            /^192\.168\./.test(hostname) || /^169\.254\./.test(hostname) ||
+            /^0\.0\.0\.0$/.test(hostname)) {
+            return Promise.resolve('Error: Access to internal/private networks is blocked.');
+        }
+        // Block all-numeric hostnames (integer-form IPs like 2130706433)
+        if (/^\d+$/.test(hostname)) return Promise.resolve('Error: Access to internal/private networks is blocked.');
+        // Block hex-form IPs (e.g. 0x7f000001)
+        if (/^0x[0-9a-fA-F]+$/.test(hostname)) return Promise.resolve('Error: Access to internal/private networks is blocked.');
+        // Block IPv4-mapped IPv6 private addresses
+        if (/^::ffff:/.test(hostname)) {
+            const ipv4Part = hostname.replace(/^::ffff:/, '');
+            if (isPrivateIPv4(ipv4Part)) return Promise.resolve('Error: Access to internal/private networks is blocked.');
+        }
+        // Block IPv6 private ranges (ULA fc00::/7, link-local fe80::/10)
+        if (hostname.startsWith('fc') || hostname.startsWith('fd') ||
+            hostname.startsWith('fe8') || hostname.startsWith('fe9') ||
+            hostname.startsWith('fea') || hostname.startsWith('feb')) {
+            return Promise.resolve('Error: Access to internal/private networks is blocked.');
+        }
+    } catch (e) { return Promise.resolve('Error: Invalid URL.'); }
+    if (_depth > 5 || _visited.has(url)) return Promise.resolve('Too many redirects fetching: ' + url);
+    _visited.add(url);
     return new Promise((resolve) => {
         const parsedUrl = new URL(url);
         const transport = parsedUrl.protocol === 'https:' ? https : http;
         const req = transport.get(url, { headers: { 'User-Agent': 'deepclaude-proxy/1.0' }, timeout: 20000 }, (res) => {
             // Follow redirects
             if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-                webFetch(new URL(res.headers.location, url).href, _depth + 1).then(resolve);
+                webFetch(new URL(res.headers.location, url).href, _depth + 1, _visited).then(resolve);
                 return;
             }
             let data = '';
@@ -386,32 +446,36 @@ function peekFirstChunk(proxyRes, timeoutMs = 15000) {
     const timer = setTimeout(() => {
       if (resolved) return;
       resolved = true;
-      proxyRes.removeListener('data', onData);
+      proxyRes.removeListener('readable', onReadable);
       proxyRes.removeListener('error', onError);
       proxyRes.destroy();
       resolve({ ok: false, reason: 'timeout' });
     }, timeoutMs);
 
-    const onData = (chunk) => {
+    const onReadable = () => {
+      if (resolved) return;
+      const chunk = proxyRes.read();
+      if (chunk !== null) {
+        resolved = true;
+        clearTimeout(timer);
+        proxyRes.removeListener('readable', onReadable);
+        proxyRes.removeListener('error', onError);
+        proxyRes.unshift(chunk);
+        resolve({ ok: true, firstChunk: chunk });
+      }
+    };
+
+    const onError = () => {
       if (resolved) return;
       resolved = true;
       clearTimeout(timer);
-      proxyRes.removeListener('data', onData);
+      proxyRes.removeListener('readable', onReadable);
       proxyRes.removeListener('error', onError);
-      resolve({ ok: true, firstChunk: chunk });
+      resolve({ ok: false, reason: 'error', message: 'stream error during peek' });
     };
 
-    const onError = (err) => {
-      if (resolved) return;
-      resolved = true;
-      clearTimeout(timer);
-      proxyRes.removeListener('data', onData);
-      proxyRes.removeListener('error', onError);
-      resolve({ ok: false, reason: 'error', message: err.message });
-    };
-
-    proxyRes.on('data', onData);
-    proxyRes.on('error', onError);
+    proxyRes.on('readable', onReadable);
+    proxyRes.once('error', onError);
   });
 }
 
@@ -419,6 +483,7 @@ function peekFirstChunk(proxyRes, timeoutMs = 15000) {
 
 const startTime = Date.now();
 const providerStats = {}; // providerKey → { requests, successes, fails, totalMs }
+let requestIdCounter = 0;
 
 const server = http.createServer((req, res) => {
     if (req.method === 'GET' && req.url === '/health') {
@@ -433,19 +498,27 @@ const server = http.createServer((req, res) => {
 
     checkReload();
 
+    const contentLength = parseInt(req.headers['content-length'], 10);
+    if (contentLength > 10_000_000) {
+        res.writeHead(413, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: { type: 'api_error', message: 'request body too large' } }));
+        req.destroy();
+        return;
+    }
     let body = '';
     req.on('data', chunk => {
         body += chunk;
-        if (body.length > 10_000_000) { res.writeHead(413); res.end(); req.destroy(); }
+        if (body.length > 10_000_000) { res.writeHead(413, { 'content-type': 'application/json' }); res.end(JSON.stringify({ error: { type: 'api_error', message: 'request body too large' } })); req.destroy(); }
     });
-    req.on('end', async () => {
-        const t0 = Date.now();
+    req.on('end', () => {
+        const reqId = ++requestIdCounter;
+        (async () => {
         let model = null;
         let parsed = null;
         try { parsed = JSON.parse(body); model = parsed.model; } catch (e) {}
 
         const urlPath = req.url.split('?')[0];
-        const isModelCall = urlPath === '/v1/messages';
+        const isModelCall = urlPath === '/v1/messages' || urlPath === '/v1/messages/';
 
         // Non-model calls (OAuth, agent infrastructure, etc.) → passthrough to Anthropic directly.
         // Claude Code sends many API endpoint types through ANTHROPIC_BASE_URL — routing
@@ -457,6 +530,7 @@ const server = http.createServer((req, res) => {
             delete anthroHeaders['host'];
             delete anthroHeaders['connection'];
             delete anthroHeaders['content-length'];
+            delete anthroHeaders['transfer-encoding'];
 
             const anthroTransport = anthro.protocol === 'https:' ? https : http;
             const anthroReq = anthroTransport.request({
@@ -553,6 +627,7 @@ const server = http.createServer((req, res) => {
                 method: req.method,
                 headers: { ...req.headers },
                 timeout: 60000,
+                agent: keepAliveAgent,
             };
 
             delete options.headers['host'];
@@ -569,17 +644,24 @@ const server = http.createServer((req, res) => {
                 delete options.headers['authorization'];
             }
 
-            if (options.hostname.includes('openrouter')) {
+            if (options.hostname === 'openrouter.ai' || options.hostname.endsWith('.openrouter.ai')) {
                 options.headers['http-referer'] = 'https://github.com/Poiar/deepclaude';
                 options.headers['x-title'] = 'deepclaude';
             }
 
-            // Inject cached thinking blocks and strip all before forwarding
-            if (target.format !== 'openai') {
+            // Handle thinking blocks based on target format
+            if (target.format === 'anthropic') {
                 try {
                     const reqParsed = JSON.parse(forwardedBody);
                     if (reqParsed.messages) {
                         injectThinkingBlocks(reqParsed.messages);
+                        forwardedBody = JSON.stringify(reqParsed);
+                    }
+                } catch (e) {}
+            } else if (target.format === 'openai') {
+                try {
+                    const reqParsed = JSON.parse(forwardedBody);
+                    if (reqParsed.messages) {
                         reqParsed.messages = reqParsed.messages.map(m => {
                             if (m.role === 'assistant' && Array.isArray(m.content)) {
                                 m.content = m.content.filter(b => b.type !== 'thinking');
@@ -592,25 +674,35 @@ const server = http.createServer((req, res) => {
             }
 
             const transport = options.port === 443 ? https : http;
+            const t0 = Date.now();
             const result = await tryForward(transport, options, forwardedBody, streamTransformer, target.format === 'openai');
             const ms = Date.now() - t0;
 
             if (result.success) {
                 recordStat(target.providerKey, true, ms);
                 if (isRetry) {
-                    console.error(`${req.method} ${model || '-'} → ${target.providerKey} ${result.status} ${ms}ms (fallback #${attempt})`);
+                    console.error(`[#${reqId}] ${req.method} ${model || '-'} → ${target.providerKey} ${result.status} ${ms}ms (fallback #${attempt})`);
                 } else {
-                    console.error(`${req.method} ${model || '-'} → ${target.providerKey} ${result.status} ${ms}ms`);
+                    console.error(`[#${reqId}] ${req.method} ${model || '-'} → ${target.providerKey} ${result.status} ${ms}ms`);
                 }
                 res.writeHead(result.status, result.headers);
                 if (result.body) {
                     res.end(result.body);
                 } else if (result.stream) {
                     result.stream.on('error', (err) => {
-                        if (!res.headersSent) { res.writeHead(502); }
-                        res.end();
+                        console.error(`[#${reqId}] Stream error for ${model}:`, err.message);
+                        if (!res.headersSent) {
+                            res.writeHead(502, { 'content-type': 'application/json' });
+                            res.end(JSON.stringify({ error: { type: 'api_error', message: 'upstream stream failed' } }));
+                        } else {
+                            res.write('event: error\ndata: {"type":"error","error":{"type":"api_error","message":"upstream stream failed"}}\n\n');
+                            res.end();
+                        }
                     });
                     result.stream.pipe(res);
+                    res.on('close', () => {
+                        if (result.stream && !result.stream.destroyed) result.stream.destroy();
+                    });
                 }
                 return;
             }
@@ -619,9 +711,9 @@ const server = http.createServer((req, res) => {
             lastError = result.error;
             const label = target.providerKey || 'upstream';
             if (result.status) {
-                console.error(`${req.method} ${model || '-'} → ${label} ${result.status} ${ms}ms, trying next...`);
+                console.error(`[#${reqId}] ${req.method} ${model || '-'} → ${label} ${result.status} ${ms}ms, trying next...`);
             } else {
-                console.error(`${req.method} ${model || '-'} → ${label} ERR ${result.error} ${ms}ms, trying next...`);
+                console.error(`[#${reqId}] ${req.method} ${model || '-'} → ${label} ERR ${result.error} ${ms}ms, trying next...`);
             }
         }
 
@@ -630,59 +722,26 @@ const server = http.createServer((req, res) => {
             res.writeHead(502);
             res.end(JSON.stringify({ error: lastError || 'All providers failed' }));
         }
+        })().catch(err => {
+            console.error('FATAL: unhandled error in request handler:', err);
+            if (!res.headersSent) { res.writeHead(502); res.end('{}'); }
+        });
     });
 
-    function createUsageNormalizer() {
-        return new Transform({
-            transform(chunk, encoding, callback) {
-                const str = (this._buf || '') + chunk.toString();
-                const parts = str.split('\n\n');
-                this._buf = parts.pop() || '';
-                let output = '';
-                for (const part of parts) {
-                    const m = part.match(/^data: (.+)$/m);
-                    if (!m) { output += part + '\n\n'; continue; }
-                    try {
-                        const d = JSON.parse(m[1]);
-                        let changed = false;
-                        if (d.type === 'message_start' && d.message && !d.message.usage) {
-                            d.message.usage = { input_tokens: 0, output_tokens: 0 };
-                            changed = true;
-                        }
-                        if (d.type === 'message_delta' && !d.usage) {
-                            d.usage = { output_tokens: 0 };
-                            changed = true;
-                        }
-                        output += changed
-                            ? `data: ${JSON.stringify(d)}\n\n`
-                            : part + '\n\n';
-                    } catch { output += part + '\n\n'; }
-                }
-                callback(null, output);
-            },
-            flush(callback) {
-                if (this._buf && this._buf.trim()) {
-                    callback(null, this._buf + '\n\n');
-                } else {
-                    callback(null);
-                }
-            },
-        });
-    }
-
-    function recordStat(providerKey, success, ms) {
+function recordStat(providerKey, success, ms) {
         if (!providerKey) return;
         if (!providerStats[providerKey]) providerStats[providerKey] = { requests: 0, successes: 0, fails: 0, totalMs: 0 };
         const s = providerStats[providerKey];
         s.requests++;
         s.totalMs += ms;
+        s.lastRequest = Date.now();
         if (success) s.successes++; else s.fails++;
     }
 
     function tryForward(transport, options, forwardedBody, streamTransformer, isOpenAI) {
         return new Promise((resolve) => {
             const proxy = transport.request(options, (proxyRes) => {
-                if (proxyRes.statusCode >= 500 || proxyRes.statusCode === 429) {
+                if (proxyRes.statusCode >= 400) {
                     proxyRes.resume();
                     return resolve({ success: false, status: proxyRes.statusCode, error: `HTTP ${proxyRes.statusCode}` });
                 }
@@ -696,13 +755,15 @@ const server = http.createServer((req, res) => {
                             proxy.destroy();
                             return resolve({ success: false, error: `Stream peek: ${peek.reason}` });
                         }
-                        if (peek.firstChunk) proxyRes.unshift(peek.firstChunk);
+                        // peek.firstChunk already unshifted by peekFirstChunk — do not unshift again
 
-                        const outHeaders = { ...proxyRes.headers };
+                        const SAFE_HEADERS = ['content-type', 'x-request-id', 'cache-control'];
+                        const outHeaders = {};
+                        for (const h of SAFE_HEADERS) {
+                            if (proxyRes.headers[h]) outHeaders[h] = proxyRes.headers[h];
+                        }
+                        if (!outHeaders['content-type']) outHeaders['content-type'] = proxyRes.headers['content-type'] || 'text/event-stream';
                         let outStream = proxyRes;
-
-                        const usageNorm = createUsageNormalizer();
-                        outStream = outStream.pipe(usageNorm);
 
                         if (streamTransformer) {
                             outStream = outStream.pipe(streamTransformer);
@@ -712,11 +773,9 @@ const server = http.createServer((req, res) => {
                     });
                 } else {
                     const chunks = [];
-                    const bodyTimer = setTimeout(() => { proxyRes.destroy(); resolve({ success: false, error: 'Response body timeout after 30s' }); }, 30000);
                     proxyRes.on('data', c => chunks.push(c));
-                    proxyRes.on('error', (err) => { clearTimeout(bodyTimer); resolve({ success: false, error: err.message }); });
+                    proxyRes.on('error', (err) => { resolve({ success: false, error: err.message }); });
                     proxyRes.on('end', () => {
-                        clearTimeout(bodyTimer);
                         let responseBody = Buffer.concat(chunks);
                         if (isOpenAI) {
                             try {
@@ -728,7 +787,9 @@ const server = http.createServer((req, res) => {
                             try {
                                 const resp = JSON.parse(responseBody.toString());
                                 if (resp.content && Array.isArray(resp.content)) {
-                                    const tc = extractThinkingBlocks([{ role: 'assistant', content: resp.content }]);
+                                    const responseMsg = { role: 'assistant', content: resp.content };
+                                    const fullMessages = parsed && parsed.messages ? [...parsed.messages, responseMsg] : [responseMsg];
+                                    const tc = extractThinkingBlocks(fullMessages);
                                     if (tc) {
                                         store(tc.sk, tc.firstToolUseId, tc.blocks);
                                         resp.content = resp.content.filter(b => b.type !== 'thinking' && b.type !== 'redacted_thinking');
@@ -737,7 +798,11 @@ const server = http.createServer((req, res) => {
                                 }
                             } catch (e) {}
                         }
-                        const outHeaders = { ...proxyRes.headers, 'content-length': responseBody.length };
+                        const SAFE_HEADERS = ['content-type', 'x-request-id', 'cache-control'];
+                        const outHeaders = { 'content-length': responseBody.length };
+                        for (const h of SAFE_HEADERS) {
+                            if (proxyRes.headers[h]) outHeaders[h] = proxyRes.headers[h];
+                        }
                         resolve({ success: true, status: proxyRes.statusCode, headers: outHeaders, body: responseBody });
                     });
                 }
@@ -765,7 +830,23 @@ server.listen(0, '127.0.0.1', () => {
 
 process.on('SIGTERM', () => {
     server.close(() => process.exit(0));
+    setTimeout(() => {
+        console.error('Forced shutdown after 30s drain timeout');
+        process.exit(1);
+    }, 30000).unref();
 });
 process.on('SIGINT', () => {
     server.close(() => process.exit(0));
+    setTimeout(() => {
+        console.error('Forced shutdown after 30s drain timeout');
+        process.exit(1);
+    }, 30000).unref();
+});
+process.on('unhandledRejection', (reason) => {
+    console.error('FATAL: unhandledRejection:', reason);
+});
+process.on('uncaughtException', (err) => {
+    console.error('FATAL: uncaughtException:', err.message);
+    if (typeof server !== 'undefined') server.close(() => process.exit(1));
+    else process.exit(1);
 });

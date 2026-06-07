@@ -1,7 +1,8 @@
-import { createServer } from 'http';
-import { request as httpsRequest } from 'https';
-import { URL } from 'url';
-import { Transform } from 'stream';
+const { createServer } = require('http');
+const { request: httpsRequest, Agent } = require('https');
+const { URL } = require('url');
+const { Transform } = require('stream');
+const { deduplicatePath, buildSafeHeaders } = require('./util');
 
 const ANTHROPIC_FALLBACK = 'https://api.anthropic.com';
 const MODEL_PATHS = ['/v1/messages'];
@@ -22,7 +23,33 @@ const MODEL_REMAP = {
         'claude-sonnet-4-5-20250929': 'deepseek/deepseek-v4-flash',
         'claude-haiku-4-5-20251001':  'deepseek/deepseek-v4-flash',
     },
+    fireworks: {
+        'claude-opus-4-6': 'accounts/fireworks/models/deepseek-v4-pro',
+        'claude-opus-4-7': 'accounts/fireworks/models/deepseek-v4-pro',
+        'claude-sonnet-4-6': 'accounts/fireworks/models/deepseek-v4-flash',
+        'claude-sonnet-4-5-20250929': 'accounts/fireworks/models/deepseek-v4-flash',
+        'claude-haiku-4-5-20251001': 'accounts/fireworks/models/deepseek-v4-flash',
+    },
 };
+
+const httpsAgent = new Agent({
+    keepAlive: true,
+    maxSockets: 50,
+    keepAliveMsecs: 30000,
+});
+
+function remapModel(model, provider) {
+    const remap = MODEL_REMAP[provider];
+    if (!remap) return model;
+    if (remap[model]) return remap[model];
+    // Catch-all: map any claude-* model to the default for this provider
+    if (model.startsWith('claude-')) {
+        if (model.includes('opus')) return remap['claude-opus-4-7'] || model;
+        if (model.includes('sonnet')) return remap['claude-sonnet-4-6'] || model;
+        if (model.includes('haiku')) return remap['claude-haiku-4-5-20251001'] || model;
+    }
+    return model; // pass through unknown models
+}
 
 const PRICING_PER_M = {
     deepseek:   { input: 0.44,  output: 0.87 },
@@ -122,7 +149,7 @@ function stripUnsignedThinkingBlocks(body) {
     }
 }
 
-export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends, defaultMode }) {
+function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends, defaultMode }) {
     return new Promise((resolve, reject) => {
         const initialTarget = new URL(targetUrl);
         const initialBearer = targetUrl.includes('openrouter') || targetUrl.includes('fireworks');
@@ -208,7 +235,8 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
         }
 
         const server = createServer((clientReq, clientRes) => {
-            const urlPath = clientReq.url.split('?')[0];
+            const parsedUrl = new URL(clientReq.url, 'http://localhost');
+            const urlPath = parsedUrl.pathname;
 
             // Control endpoints — /_proxy/* (never collides with /v1/*)
             if (urlPath.startsWith('/_proxy/')) {
@@ -228,7 +256,7 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                 }
                 if (urlPath === '/_proxy/mode' && clientReq.method === 'POST') {
                     const origin = clientReq.headers['origin'] || '';
-                    if (origin && !origin.startsWith('http://127.0.0.1') && !origin.startsWith('http://localhost')) {
+                    if (origin && !/^http:\/\/127\.0\.0\.1(:\d+)?$/.test(origin)) {
                         clientRes.writeHead(403, { 'content-type': 'application/json' });
                         clientRes.end(JSON.stringify({ error: 'Forbidden' }));
                         return;
@@ -237,7 +265,12 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                     let bodySize = 0;
                     clientReq.on('data', c => {
                         bodySize += c.length;
-                        if (bodySize > 1024) { clientReq.destroy(); return; }
+                        if (bodySize > 1024) {
+                            clientRes.writeHead(413, { 'content-type': 'application/json' });
+                            clientRes.end(JSON.stringify({ error: { type: 'api_error', message: 'request body too large' } }));
+                            clientReq.destroy();
+                            return;
+                        }
                         chunks.push(c);
                     });
                     clientReq.on('end', () => {
@@ -254,7 +287,7 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                             clientRes.end(JSON.stringify(result));
                             return;
                         }
-                        console.log(`[MODEL-PROXY] Mode switched: ${result.previous} → ${result.mode}`);
+                        console.error(`[MODEL-PROXY] Mode switched: ${result.previous} → ${result.mode}`);
                         clientRes.writeHead(200, { 'content-type': 'application/json' });
                         clientRes.end(JSON.stringify(result));
                     });
@@ -280,12 +313,7 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
             // Strip the shared prefix to avoid /api/v1/v1/messages.
             let fullPath;
             if (isModelCall) {
-                const base = state.target.pathname.replace(/\/$/, '');
-                let overlap = '';
-                for (let i = 1; i <= Math.min(base.length, urlPath.length); i++) {
-                    if (base.endsWith(urlPath.substring(0, i))) overlap = urlPath.substring(0, i);
-                }
-                fullPath = overlap ? base + urlPath.substring(overlap.length) : base + urlPath;
+                fullPath = deduplicatePath(state.target.pathname, urlPath) + (parsedUrl.search || '');
             } else {
                 fullPath = clientReq.url;
             }
@@ -294,7 +322,7 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
             const t0 = Date.now();
 
             if (isModelCall) {
-                console.log(`[MODEL-PROXY] #${reqId} → ${dest.hostname}${fullPath}`);
+                console.error(`[MODEL-PROXY] #${reqId} → ${dest.hostname}${fullPath}`);
             }
 
             const headers = { ...clientReq.headers, host: dest.host };
@@ -311,7 +339,17 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
             }
 
             const chunks = [];
-            clientReq.on('data', c => chunks.push(c));
+            var bodySize = 0;
+            clientReq.on('data', c => {
+                bodySize += c.length;
+                if (bodySize > 10000000) {
+                    clientRes.writeHead(413, { 'content-type': 'application/json' });
+                    clientRes.end(JSON.stringify({ error: { type: 'api_error', message: 'request body too large' } }));
+                    clientReq.destroy();
+                    return;
+                }
+                chunks.push(c);
+            });
             clientReq.on('end', () => {
                 let body = Buffer.concat(chunks);
 
@@ -319,9 +357,9 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                 if (isModelCall && MODEL_REMAP[state.mode]) {
                     try {
                         const parsed = JSON.parse(body);
-                        const mapped = MODEL_REMAP[state.mode][parsed.model];
-                        if (mapped) {
-                            console.log(`[MODEL-PROXY] #${reqId} model remap: ${parsed.model} → ${mapped}`);
+                        const mapped = remapModel(parsed.model, state.mode);
+                        if (mapped !== parsed.model) {
+                            console.error(`[MODEL-PROXY] #${reqId} model remap: ${parsed.model} → ${mapped}`);
                             parsed.model = mapped;
                             body = Buffer.from(JSON.stringify(parsed));
                         }
@@ -360,12 +398,13 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                     method: clientReq.method,
                     headers: { ...headers, 'content-length': body.length },
                     timeout: REQUEST_TIMEOUT_MS,
+                    agent: httpsAgent,
                 };
 
                 const proxyReq = httpsRequest(opts, (proxyRes) => {
                     if (isModelCall) {
                         const ttfb = Date.now() - t0;
-                        console.log(`[MODEL-PROXY] #${reqId} TTFB ${ttfb}ms (status ${proxyRes.statusCode})`);
+                        console.error(`[MODEL-PROXY] #${reqId} TTFB ${ttfb}ms (status ${proxyRes.statusCode})`);
                     }
 
                     const ct = proxyRes.headers['content-type'] || '';
@@ -374,9 +413,19 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                     if (isModelCall && isSSE) {
                         clientRes.writeHead(proxyRes.statusCode, proxyRes.headers);
                         const norm = new UsageNormalizer((inp, out) => recordUsage(state.mode, inp, out));
+                        [proxyRes, norm, clientRes].forEach(s => s.on('error', (err) => {
+                            console.error(`#${reqId} stream error:`, err.message);
+                            if (!clientRes.headersSent) {
+                                clientRes.writeHead(502, { 'content-type': 'application/json' });
+                                clientRes.end(JSON.stringify({ error: { type: 'api_error', message: 'stream error' } }));
+                            } else {
+                                clientRes.write('event: error\ndata: {"type":"error","error":{"type":"api_error","message":"upstream stream failed"}}\n\n');
+                                clientRes.end();
+                            }
+                        }));
                         proxyRes.pipe(norm).pipe(clientRes);
                         proxyRes.on('end', () => {
-                            console.log(`[MODEL-PROXY] #${reqId} done in ${((Date.now() - t0) / 1000).toFixed(1)}s (${norm._inputTokens}in/${norm._outputTokens}out)`);
+                            console.error(`[MODEL-PROXY] #${reqId} done in ${((Date.now() - t0) / 1000).toFixed(1)}s (${norm._inputTokens}in/${norm._outputTokens}out)`);
                         });
                     } else if (isModelCall && ct.includes('application/json')) {
                         const respChunks = [];
@@ -391,15 +440,31 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                             const outHeaders = { ...proxyRes.headers, 'content-length': fixed.length };
                             clientRes.writeHead(proxyRes.statusCode, outHeaders);
                             clientRes.end(fixed);
-                            console.log(`[MODEL-PROXY] #${reqId} done in ${((Date.now() - t0) / 1000).toFixed(1)}s (json, ${fixed.length}b)`);
+                            console.error(`[MODEL-PROXY] #${reqId} done in ${((Date.now() - t0) / 1000).toFixed(1)}s (json, ${fixed.length}b)`);
+                        });
+                        proxyRes.on('error', (err) => {
+                            console.error(`#${reqId} json error:`, err.message);
+                            if (!clientRes.headersSent) {
+                                clientRes.writeHead(502, { 'content-type': 'application/json' });
+                            }
+                            clientRes.end(JSON.stringify({ error: { type: 'api_error', message: 'upstream connection failed' } }));
                         });
                     } else {
                         // Non-model or unknown content-type: pass through
                         clientRes.writeHead(proxyRes.statusCode, proxyRes.headers);
+                        [proxyRes, clientRes].forEach(s => s.on('error', (err) => {
+                            console.error(`#${reqId} stream error:`, err.message);
+                            if (!clientRes.headersSent) {
+                                clientRes.writeHead(502, { 'content-type': 'application/json' });
+                                clientRes.end(JSON.stringify({ error: { type: 'api_error', message: 'stream error' } }));
+                            } else {
+                                clientRes.end();
+                            }
+                        }));
                         proxyRes.pipe(clientRes);
                         if (isModelCall) {
                             proxyRes.on('end', () => {
-                                console.log(`[MODEL-PROXY] #${reqId} done in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+                                console.error(`[MODEL-PROXY] #${reqId} done in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
                             });
                         }
                     }
@@ -423,6 +488,17 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
             });
         });
 
+        process.on('SIGTERM', () => {
+            console.error('SIGTERM received, shutting down');
+            server.close(() => process.exit(0));
+            setTimeout(() => process.exit(1), 30000).unref();
+        });
+        process.on('SIGINT', () => {
+            console.error('SIGINT received, shutting down');
+            server.close(() => process.exit(0));
+            setTimeout(() => process.exit(1), 5000).unref();
+        });
+
         function tryListen(port) {
             server.once('error', (err) => {
                 if (err.code === 'EADDRINUSE' && port < startPort + 20) {
@@ -441,3 +517,5 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
         tryListen(startPort);
     });
 }
+
+module.exports = { startModelProxy };
