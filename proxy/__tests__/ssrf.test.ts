@@ -132,12 +132,12 @@ describe('validateUrl', () => {
     expect(result.valid).toBe(true)
   })
 
-  // --- 12. DNS resolution failure handling ---
-  test('DNS resolution failure rejects when allowPrivate is false', async () => {
+  // --- 12. DNS resolution failure allows through (don't self-DOS) ---
+  test('DNS resolution failure allows when DNS is unavailable', async () => {
     stubDns('nonexistent.example.com', [])
     const result = await validateUrl('https://nonexistent.example.com/')
-    expect(result.valid).toBe(false)
-    expect(result.reason).toMatch(/DNS resolution failed/)
+    expect(result.valid).toBe(true)
+    expect(result.reason).toMatch(/DNS resolution failed \(allowed\)/)
   })
 
   // --- 13. DNS resolution failure accepts when allowPrivate is true ---
