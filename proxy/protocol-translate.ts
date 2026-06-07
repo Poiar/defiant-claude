@@ -264,7 +264,7 @@ function translateToolChoice(tc: unknown): unknown {
 
 export function translateResponse(openaiBody: OpenAIResponseBody, model: string): Record<string, unknown> {
     const choice = openaiBody.choices && openaiBody.choices[0];
-    const message = choice ? choice.message : {};
+    const message: OpenAIMessage | undefined = choice ? choice.message : undefined;
     const finishReason = choice ? choice.finish_reason : null;
     const usage = openaiBody.usage || {};
 

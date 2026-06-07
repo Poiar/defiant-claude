@@ -100,7 +100,7 @@ export function isServerToolType(type: string | null | undefined): boolean {
 // --- Server tool conversion ---
 
 export function convertServerTools(tools: ToolDef[] | null | undefined): ConvertResult {
-    if (tools === null || tools === undefined) return { tools: tools as null | undefined, hasWebSearch: false, hasWebFetch: false };
+    if (tools === null || tools === undefined) return { tools: [], hasWebSearch: false, hasWebFetch: false };
     if (!Array.isArray(tools)) return { tools, hasWebSearch: false, hasWebFetch: false };
 
     let hasWebSearch = false;
@@ -116,7 +116,7 @@ export function convertServerTools(tools: ToolDef[] | null | undefined): Convert
                 type: 'custom',
                 name: 'web_search',
                 description: 'Search the web for current, up-to-date information. Returns relevant text snippets and URLs.',
-                input_schema: WEB_SEARCH_SCHEMA,
+                input_schema: WEB_SEARCH_SCHEMA as unknown as Record<string, unknown>,
             };
         }
         if (type.startsWith('web_fetch_') || type.startsWith('url_fetch_')) {
@@ -125,7 +125,7 @@ export function convertServerTools(tools: ToolDef[] | null | undefined): Convert
                 type: 'custom',
                 name: 'web_fetch',
                 description: 'Fetch and read content from a URL. Returns the text content of the page.',
-                input_schema: WEB_FETCH_SCHEMA,
+                input_schema: WEB_FETCH_SCHEMA as unknown as Record<string, unknown>,
             };
         }
         return tool;
@@ -234,10 +234,10 @@ export function webFetch(url: string, _depth?: number, _visited?: Set<string>): 
         // uses -- avoiding a mismatch between validation and connection.
         try {
             const resolved = new URL(url);
-            const results: dns.LookupAddress[] = await Promise.race([
+            const results = await Promise.race([
                 dns.promises.lookup(resolved.hostname, { all: true }),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('DNS timeout')), 5000)),
-            ]);
+                new Promise<never>((_, reject) => setTimeout(() => reject(new Error('DNS timeout')), 5000)),
+            ]) as dns.LookupAddress[];
             for (const r of results) {
                 if (r.family === 4) {
                     if (isPrivateIPv4(r.address)) return 'Error: Access to internal/private networks is blocked.';
@@ -332,7 +332,7 @@ export function hasPendingToolResult(messages: Message[]): PendingToolResult {
     }
     return { needsPopulation: emptyResults.length > 0, emptyResults };
 }
-async function populateToolResults(messages: Message[]): Promise<boolean> {
+export async function populateToolResults(messages: Message[]): Promise<boolean> {
     const { emptyResults } = hasPendingToolResult(messages);
     if (!emptyResults || emptyResults.length === 0) return false;
 
