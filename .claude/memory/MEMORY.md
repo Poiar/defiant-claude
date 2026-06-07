@@ -1,0 +1,1 @@
+- [DeepClaude Architecture](project-deepclaude-architecture.md) — Provider-agnostic Claude Code proxy: slot routing, protocol translation, fallback chains, thinking-block caching, WebSearch/WebFetch
