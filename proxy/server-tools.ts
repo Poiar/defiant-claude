@@ -171,10 +171,9 @@ export function webSearch(query: string): Promise<string> {
             resolve(`Web search failed: ${err.message}. Query was: "${query}"`);
         }).on('timeout', () => {
             resolve(`Web search timed out for query: "${query}"`);
-        }
-        }
         });
     });
+}
 // --- Web fetch execution ---
 
 function isPrivateIPv4(host: string): boolean {
@@ -195,8 +194,8 @@ export function webFetch(url: string, _depth?: number, _visited?: Set<string>): 
             /^10\./.test(hostname) || /^172\.(1[6-9]|2\d|3[01])\./.test(hostname) ||
             /^192\.168\./.test(hostname) || /^169\.254\./.test(hostname) ||
             /^0\.0\.0\.0$/.test(hostname)) {
-            }
             return Promise.resolve('Error: Access to internal/private networks is blocked.');
+        }
         if (/^\d+$/.test(hostname)) return Promise.resolve('Error: Access to internal/private networks is blocked.');
         if (/^0x[0-9a-fA-F]+$/.test(hostname)) return Promise.resolve('Error: Access to internal/private networks is blocked.');
 
@@ -207,8 +206,8 @@ export function webFetch(url: string, _depth?: number, _visited?: Set<string>): 
         if (rawHost.startsWith('fc') || rawHost.startsWith('fd') ||
             rawHost.startsWith('fe8') || rawHost.startsWith('fe9') ||
             rawHost.startsWith('fea') || rawHost.startsWith('feb')) {
-            }
             return Promise.resolve('Error: Access to internal/private networks is blocked.');
+        }
         if (rawHost.startsWith('::ffff:')) {
             const raw = rawHost.replace(/^::ffff:/, '');
             if (isPrivateIPv4(raw)) return Promise.resolve('Error: Access to internal/private networks is blocked.');
@@ -220,11 +219,11 @@ export function webFetch(url: string, _depth?: number, _visited?: Set<string>): 
                 if (!isNaN(hi) && !isNaN(lo)) {
                     const ipv4 = `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`;
                     if (isPrivateIPv4(ipv4)) return Promise.resolve('Error: Access to internal/private networks is blocked.');
+                }
+            }
         }
-    }
     } catch (e) { return Promise.resolve('Error: Invalid URL.'); }
 
-    }
     if (_depth > 5 || _visited.has(url)) return Promise.resolve('Too many redirects fetching: ' + url);
     _visited.add(url);
 
@@ -247,15 +246,15 @@ export function webFetch(url: string, _depth?: number, _visited?: Set<string>): 
                         r.address.startsWith('fd') || r.address.startsWith('fe8') ||
                         r.address.startsWith('fe9') || r.address.startsWith('fea') ||
                         r.address.startsWith('feb') || r.address.startsWith('::ffff:')) {
-                        }
                         return 'Error: Access to internal/private networks is blocked.';
+                    }
+                }
+            }
         } catch (dnsErr) {
             // DNS failure means we can't validate, so block the request.
             // DNS errors are rare for legitimate URLs and common for SSRF probes.
             log.error(null, 'webFetch DNS lookup failed for ' + scrubCredentials(url) + ': ' + ((dnsErr as Error).message || ''));
             return 'Error: Could not resolve hostname.';
-        }
-            }
         }
         return new Promise((resolve) => {
             const parsedUrl = new URL(url);
@@ -285,13 +284,12 @@ export function webFetch(url: string, _depth?: number, _visited?: Set<string>): 
                     resolve(text || `Fetched ${url} but could not extract text content.`);
                 });
                 res.on('error', (err: Error) => resolve(`Web fetch failed: ${err.message}. URL was: ${url}`));
-            }
-            }
             });
             req.on('error', (err: Error) => resolve(`Web fetch failed: ${err.message}. URL was: ${url}`));
             req.on('timeout', () => { req.destroy(); resolve(`Web fetch timed out for URL: ${url}`); });
         });
     })();
+}
 // --- Tool result population ---
 
 export function hasPendingToolResult(messages: Message[]): PendingToolResult {
@@ -305,12 +303,12 @@ export function hasPendingToolResult(messages: Message[]): PendingToolResult {
         for (const block of content) {
             if (block.type === 'tool_use' && (block.name === 'web_search' || block.name === 'web_fetch')) {
                 toolUseIds.set(block.id!, { name: block.name, input: block.input || {} });
-    if (toolUseIds.size === 0) return { needsPopulation: false };
-
-    const emptyResults: Array<{ block: Record<string, unknown>; toolInfo: { name: string; input: Record<string, unknown> } }> = [];
             }
         }
     }
+    if (toolUseIds.size === 0) return { needsPopulation: false };
+
+    const emptyResults: Array<{ block: Record<string, unknown>; toolInfo: { name: string; input: Record<string, unknown> } }> = [];
     for (const msg of messages) {
         if (msg.role !== 'user') continue;
         const content = Array.isArray(msg.content) ? msg.content : [];
@@ -329,10 +327,10 @@ export function hasPendingToolResult(messages: Message[]): PendingToolResult {
 
             if (isEmpty) {
                 emptyResults.push({ block: block as unknown as Record<string, unknown>, toolInfo });
-    return { needsPopulation: emptyResults.length > 0, emptyResults };
             }
         }
     }
+    return { needsPopulation: emptyResults.length > 0, emptyResults };
 }
 async function populateToolResults(messages: Message[]): Promise<boolean> {
     const { emptyResults } = hasPendingToolResult(messages);
@@ -344,6 +342,7 @@ async function populateToolResults(messages: Message[]): Promise<boolean> {
             if (query) {
                 const result = await webSearch(query);
                 block.content = result;
+            }
         } else if (toolInfo.name === 'web_fetch') {
             const url = (toolInfo.input.url || toolInfo.input.uri || '') as string;
             if (url) {
@@ -351,8 +350,6 @@ async function populateToolResults(messages: Message[]): Promise<boolean> {
                 block.content = result;
             }
         }
-        }
-    }
     }
     return true;
-};
+}

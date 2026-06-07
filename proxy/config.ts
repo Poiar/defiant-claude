@@ -50,6 +50,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
         routesFile = args[1];
         if (args[2] === '--overrides' && args[3]) {
             overridesFile = args[3];
+        }
     } else if (args.length >= 2) {
         singleUrl = args[0];
         singleKey = args[1];
@@ -57,9 +58,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
         console.error('Usage: npx tsx start-proxy.ts <provider_url> <api_key>');
         console.error('       npx tsx start-proxy.ts --routes <routes.json> [--overrides <overrides.json>]');
         process.exit(1);
+    }
     return { routesFile, overridesFile, singleUrl, singleKey };
-    }
-    }
 }
 // --- JSON file helpers ---
 
@@ -101,14 +101,14 @@ export function loadConfig(parsed: ParsedArgs): ConfigState {
                 validateUrl(provider.url).then((result: { valid: boolean; reason?: string }) => {
                     if (!result.valid) {
                         log.warn(null, 'Provider "' + key + '" URL fails SSRF check: ' + (result.reason || 'unknown'));
+                    }
                 }).catch((err: Error) => {
                     log.warn(null, 'Provider "' + key + '" SSRF validation error: ' + err.message);
-                }
-                }
                 });
-    return { routing, routesMtime, slotOverrides, overridesMtime };
+            }
         }
     }
+    return { routing, routesMtime, slotOverrides, overridesMtime };
 }
 // --- Hot-reload ---
 // Polls route and override files once per second. If mtimes change, reloads.
@@ -129,9 +129,9 @@ export function checkReload(state: ConfigState, parsed: ParsedArgs): boolean {
                 state.routing = readJson(parsed.routesFile) as RoutingConfig;
                 state.routesMtime = stat.mtimeMs;
                 changed = true;
+            }
         } catch (e) {
             log.error(null, 'Failed to reload routes: ' + (e as Error).message);
-        }
         }
     }
     if (parsed.overridesFile) {
@@ -141,9 +141,9 @@ export function checkReload(state: ConfigState, parsed: ParsedArgs): boolean {
                 state.slotOverrides = readJson(parsed.overridesFile) as Record<string, string>;
                 state.overridesMtime = stat.mtimeMs;
                 changed = true;
+            }
         } catch (e) {
             log.error(null, 'Failed to reload ' + parsed.overridesFile + ': ' + (e as Error).message);
-        }
         }
     }
     return changed;
@@ -175,7 +175,6 @@ export function validateConfig(state: ConfigState, _parsed: ParsedArgs): string[
                 }
             }
         }
-        }
         if (state.routing.defaultProvider && !providerKeys.has(state.routing.defaultProvider)) {
             warnings.push('defaultProvider "' + state.routing.defaultProvider + '" not found in providers table');
         }
@@ -187,11 +186,12 @@ export function validateConfig(state: ConfigState, _parsed: ParsedArgs): string[
                 } else if (route && typeof route === 'object' && (route as { provider: string }).provider) {
                     providerKey = (route as { provider: string }).provider;
                 }
-                }
                 if (providerKey && !providerKeys.has(providerKey)) {
                     warnings.push('Route "' + model + '" references unknown provider: ' + providerKey);
                 }
+            }
         }
+    }
     return warnings;
 }
 // --- Key resolution with encryption support ---
@@ -212,5 +212,5 @@ export function resolveKey(rawKey: string | null | undefined): string | null | u
     } catch (err) {
         log.warn(null, 'Failed to decrypt API key: ' + (err as Error).message);
         return null;
+    }
 }
-};

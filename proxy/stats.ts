@@ -11,8 +11,8 @@ interface ProviderStat {
     lastRequest?: number;
     inputTokens: number;
     outputTokens: number;
-export const providerStats: Record<string, ProviderStat> = {};
 }
+export const providerStats: Record<string, ProviderStat> = {};
 export const startTime: number = Date.now();
 
 // Read version from package.json at the project root, fallback to hardcoded value.
@@ -68,12 +68,11 @@ export function getHealthSnapshot(): { status: string; uptime: number; providers
                 inputTokens: v.inputTokens || 0,
                 outputTokens: v.outputTokens || 0,
             };
+        }
     } catch (_) {
         // Non-fatal -- return whatever we built so far.
+    }
     return { status: 'ok', uptime: Date.now() - startTime, providers: healthStats };
-    }
-    }
-}
 }
 // Build health endpoint response with concurrency, rate limiter, and version.
 export function getFullHealthSnapshot(concurrencyStatus: unknown, rateLimiterStatus: unknown): Record<string, unknown> {

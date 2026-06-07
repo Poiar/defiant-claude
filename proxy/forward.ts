@@ -57,7 +57,7 @@ export function sseHeaders(extra?: ForwardHeaders): ForwardHeaders {
         'connection': 'keep-alive',
         'x-accel-buffering': 'no',
     }, extra || {});
-    }
+}
 // --- Stream warmup: peek first SSE chunk before committing headers ---
 // Returns { ok: true, firstChunk } on success, { ok: false, reason } on failure.
 // This prevents committing to a provider that returns 200 but never sends data.
@@ -188,11 +188,12 @@ export function tryForward(
                                     const ct = parsedPayload.usage.completion_tokens !== undefined ? parsedPayload.usage.completion_tokens : parsedPayload.usage.output_tokens;
                                     if (pt !== undefined || ct !== undefined) {
                                         streamUsage = { prompt_tokens: pt || 0, completion_tokens: ct || 0 };
-                            }
+                                    }
+                                }
                             } catch (_) { /* non-fatal */ }
                         }
                     }
-                    });
+                    );
 
                     // Enforce MAX_SSE_BUFFER per accumulated SSE event
                     let sseBuf = '';
@@ -210,8 +211,9 @@ export function tryForward(
                         if (sseBuf.length > MAX_SSE_BUFFER) {
                             log.error(reqId, truncateForLog('SSE event exceeded 1MB limit -- aborting stream'));
                             (outStream as NodeJS.ReadableStream & { destroy(err?: Error): void }).destroy(new Error('SSE event too large'));
+                        }
                     }
-                    });
+                    );
 
                     resolve({ success: true, status: proxyRes.statusCode, headers: outHeaders, stream: outStream as Transform, streamUsage });
                 });
@@ -219,7 +221,6 @@ export function tryForward(
                 (proxyRes as NodeJS.ReadableStream & { setTimeout(ms: number, cb: () => void): void }).setTimeout(30000, () => {
                     (proxyRes as NodeJS.ReadableStream & { destroy(): void }).destroy();
                     resolve({ success: false, error: 'Response read timeout after 30s', transportError: true });
-                }
                 });
                 const chunks: Buffer[] = [];
                 let totalSize = 0;
@@ -253,14 +254,14 @@ export function tryForward(
                                     }];
                                     const rc = extractReasoningContent(fullMessages as unknown as never[]);
                                     if (rc) storeReasoning(rc.sk, rc.firstToolCallId, rc.reasoningContent);
+                                }
                             } catch (_) { /* non-fatal */ }
-
-                            }
                             const anthropicResp = translateResponse(openaiResp, model || '');
                             responseBody = Buffer.from(JSON.stringify(anthropicResp));
                         } catch (e) {
                             log.error(reqId, 'response translation error: ' + truncateForLog((e as Error).message));
                             translationFailed = true;
+                        }
                     } else {
                         try {
                             const resp = JSON.parse(responseBody.toString());
@@ -274,14 +275,13 @@ export function tryForward(
                                         (b: { type: string }) => b.type !== 'thinking' && b.type !== 'redacted_thinking'
                                     );
                                     responseBody = Buffer.from(JSON.stringify(resp));
+                                }
+                            }
                         } catch (e) {
                             log.error(reqId, 'thinking extraction error: ' + truncateForLog((e as Error).message));
+                        }
+                    }
                     const outHeaders = buildSafeHeaders(proxyRes.headers as Record<string, string | string[] | undefined>, { 'content-length': String(responseBody.length) });
-                        }
-                            }
-                        }
-                    }
-                    }
                     if (translationFailed) {
                         resolve({ success: false, status: 502, error: 'Protocol translation failed' });
                     } else {
@@ -294,11 +294,11 @@ export function tryForward(
                                 const ct = original.usage.completion_tokens !== undefined ? original.usage.completion_tokens : original.usage.output_tokens;
                                 if (pt !== undefined || ct !== undefined) {
                                     streamUsage = { prompt_tokens: pt || 0, completion_tokens: ct || 0 };
-                        }
+                                }
+                            }
                         } catch (_) { /* non-fatal */ }
                         resolve({ success: true, status: proxyRes.statusCode, headers: outHeaders, body: responseBody, streamUsage });
                     }
-                }
                 });
         }
         });
@@ -306,18 +306,17 @@ export function tryForward(
         (proxy as NodeJS.WritableStream & { on(event: string, cb: (...args: unknown[]) => void): NodeJS.WritableStream }).on('timeout', () => {
             (proxy as NodeJS.WritableStream & { destroy(): void }).destroy();
             resolve({ success: false, error: 'Upstream timeout after 60s', transportError: true });
-        }
         });
 
         (proxy as NodeJS.WritableStream & { on(event: string, cb: (...args: unknown[]) => void): NodeJS.WritableStream }).on('error', (err: Error) => {
             const label = describeTransportError(err);
             resolve({ success: false, error: label, transportError: true });
-        }
         });
 
         proxy.write(forwardedBody);
         proxy.end();
     });
+}
 // --- Fallback response headers ---
 // Annotate a working response with fallback metadata so clients can see
 // what happened when the primary provider failed.
@@ -335,4 +334,4 @@ export function addFallbackHeaders(headers: ForwardHeaders, meta?: FallbackMeta 
         result['x-fallback-exhausted'] = 'true';
     }
     return result;
-};
+}
