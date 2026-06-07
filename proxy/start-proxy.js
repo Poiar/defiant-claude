@@ -252,14 +252,15 @@ function webSearch(query) {
 
 // --- Web fetch execution ---
 
-function webFetch(url) {
+function webFetch(url, _depth = 0) {
+    if (_depth > 5) return Promise.resolve('Too many redirects fetching: ' + url);
     return new Promise((resolve) => {
         const parsedUrl = new URL(url);
         const transport = parsedUrl.protocol === 'https:' ? https : http;
-        const req = transport.get(url, { headers: { 'User-Agent': 'deepclaude-proxy/1.0' }, timeout: 20000, maxRedirects: 5 }, (res) => {
+        const req = transport.get(url, { headers: { 'User-Agent': 'deepclaude-proxy/1.0' }, timeout: 20000 }, (res) => {
             // Follow redirects
             if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-                webFetch(new URL(res.headers.location, url).href).then(resolve);
+                webFetch(new URL(res.headers.location, url).href, _depth + 1).then(resolve);
                 return;
             }
             let data = '';
@@ -697,8 +698,11 @@ const server = http.createServer((req, res) => {
                     });
                 } else {
                     const chunks = [];
+                    const bodyTimer = setTimeout(() => { proxyRes.destroy(); resolve({ success: false, error: 'Response body timeout after 30s' }); }, 30000);
                     proxyRes.on('data', c => chunks.push(c));
+                    proxyRes.on('error', (err) => { clearTimeout(bodyTimer); resolve({ success: false, error: err.message }); });
                     proxyRes.on('end', () => {
+                        clearTimeout(bodyTimer);
                         let responseBody = Buffer.concat(chunks);
                         if (isOpenAI) {
                             try {
