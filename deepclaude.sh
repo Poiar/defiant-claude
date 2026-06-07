@@ -396,13 +396,12 @@ start_proxy() {
     err_file=$(mktemp "${TMPDIR:-/tmp}/deepclaude.XXXXXX")
 
     local tsx_bin="${SCRIPT_DIR}/node_modules/.bin/tsx"
-    if [[ -x "$tsx_bin" ]]; then
-        "$tsx_bin" "$proxy_script" --routes "$routes_file" --overrides "$SLOT_OVERRIDES_FILE" \
-            > "$out_file" 2> "$err_file" &
-    else
-        node "$proxy_script" --routes "$routes_file" --overrides "$SLOT_OVERRIDES_FILE" \
-            > "$out_file" 2> "$err_file" &
+    if [[ ! -x "$tsx_bin" ]]; then
+        echo "ERROR: Dependencies not installed. Run 'npm install' in ${SCRIPT_DIR} first." >&2
+        exit 1
     fi
+    "$tsx_bin" "$proxy_script" --routes "$routes_file" --overrides "$SLOT_OVERRIDES_FILE" \
+        > "$out_file" 2> "$err_file" &
     local proxy_pid=$!
 
     # Wait for port output
