@@ -61,9 +61,9 @@ export function formatError(status: number, templateVars?: Record<string, string
     if (templateVars) {
         for (const [k, v] of Object.entries(templateVars)) {
             message = message.replace('{' + k + '}', String(v));
-    const error: ApiError = { type: 'api_error', message, error_code: entry.ecode };
         }
     }
+    const error: ApiError = { type: 'api_error', message, error_code: entry.ecode };
     if (isDev) {
         error.code = entry.code;
         error.upstream_status = status;
