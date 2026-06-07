@@ -564,23 +564,16 @@ function Start-RoutingProxy {
         throw "Node.js is not installed or not in PATH. Install Node.js from https://nodejs.org and ensure it's in your PATH."
     }
 
-    # Use tsx via npx if local tsx not found (handles fresh clones before npm install)
     $tsxBin = Join-Path $myDir "node_modules\.bin\tsx.cmd"
-    if (Test-Path $tsxBin) {
-        $proc = Start-Process -FilePath $tsxBin `
-            -ArgumentList ($proxyScript, '--routes', $RoutesFile, '--overrides', $SlotOverridesFile) `
-            -NoNewWindow `
-            -RedirectStandardOutput $outFile `
-            -RedirectStandardError $errFile `
-            -PassThru
-    } else {
-        $proc = Start-Process -FilePath $nodePath `
-            -ArgumentList ($proxyScript, '--routes', $RoutesFile, '--overrides', $SlotOverridesFile) `
-            -NoNewWindow `
-            -RedirectStandardOutput $outFile `
-            -RedirectStandardError $errFile `
-            -PassThru
+    if (-not (Test-Path $tsxBin)) {
+        throw "Dependencies not installed. Run 'npm install' in '$myDir' first."
     }
+    $proc = Start-Process -FilePath $tsxBin `
+        -ArgumentList ($proxyScript, '--routes', $RoutesFile, '--overrides', $SlotOverridesFile) `
+        -NoNewWindow `
+        -RedirectStandardOutput $outFile `
+        -RedirectStandardError $errFile `
+        -PassThru
 
     # Wait for port output
     Write-Host -NoNewline "Starting proxy"
