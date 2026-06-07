@@ -10,13 +10,21 @@ Provider-agnostic Claude Code wrapper. Route each model slot (Opus, Sonnet, Haik
 setx DEEPSEEK_API_KEY "sk-your-key"          # Windows
 export DEEPSEEK_API_KEY="sk-your-key"        # macOS/Linux
 
-# Install: add repo directory to PATH, or:
-npm install -g .                             # if you prefer npm link
+# Option 1: npm link (creates global deepclaude command)
+npm install -g .
+
+# Option 2: Add repo directory to PATH manually
+# Windows: setx PATH "%PATH%;C:\path\to\deepclaude"
+# macOS/Linux: export PATH="$PATH:/path/to/deepclaude"
 
 deepclaude                                    # Launch with DeepSeek V4 Pro
 ```
 
-**Requires PowerShell 7+** on Windows (the `.ps1` uses `??`, `-Parallel`, ternary). On macOS/Linux, use `deepclaude.sh` — requires `jq`, `node`, and `nc` (or `lsof`/`fuser`).
+## Requirements
+
+- **Windows:** PowerShell 7+ ([download](https://github.com/PowerShell/PowerShell))
+- **macOS/Linux:** bash 4+, jq, netcat (nc), Node.js 18+
+- Node.js 18+ (for the proxy)
 
 ## Usage
 
@@ -69,7 +77,9 @@ deepclaude ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free  # 3 specs 
 --stop-proxy    Kill the persistent proxy
 --version       Print version and proxy path
 --lint          Self-lint (PSScriptAnalyzer on .ps1, shellcheck on .sh)
---fix-av        Print Windows Defender exclusion commands
+--effort LEVEL        Set Claude Code effort level (default: max)
+--fix-av              Print Windows Defender exclusion commands
+--install-statusline  Auto-install the statusline script and config
 ```
 
 ## Providers and API keys
@@ -125,11 +135,13 @@ mt     opus=mt:mistral/mistral-large  sonnet=mt:mistral/mistral-large  haiku=mt:
 mx     opus=mx:minimax/minimax-m1  (all slots same)
 za     opus=za:zai/glm-4.5  (all slots same)
 bp     opus=bp:byteplus/doubao-1.5-pro  (all slots same)
-sf     opus=sf:siliconflow/deepseek-v4-pro[1m]  (all slots same)
-nv     opus=nv:novita/deepseek-v4-pro[1m]  (all slots same)
+sf     opus=sf:siliconflow/deepseek-v4-pro  (all slots same)
+nv     opus=nv:novita/deepseek-v4-pro  (all slots same)
 ds+oc  opus=ds:deepseek-v4-pro  sonnet=ds:deepseek-v4-pro  haiku=oc:big-pickle  sub=oc:big-pickle
 ds+or  opus=ds:deepseek-v4-pro  sonnet=ds:deepseek-v4-pro  haiku=or:z-ai/glm-4.5-air:free  sub=or:z-ai/glm-4.5-air:free
 ```
+
+Note: `al` (Alibaba/DashScope) is only available via ad-hoc config and fallback, not as a named `-b al` config.
 
 ## Slot overrides (`--set-slot`)
 
@@ -234,11 +246,13 @@ Shows the real model, provider, context usage, effort level, and git branch — 
 
 Resolves slot overrides from `~/.deepclaude/slot-overrides.json` and context limits from `~/.deepclaude/current-routes.json`, so the token gauge and model display always reflect reality.
 
+Tip: `deepclaude --install-statusline` automates the manual setup above.
+
 ## Environment
 
 | Variable | Purpose |
 |---|---|
-| `DEEPCLAUDE_DEFAULT_BACKEND` | Default config (falls back to legacy `CHEAPCLAUDE_DEFAULT_BACKEND`, then `ds`) |
+| `DEEPCLAUDE_DEFAULT_BACKEND` | Default config (falls back to `ds`; legacy `CHEAPCLAUDE_DEFAULT_BACKEND` also accepted) |
 
 All provider env vars are pushed into the process so the proxy (child process) inherits them.
 
@@ -251,6 +265,23 @@ deepclaude --fix-av       # Prints the exact exclusion commands to run
 ```
 
 Then run the printed commands in an **admin** PowerShell window. You'll need to exclude both the `proxy/` directory and potentially `node.exe`.
+
+## Troubleshooting
+
+**Proxy fails to start on Windows (port not responding)**
+Windows Defender may be blocking the proxy. Run `deepclaude --fix-av` and execute the printed commands in an admin PowerShell window.
+
+**"command not found: deepclaude"**
+The deepclaude directory is not on your PATH. Run `npm install -g .` from the repo directory, or add the repo directory to your PATH manually.
+
+**"DEEPSEEK_API_KEY not set"**
+At minimum you need one provider's API key. See the [Providers table](#providers-and-api-keys). Set keys via environment variables.
+
+**macOS/Linux: "jq: command not found"**
+Install jq: `brew install jq` (macOS) or `sudo apt install jq` (Linux).
+
+**Proxy produces no response / Claude Code hangs**
+Run `deepclaude --doctor` to check system health. Check that your provider API key is valid and has credits.
 
 ## License
 

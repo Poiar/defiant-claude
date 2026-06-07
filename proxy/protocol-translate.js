@@ -11,7 +11,17 @@ function mapFinishReason(reason) {
 function stringifyContent(content) {
   if (typeof content === 'string') return content;
   if (Array.isArray(content)) {
-    return content.map(b => (b.type === 'text' ? b.text : '')).join('\n');
+    const parts = [];
+    for (const b of content) {
+      if (b.type === 'text') {
+        parts.push(b.text);
+      } else if (b.type === 'image' && b.source) {
+        parts.push(`[Image: ${b.source.type || 'base64'}, data length: ${(b.source.data || '').length}]`);
+      } else if (b.type === 'tool_use') {
+        parts.push(`[Tool call: ${b.name || 'unknown'}(${JSON.stringify(b.input || {})})]`);
+      }
+    }
+    return parts.join('\n');
   }
   return String(content);
 }
@@ -81,7 +91,7 @@ function convertMessage(msg) {
       const result = toolResults.map(block => ({
         role: 'tool',
         tool_call_id: block.tool_use_id,
-        content: stringifyContent(block.content),
+        content: stringifyContent(block.content) || '',
       }));
       if (textBlocks.length > 0) {
         result.push({ role: 'user', content: textBlocks.map(b => b.text).join('\n') });
@@ -154,7 +164,7 @@ function translateResponse(openaiBody, model) {
   const usage = openaiBody.usage || {};
 
   const content = [];
-  if (message.content) {
+  if (message.content != null) {
     content.push({ type: 'text', text: message.content });
   }
   if (message.tool_calls) {

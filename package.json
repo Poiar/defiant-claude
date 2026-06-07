@@ -1,0 +1,30 @@
+{
+  "name": "deepclaude",
+  "version": "1.0.0",
+  "description": "Provider-agnostic Claude Code wrapper — route each model slot to a different provider",
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  },
+  "bin": {
+    "deepclaude": "deepclaude.ps1"
+  },
+  "scripts": {
+    "lint": "pwsh -c \"Invoke-ScriptAnalyzer -Path deepclaude.ps1\"",
+    "doctor": "pwsh deepclaude.ps1 --doctor"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Poiar/deepclaude"
+  },
+  "keywords": [
+    "claude-code",
+    "deepseek",
+    "openrouter",
+    "proxy",
+    "anthropic",
+    "ai",
+    "llm"
+  ],
+  "license": "MIT"
+}

@@ -34,6 +34,16 @@ OPENROUTER_KEY="${OPENROUTER_API_KEY:-}"
 FIREWORKS_KEY="${FIREWORKS_API_KEY:-}"
 OPENCODE_KEY="${OPENCODE_API_KEY:-}"
 ALIBABA_KEY="${ALIBABA_DASHSCOPE_API_KEY:-}"
+KIMI_KEY="${KIMI_API_KEY:-}"
+MIMO_KEY="${MIMO_API_KEY:-}"
+UMANS_KEY="${UMANS_API_KEY:-}"
+GROQ_KEY="${GROQ_API_KEY:-}"
+MISTRAL_KEY="${MISTRAL_API_KEY:-}"
+MINIMAX_KEY="${MINIMAX_API_KEY:-}"
+ZAI_KEY="${ZAI_API_KEY:-}"
+BYTEPLUS_KEY="${BYTEPLUS_API_KEY:-}"
+SILICONFLOW_KEY="${SILICONFLOW_API_KEY:-}"
+NOVITA_KEY="${NOVITA_API_KEY:-}"
 
 # --- Provider Registry ---
 # auth: "x-api-key" or "bearer"
@@ -63,6 +73,64 @@ PROVIDER_URL[al]="https://dashscope.aliyuncs.com/api/v1/chat/completions"
 PROVIDER_AUTH[al]="bearer"
 PROVIDER_KEYNAME[al]="ALIBABA_DASHSCOPE_API_KEY"
 
+PROVIDER_NAME[km]="Kimi/Moonshot"
+PROVIDER_URL[km]="https://api.moonshot.ai/v1"
+PROVIDER_AUTH[km]="bearer"
+PROVIDER_KEYNAME[km]="KIMI_API_KEY"
+
+PROVIDER_NAME[mm]="Xiaomi Mimo"
+PROVIDER_URL[mm]="https://api.xiaomimimo.com/v1"
+PROVIDER_AUTH[mm]="bearer"
+PROVIDER_KEYNAME[mm]="MIMO_API_KEY"
+
+PROVIDER_NAME[um]="Umans AI"
+PROVIDER_URL[um]="https://api.code.umans.ai"
+PROVIDER_AUTH[um]="x-api-key"
+PROVIDER_KEYNAME[um]="UMANS_API_KEY"
+
+PROVIDER_NAME[gr]="Groq"
+PROVIDER_URL[gr]="https://api.groq.com/openai/v1"
+PROVIDER_AUTH[gr]="bearer"
+PROVIDER_KEYNAME[gr]="GROQ_API_KEY"
+
+PROVIDER_NAME[mt]="Mistral"
+PROVIDER_URL[mt]="https://api.mistral.ai/v1"
+PROVIDER_AUTH[mt]="bearer"
+PROVIDER_KEYNAME[mt]="MISTRAL_API_KEY"
+
+PROVIDER_NAME[mx]="MiniMax"
+PROVIDER_URL[mx]="https://api.minimax.chat/v1"
+PROVIDER_AUTH[mx]="bearer"
+PROVIDER_KEYNAME[mx]="MINIMAX_API_KEY"
+
+PROVIDER_NAME[za]="Z.ai / GLM"
+PROVIDER_URL[za]="https://open.bigmodel.cn/api/paas/v4"
+PROVIDER_AUTH[za]="bearer"
+PROVIDER_KEYNAME[za]="ZAI_API_KEY"
+
+PROVIDER_NAME[bp]="BytePlus/Doubao"
+PROVIDER_URL[bp]="https://ark.cn-beijing.volces.com/api/v3"
+PROVIDER_AUTH[bp]="bearer"
+PROVIDER_KEYNAME[bp]="BYTEPLUS_API_KEY"
+
+PROVIDER_NAME[sf]="SiliconFlow"
+PROVIDER_URL[sf]="https://api.siliconflow.cn/v1"
+PROVIDER_AUTH[sf]="bearer"
+PROVIDER_KEYNAME[sf]="SILICONFLOW_API_KEY"
+
+PROVIDER_NAME[nv]="Novita"
+PROVIDER_URL[nv]="https://api.novita.ai/v3/openai"
+PROVIDER_AUTH[nv]="bearer"
+PROVIDER_KEYNAME[nv]="NOVITA_API_KEY"
+
+declare -A PROVIDER_SETUP_URL
+PROVIDER_SETUP_URL[ds]="https://platform.deepseek.com/api-keys"
+PROVIDER_SETUP_URL[or]="https://openrouter.ai/keys"
+PROVIDER_SETUP_URL[fw]="https://fireworks.ai/api-keys"
+PROVIDER_SETUP_URL[oc]="https://opencode.ai/keys"
+PROVIDER_SETUP_URL[gr]="https://console.groq.com/keys"
+PROVIDER_SETUP_URL[mt]="https://console.mistral.ai/api-keys"
+
 # --- Per-model context window limits (tokens) ---
 declare -A MODEL_CTX
 MODEL_CTX["deepseek-v4-pro"]=1048576
@@ -76,6 +144,21 @@ MODEL_CTX["poolside/laguna-m.1:free"]=131072
 MODEL_CTX["z-ai/glm-4.5-air:free"]=131072
 MODEL_CTX["liquid/lfm-2.5-1.2b-instruct:free"]=32768
 MODEL_CTX["big-pickle"]=131072
+MODEL_CTX["kimi-k2.6"]=262144
+MODEL_CTX["mimo-v2.5-pro"]=131072
+MODEL_CTX["umans-kimi-k2.6"]=262144
+MODEL_CTX["umans-coder"]=262144
+MODEL_CTX["umans-flash"]=131072
+MODEL_CTX["umans-glm-5.1"]=131072
+MODEL_CTX["groq/llama-4-maverick"]=131072
+MODEL_CTX["groq/deepseek-r1-distill-qwen-32b"]=131072
+MODEL_CTX["mistral/mistral-large"]=131072
+MODEL_CTX["mistral/mistral-small"]=131072
+MODEL_CTX["minimax/minimax-m1"]=262144
+MODEL_CTX["zai/glm-4.5"]=131072
+MODEL_CTX["byteplus/doubao-1.5-pro"]=131072
+MODEL_CTX["siliconflow/deepseek-v4-pro"]=1048576
+MODEL_CTX["novita/deepseek-v4-pro"]=1048576
 
 get_provider_key() {
     local pk="$1"
@@ -85,6 +168,16 @@ get_provider_key() {
         fw) echo "$FIREWORKS_KEY" ;;
         oc) echo "$OPENCODE_KEY" ;;
         al) echo "$ALIBABA_KEY" ;;
+        km) echo "$KIMI_KEY" ;;
+        mm) echo "$MIMO_KEY" ;;
+        um) echo "$UMANS_KEY" ;;
+        gr) echo "$GROQ_KEY" ;;
+        mt) echo "$MISTRAL_KEY" ;;
+        mx) echo "$MINIMAX_KEY" ;;
+        za) echo "$ZAI_KEY" ;;
+        bp) echo "$BYTEPLUS_KEY" ;;
+        sf) echo "$SILICONFLOW_KEY" ;;
+        nv) echo "$NOVITA_KEY" ;;
         *)  echo "" ;;
     esac
 }
@@ -219,8 +312,62 @@ init_configs() {
     CONFIG_NAME["ds+or"]="DeepSeek + OpenRouter subs"
     CONFIG_OPUS["ds+or"]="ds:deepseek-v4-pro"; CONFIG_SONNET["ds+or"]="ds:deepseek-v4-pro"
     CONFIG_HAIKU["ds+or"]="or:z-ai/glm-4.5-air:free"; CONFIG_SUBAGENT["ds+or"]="or:z-ai/glm-4.5-air:free"
+
+    CONFIG_NAME[km]="Kimi K2.6"
+    CONFIG_OPUS[km]="km:kimi-k2.6"; CONFIG_SONNET[km]="km:kimi-k2.6"
+    CONFIG_HAIKU[km]="km:kimi-k2.6"; CONFIG_SUBAGENT[km]="km:kimi-k2.6"
+
+    CONFIG_NAME[mm]="Xiaomi Mimo V2.5 Pro"
+    CONFIG_OPUS[mm]="mm:mimo-v2.5-pro"; CONFIG_SONNET[mm]="mm:mimo-v2.5-pro"
+    CONFIG_HAIKU[mm]="mm:mimo-v2.5-pro"; CONFIG_SUBAGENT[mm]="mm:mimo-v2.5-pro"
+
+    CONFIG_NAME[um]="Umans Coder (Kimi K2.6)"
+    CONFIG_OPUS[um]="um:umans-coder"; CONFIG_SONNET[um]="um:umans-coder"
+    CONFIG_HAIKU[um]="um:umans-coder"; CONFIG_SUBAGENT[um]="um:umans-coder"
+
+    CONFIG_NAME[gr]="Groq (Llama 4 Maverick)"
+    CONFIG_OPUS[gr]="gr:groq/llama-4-maverick"; CONFIG_SONNET[gr]="gr:groq/llama-4-maverick"
+    CONFIG_HAIKU[gr]="gr:groq/deepseek-r1-distill-qwen-32b"; CONFIG_SUBAGENT[gr]="gr:groq/deepseek-r1-distill-qwen-32b"
+
+    CONFIG_NAME[mt]="Mistral Large"
+    CONFIG_OPUS[mt]="mt:mistral/mistral-large"; CONFIG_SONNET[mt]="mt:mistral/mistral-large"
+    CONFIG_HAIKU[mt]="mt:mistral/mistral-small"; CONFIG_SUBAGENT[mt]="mt:mistral/mistral-small"
+
+    CONFIG_NAME[mx]="MiniMax M1"
+    CONFIG_OPUS[mx]="mx:minimax/minimax-m1"; CONFIG_SONNET[mx]="mx:minimax/minimax-m1"
+    CONFIG_HAIKU[mx]="mx:minimax/minimax-m1"; CONFIG_SUBAGENT[mx]="mx:minimax/minimax-m1"
+
+    CONFIG_NAME[za]="Z.ai GLM 4.5"
+    CONFIG_OPUS[za]="za:zai/glm-4.5"; CONFIG_SONNET[za]="za:zai/glm-4.5"
+    CONFIG_HAIKU[za]="za:zai/glm-4.5"; CONFIG_SUBAGENT[za]="za:zai/glm-4.5"
+
+    CONFIG_NAME[bp]="BytePlus Doubao 1.5 Pro"
+    CONFIG_OPUS[bp]="bp:byteplus/doubao-1.5-pro"; CONFIG_SONNET[bp]="bp:byteplus/doubao-1.5-pro"
+    CONFIG_HAIKU[bp]="bp:byteplus/doubao-1.5-pro"; CONFIG_SUBAGENT[bp]="bp:byteplus/doubao-1.5-pro"
+
+    CONFIG_NAME[sf]="SiliconFlow (DeepSeek V4 Pro)"
+    CONFIG_OPUS[sf]="sf:siliconflow/deepseek-v4-pro"; CONFIG_SONNET[sf]="sf:siliconflow/deepseek-v4-pro"
+    CONFIG_HAIKU[sf]="sf:siliconflow/deepseek-v4-pro"; CONFIG_SUBAGENT[sf]="sf:siliconflow/deepseek-v4-pro"
+
+    CONFIG_NAME[nv]="Novita (DeepSeek V4 Pro)"
+    CONFIG_OPUS[nv]="nv:novita/deepseek-v4-pro"; CONFIG_SONNET[nv]="nv:novita/deepseek-v4-pro"
+    CONFIG_HAIKU[nv]="nv:novita/deepseek-v4-pro"; CONFIG_SUBAGENT[nv]="nv:novita/deepseek-v4-pro"
 }
 init_configs
+
+# --- Pre-flight checks ---
+if ! command -v jq &>/dev/null; then
+    echo "ERROR: deepclaude requires jq for JSON processing." >&2
+    echo "  Install: brew install jq  (macOS)" >&2
+    echo "       or: sudo apt install jq  (Debian/Ubuntu)" >&2
+    echo "       or: sudo dnf install jq  (Fedora)" >&2
+    exit 1
+fi
+
+if ! command -v nc &>/dev/null; then
+    echo "NOTE: nc (netcat) not found. Port checking may be less reliable." >&2
+    echo "  Install: brew install netcat  (macOS)  or  sudo apt install netcat-openbsd" >&2
+fi
 
 # Resolve a spec "providerKey:modelId" into provider key and model
 parse_spec() {
@@ -259,6 +406,10 @@ build_adhoc_config() {
         key=$(get_provider_key "$prov_key")
         if [[ -z "$key" ]]; then
             echo "ERROR: ${PROVIDER_KEYNAME[$prov_key]} not set (needed for spec '$spec')" >&2
+            if [[ -n "${PROVIDER_SETUP_URL[$prov_key]:-}" ]]; then
+                echo "  Get a key: ${PROVIDER_SETUP_URL[$prov_key]}" >&2
+            fi
+            echo "  Then run: export ${PROVIDER_KEYNAME[$prov_key]}=\"sk-...\"" >&2
             exit 1
         fi
 
@@ -287,6 +438,10 @@ resolve_config() {
         key=$(get_provider_key "$prov_key")
         if [[ -z "$key" ]]; then
             echo "ERROR: ${PROVIDER_KEYNAME[$prov_key]} not set (needed by config '$config_name')" >&2
+            if [[ -n "${PROVIDER_SETUP_URL[$prov_key]:-}" ]]; then
+                echo "  Get a key: ${PROVIDER_SETUP_URL[$prov_key]}" >&2
+            fi
+            echo "  Then run: export ${PROVIDER_KEYNAME[$prov_key]}=\"sk-...\"" >&2
             exit 1
         fi
 
@@ -389,8 +544,10 @@ start_proxy() {
     local proxy_pid=$!
 
     # Wait for port output
+    echo -n "Starting proxy" >&2
     local tries=0 port=""
-    while [[ $tries -lt 50 ]]; do
+    while [[ $tries -lt 150 ]]; do
+        echo -n "." >&2
         if [[ -s "$out_file" ]]; then
             port=$(sed -n 's/.*PORT:\([0-9]*\).*/\1/p' "$out_file" 2>/dev/null || true)
             if [[ -n "$port" ]]; then break; fi
@@ -398,6 +555,7 @@ start_proxy() {
         sleep 0.1
         tries=$((tries + 1))
     done
+    echo "" >&2
 
     if [[ -z "$port" ]]; then
         local err_str
@@ -409,7 +567,7 @@ start_proxy() {
     fi
 
     rm -f "$out_file" "$err_file"
-    echo "$port"
+    echo "$port $proxy_pid"
 }
 
 stop_proxy_info() {
@@ -432,18 +590,25 @@ set_cc_env() {
     export ANTHROPIC_DEFAULT_SONNET_MODEL="sonnet:${sonnet_model}"
     export ANTHROPIC_DEFAULT_HAIKU_MODEL="haiku:${haiku_model}"
     export CLAUDE_CODE_SUBAGENT_MODEL="subagent:${subagent_model}"
-    export CLAUDE_CODE_EFFORT_LEVEL="max"
+    export CLAUDE_CODE_EFFORT_LEVEL="$EFFORT"
     unset ANTHROPIC_API_KEY 2>/dev/null || true
 
     local opus_ctx="${MODEL_CTX[$opus_ctxt_model]:-}"
     if [[ -n "$opus_ctx" ]]; then
-        if [[ $opus_ctx -gt 131072 && $opus_ctx -lt 1048576 ]]; then
+        if (( opus_ctx >= 1048576 )); then
+            export CLAUDE_CODE_AUTO_COMPACT_WINDOW="$opus_ctx"
+        elif (( opus_ctx >= 200000 )); then
             export CLAUDE_CODE_MAX_CONTEXT_TOKENS="$opus_ctx"
-            export DISABLE_COMPACT=1
+            export DISABLE_COMPACT="1"
+        elif (( opus_ctx > 131072 )); then
+            export CLAUDE_CODE_MAX_CONTEXT_TOKENS="$opus_ctx"
+            export DISABLE_COMPACT="1"
         else
             export CLAUDE_CODE_AUTO_COMPACT_WINDOW="$opus_ctx"
         fi
     fi
+
+    export CLAUDE_CONTEXT_COMPRESSION='true'
 }
 
 clear_anthropic_env() {
@@ -452,7 +617,8 @@ clear_anthropic_env() {
           ANTHROPIC_DEFAULT_HAIKU_MODEL CLAUDE_CODE_SUBAGENT_MODEL \
           CLAUDE_CODE_EFFORT_LEVEL ANTHROPIC_API_KEY \
           CLAUDE_CODE_MAX_CONTEXT_TOKENS DISABLE_COMPACT \
-          CLAUDE_CODE_AUTO_COMPACT_WINDOW 2>/dev/null || true
+          CLAUDE_CODE_AUTO_COMPACT_WINDOW \
+          CLAUDE_CONTEXT_COMPRESSION 2>/dev/null || true
 }
 
 # --- Actions ---
@@ -467,9 +633,19 @@ show_status() {
     echo "    FIREWORKS_API_KEY:            $(mask_key "$FIREWORKS_KEY")"
     echo "    OPENCODE_API_KEY:             $(mask_key "$OPENCODE_KEY")"
     echo "    ALIBABA_DASHSCOPE_API_KEY:    $(mask_key "$ALIBABA_KEY")"
+    echo "    KIMI_API_KEY:                 $(mask_key "$KIMI_KEY")"
+    echo "    MIMO_API_KEY:                 $(mask_key "$MIMO_KEY")"
+    echo "    UMANS_API_KEY:                $(mask_key "$UMANS_KEY")"
+    echo "    GROQ_API_KEY:                 $(mask_key "$GROQ_KEY")"
+    echo "    MISTRAL_API_KEY:              $(mask_key "$MISTRAL_KEY")"
+    echo "    MINIMAX_API_KEY:              $(mask_key "$MINIMAX_KEY")"
+    echo "    ZAI_API_KEY:                  $(mask_key "$ZAI_KEY")"
+    echo "    BYTEPLUS_API_KEY:             $(mask_key "$BYTEPLUS_KEY")"
+    echo "    SILICONFLOW_API_KEY:          $(mask_key "$SILICONFLOW_KEY")"
+    echo "    NOVITA_API_KEY:               $(mask_key "$NOVITA_KEY")"
     echo ""
     echo "  Configurations:"
-    for cfg in ds or or2 or3 fw oc "ds+oc" "ds+or"; do
+    for cfg in ds or or2 or3 fw oc km mm um gr mt mx za bp sf nv "ds+oc" "ds+or"; do
         local label=""
         [[ "$cfg" == "ds" ]] && label=" (default)"
         local provs=()
@@ -546,18 +722,29 @@ show_help() {
     echo "    deepclaude -b ds+oc                            (named mixed config)"
     echo "    deepclaude -b or                               (named config)"
     echo ""
-    echo "  Named configs: ds, or, or2, or3, fw, oc, ds+oc, ds+or, anthropic"
+    echo "  Named configs: ds, or, or2, or3, fw, oc, km, mm, um, gr, mt, mx, za, bp, sf, nv, ds+oc, ds+or, anthropic"
     echo "  --status        Show keys, configs, and active slot mapping"
     echo "  --doctor        System health check (prereqs, keys, proxy test)"
     echo "  --cost          Pricing comparison"
     echo "  --benchmark     Latency test across all configs"
     echo "  --models        List all available models (for use with /model in CC)"
-    echo "  --set-slot SLOT MODEL  Override a slot: opus/sonnet/haiku/subagent"
+    echo "  --effort LEVEL   Claude Code effort level (default: max)"
+    echo "  --lint                 Lint with shellcheck"
+  echo "  --fix-av               Windows Defender exclusion reminder"
+  echo "  --install-statusline   Auto-install statusline to ~/.claude/"
+  echo "  --set-slot SLOT MODEL  Override a slot: opus/sonnet/haiku/subagent"
     echo "  --persist       Keep proxy running after CC exits"
     echo "  --switch CONFIG  Switch active config of a running persistent proxy"
     echo "  --stop-proxy    Kill the persistent proxy"
     echo "  --version       Show version and script location"
     echo "  -h, --help      This help"
+    echo ""
+    echo "Session switching workflow:"
+    echo "  1. deepclaude -b ds --persist     Start proxy + session, keep proxy alive"
+    echo "  2. deepclaude --switch or         Switch proxy backend to OpenRouter"
+    echo "  3. /model or:new-model            Switch opus within running session"
+    echo "  4. deepclaude --set-slot haiku or:model  Override a single slot"
+    echo "  5. deepclaude --stop-proxy        Kill the persistent proxy"
     echo ""
 }
 
@@ -586,8 +773,8 @@ show_models() {
         done
     done
 
-    # Group by provider
-    for pk in ds or fw oc al; do
+    # Group by provider (dynamically from registry)
+    for pk in $(printf '%s\n' "${!PROVIDER_NAME[@]}" | sort); do
         local key
         key=$(get_provider_key "$pk")
         local key_status="set"
@@ -686,8 +873,8 @@ run_doctor() {
     # 6. API keys
     echo ""
     echo "  API Keys:"
-    local keys_ok=0 keys_total=5
-    for pk in ds or fw oc al; do
+    local keys_ok=0 keys_total=15
+    for pk in ds or fw oc al km mm um gr mt mx za bp sf nv; do
         local key
         key=$(get_provider_key "$pk")
         if [[ -n "$key" ]]; then
@@ -731,34 +918,45 @@ run_doctor() {
         echo "  Proxy Test:"
 
         local test_routes_file="${DEEPCLAUDE_DIR}/doctor-test-routes.json"
-        # Resolve the test config and build routes
-        local test_config_name test_slot_data
-        test_config_name=$(resolve_config "$test_config" | head -1)
-        test_slot_data=$(resolve_config "$test_config" | tail -n +2)
-        local test_routes_json
-        test_routes_json=$(echo "$test_slot_data" | build_routes_json)
-        write_atomic "$test_routes_file" "$test_routes_json"
 
-        local test_port
-        if test_port=$(start_proxy "$test_routes_file" 2>/dev/null); then
-            local health
-            if health=$(curl -sf "http://127.0.0.1:${test_port}/health" 2>/dev/null); then
-                local uptime_ms
-                uptime_ms=$(echo "$health" | jq -r '.uptime' 2>/dev/null || echo "?")
-                echo -e "    Health endpoint   $pass  http://127.0.0.1:${test_port} (uptime ${uptime_ms}ms)"
+        # Check for any valid config with keys before attempting proxy test
+        local test_slot_data=""
+        test_slot_data=$(resolve_config "$test_config" 2>/dev/null | tail -n +2) || true
+        if [[ -z "$test_slot_data" ]]; then
+            for cfg in ds or or2 or3 fw oc km mm um gr mt mx za bp sf nv ds+oc ds+or anthropic; do
+                test_slot_data=$(resolve_config "$cfg" 2>/dev/null | tail -n +2) || true
+                [[ -n "$test_slot_data" ]] && break
+            done
+        fi
+
+        if [[ -z "$test_slot_data" ]]; then
+            echo -e "    $warn  Proxy test: SKIP (no valid API keys configured)"
+        else
+            local test_routes_json
+            test_routes_json=$(echo "$test_slot_data" | build_routes_json)
+            write_atomic "$test_routes_file" "$test_routes_json"
+
+            local test_port test_pid
+            local doctor_start
+            doctor_start=$(start_proxy "$test_routes_file" 2>/dev/null) || true
+            if [[ -n "$doctor_start" ]]; then
+                read -r test_port test_pid <<< "$doctor_start"
+                local health
+                if health=$(curl -sf "http://127.0.0.1:${test_port}/health" 2>/dev/null); then
+                    local uptime_ms
+                    uptime_ms=$(echo "$health" | jq -r '.uptime' 2>/dev/null || echo "?")
+                    echo -e "    Health endpoint   $pass  http://127.0.0.1:${test_port} (uptime ${uptime_ms}ms)"
+                else
+                    echo -e "    Health endpoint   $fail  Proxy started but /health failed"
+                    all_ok=false
+                fi
+                if [[ -n "$test_pid" ]]; then kill "$test_pid" 2>/dev/null || true; fi
             else
-                echo -e "    Health endpoint   $fail  Proxy started but /health failed"
+                echo -e "    Proxy startup     $fail"
                 all_ok=false
             fi
-            # Kill the test proxy
-            local test_pid
-            test_pid=$(lsof -ti "tcp:127.0.0.1:$test_port" 2>/dev/null || fuser "$test_port/tcp" 2>/dev/null | head -1)
-            if [[ -n "$test_pid" ]]; then kill "$test_pid" 2>/dev/null || true; fi
-        else
-            echo -e "    Proxy startup     $fail"
-            all_ok=false
+            rm -f "$test_routes_file"
         fi
-        rm -f "$test_routes_file"
     fi
 
     echo ""
@@ -776,51 +974,54 @@ run_benchmark() {
     echo "  Latency Benchmark"
     echo "  =================="
 
-    for id in ds or or2 or3 fw oc; do
-        local config_name slot_data opus_spec prov_key model_id key url auth
-        config_name=$(resolve_config "$id" 2>/dev/null | head -1)
-        slot_data=$(resolve_config "$id" 2>/dev/null | tail -n +2)
+    local configs="ds or or2 or3 fw oc km mm um gr mt mx za bp sf nv"
+    local results_dir
+    results_dir=$(mktemp -d)
+    trap "rm -rf \"$results_dir\"" EXIT
 
-        if [[ -z "$config_name" ]]; then
-            echo "  $id - SKIP (unknown)"
-            continue
-        fi
+    for id in $configs; do
+        (
+            set +e
+            config_name=$(resolve_config "$id" 2>/dev/null | head -1) || { echo "  $id - SKIP" > "$results_dir/$id"; exit; }
+            slot_data=$(resolve_config "$id" 2>/dev/null | tail -n +2) || { echo "  $id - SKIP" > "$results_dir/$id"; exit; }
 
-        # Get opus slot spec
-        opus_spec=$(echo "$slot_data" | grep "^opus " | head -1)
-        read -r _ prov_key model_id <<< "$opus_spec"
-        key=$(get_provider_key "$prov_key")
-        if [[ -z "$key" ]]; then
-            echo "  $config_name - SKIP (${PROVIDER_KEYNAME[$prov_key]} not set)"
-            continue
-        fi
+            opus_spec=$(echo "$slot_data" | grep "^opus " | head -1)
+            read -r _ prov_key model_id <<< "$opus_spec"
+            key=$(get_provider_key "$prov_key")
+            if [[ -z "$key" ]]; then
+                echo "  $config_name - SKIP" > "$results_dir/$id"
+                exit
+            fi
 
-        url="${PROVIDER_URL[$prov_key]}"
-        auth="${PROVIDER_AUTH[$prov_key]}"
+            url="${PROVIDER_URL[$prov_key]}"
+            auth="${PROVIDER_AUTH[$prov_key]}"
 
-        local auth_header
-        if [[ "$auth" == "bearer" ]]; then
-            auth_header="Authorization: Bearer $key"
-        else
-            auth_header="x-api-key: $key"
-        fi
+            local auth_header
+            if [[ "$auth" == "bearer" ]]; then
+                auth_header="Authorization: Bearer $key"
+            else
+                auth_header="x-api-key: $key"
+            fi
 
-        local start_ms
-        start_ms=$(date +%s%3N 2>/dev/null || python3 -c 'import time;print(int(time.time()*1000))' 2>/dev/null || echo "0")
-        local status
-        status=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$url/v1/messages" \
-            -H "$auth_header" -H "content-type: application/json" -H "anthropic-version: 2023-06-01" \
-            -d "{\"model\":\"$model_id\",\"max_tokens\":32,\"messages\":[{\"role\":\"user\",\"content\":\"Reply: ok\"}]}" \
-            --max-time 30 2>/dev/null || echo "timeout")
-        local end_ms
-        end_ms=$(date +%s%3N 2>/dev/null || python3 -c 'import time;print(int(time.time()*1000))' 2>/dev/null || echo "0")
-        local elapsed=$((end_ms - start_ms))
+            start_ms=$(date +%s%3N 2>/dev/null || python3 -c 'import time;print(int(time.time()*1000))' 2>/dev/null || echo "0")
+            status=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$url/v1/messages" \
+                -H "$auth_header" -H "content-type: application/json" -H "anthropic-version: 2023-06-01" \
+                -d "{\"model\":\"$model_id\",\"max_tokens\":32,\"messages\":[{\"role\":\"user\",\"content\":\"Reply: ok\"}]}" \
+                --max-time 30 2>/dev/null || echo "timeout")
+            end_ms=$(date +%s%3N 2>/dev/null || python3 -c 'import time;print(int(time.time()*1000))' 2>/dev/null || echo "0")
+            elapsed=$((end_ms - start_ms))
 
-        if [[ "$status" == "200" ]]; then
-            echo -e "  $config_name \033[32mOK\033[0m (${elapsed}ms)"
-        else
-            echo -e "  $config_name \033[31mFAIL\033[0m ($status, ${elapsed}ms)"
-        fi
+            if [[ "$status" == "200" ]]; then
+                printf "  %-35s OK (%dms)\n" "$config_name" "$elapsed" > "$results_dir/$id"
+            else
+                printf "  %-35s FAIL (%s, %dms)\n" "$config_name" "$status" "$elapsed" > "$results_dir/$id"
+            fi
+        ) &
+    done
+    wait || true
+
+    for id in $configs; do
+        cat "$results_dir/$id" 2>/dev/null || echo "  $id - SKIP"
     done
     echo ""
 }
@@ -917,9 +1118,8 @@ handle_switch() {
     else
         echo ""
         echo "  Starting persistent proxy for $config_name..."
-        local port
-        port=$(start_proxy "$CURRENT_ROUTES_FILE")
-        proxy_pid=$(lsof -ti "tcp:127.0.0.1:$port" 2>/dev/null || fuser "$port/tcp" 2>/dev/null | head -1)
+        local port proxy_pid
+        read -r port proxy_pid <<< "$(start_proxy "$CURRENT_ROUTES_FILE")"
         save_proxy_state "$proxy_pid" "$port" "$CURRENT_ROUTES_FILE"
         echo "  Proxy on port $port"
     fi
@@ -955,6 +1155,7 @@ ACTION="launch"
 BACKEND=""
 PERSIST=false
 REMOTE=false
+EFFORT="max"
 declare -a SPECS=()
 
 # Parse args
@@ -964,6 +1165,8 @@ while [[ $# -gt 0 ]]; do
             BACKEND="$2"; shift 2 ;;
         -r|--remote)
             REMOTE=true; ACTION="remote"; shift ;;
+        --effort)
+            EFFORT="$2"; shift 2 ;;
         --persist)
             PERSIST=true; shift ;;
         --status)
@@ -985,18 +1188,31 @@ while [[ $# -gt 0 ]]; do
             shift ;;
         --models)
             ACTION="models"; shift ;;
+        --install-statusline)
+            dest="$HOME/.claude/statusline.sh"
+            cp "$SCRIPT_DIR/statusline/statusline.sh" "$dest"
+            chmod +x "$dest"
+
+            settings="$HOME/.claude/settings.json"
+            if [[ -f "$settings" ]]; then
+                tmp=$(mktemp)
+                jq '.statusLine = {"type": "command", "command": ("bash " + $dest)}' --arg dest "$dest" "$settings" > "$tmp" && mv "$tmp" "$settings"
+            else
+                mkdir -p "$HOME/.claude"
+                printf '{"statusLine": {"type": "command", "command": "bash %s"}}\n' "$dest" > "$settings"
+            fi
+            echo "Statusline installed to $dest"
+            echo "Added to $settings"
+            exit 0
+            ;;
         --stop-proxy)
             ACTION="stop-proxy"; shift ;;
         --set-slot)
-            local slot_name="${2:-}" slot_model="${3:-}"
-            if [[ -n "${4:-}" && "$4" != -* ]]; then
-                slot_model="$3 $4"
-                shift
-            fi
+            local slot_name="${2:-}" slot_model="$3"
             ACTION="set-slot"
             SLOT_NAME="$slot_name"
             SLOT_MODEL="$slot_model"
-            shift $(( slot_model == "$3" ? 3 : 2 ))
+            shift 3
             [[ "$slot_name" == -* ]] && { echo "ERROR: --set-slot requires SLOT and MODEL"; exit 1; }
             ;;
         --switch)
@@ -1054,7 +1270,8 @@ case "$ACTION" in
             echo ""
             echo "  Launching remote control (Anthropic)..."
             echo ""
-            exec claude --dangerously-skip-permissions remote-control "$@"
+            claude --effort "$EFFORT" --dangerously-skip-permissions remote-control "$@"
+            exit $?
         fi
 
         # Resolve config
@@ -1083,10 +1300,26 @@ case "$ACTION" in
             write_atomic "$CURRENT_ROUTES_FILE" "$routes_json"
         else
             write_atomic "$CURRENT_ROUTES_FILE" "$routes_json"
-            proxy_port=$(start_proxy "$CURRENT_ROUTES_FILE")
-            proxy_pid=$(lsof -ti "tcp:127.0.0.1:$proxy_port" 2>/dev/null || fuser "$proxy_port/tcp" 2>/dev/null | head -1)
+            read -r proxy_port proxy_pid <<< "$(start_proxy "$CURRENT_ROUTES_FILE")"
             save_proxy_state "$proxy_pid" "$proxy_port" "$CURRENT_ROUTES_FILE"
             echo "  Proxy on :$proxy_port (persistent)"
+        fi
+
+        watchdog_pid=""
+        if [[ "${DEEPCLAUDE_WATCHDOG:-}" == "true" ]] && [[ -n "$proxy_pid" ]]; then
+            (
+                set +e
+                for attempt in 1 2; do
+                    wait "$proxy_pid" 2>/dev/null
+                    wait_rc=$?
+                    if [[ $wait_rc -le 128 ]]; then
+                        break
+                    fi
+                    echo "Proxy crashed. Restarting (attempt $attempt)..." >&2
+                    read -r proxy_port proxy_pid <<< "$(start_proxy "$CURRENT_ROUTES_FILE")" || true
+                done
+            ) &
+            watchdog_pid=$!
         fi
 
         # Init slot overrides
@@ -1114,7 +1347,13 @@ case "$ACTION" in
         echo ""
 
         set_cc_env "$proxy_port" "$opus_m" "$sonnet_m" "$haiku_m" "$sub_m" "$opus_model"
-        exec claude --dangerously-skip-permissions remote-control "$@"
+        claude --effort "$EFFORT" --dangerously-skip-permissions remote-control "$@"
+        local claude_exit=$?
+        if ! $PERSIST; then
+            stop_proxy_info "$proxy_pid"
+        fi
+        clear_anthropic_env
+        exit $claude_exit
         ;;
     launch-pos)
         # Ad-hoc positional specs
@@ -1138,14 +1377,30 @@ case "$ACTION" in
             write_atomic "$CURRENT_ROUTES_FILE" "$routes_json"
         else
             write_atomic "$CURRENT_ROUTES_FILE" "$routes_json"
-            proxy_port=$(start_proxy "$CURRENT_ROUTES_FILE")
-            proxy_pid=$(lsof -ti "tcp:127.0.0.1:$proxy_port" 2>/dev/null || fuser "$proxy_port/tcp" 2>/dev/null | head -1)
+            read -r proxy_port proxy_pid <<< "$(start_proxy "$CURRENT_ROUTES_FILE")"
             if $PERSIST; then
                 save_proxy_state "$proxy_pid" "$proxy_port" "$CURRENT_ROUTES_FILE"
                 echo "  Proxy on :$proxy_port (persistent)"
             else
                 echo "  Proxy on :$proxy_port"
             fi
+        fi
+
+        watchdog_pid=""
+        if [[ "${DEEPCLAUDE_WATCHDOG:-}" == "true" ]] && [[ -n "$proxy_pid" ]]; then
+            (
+                set +e
+                for attempt in 1 2; do
+                    wait "$proxy_pid" 2>/dev/null
+                    wait_rc=$?
+                    if [[ $wait_rc -le 128 ]]; then
+                        break
+                    fi
+                    echo "Proxy crashed. Restarting (attempt $attempt)..." >&2
+                    read -r proxy_port proxy_pid <<< "$(start_proxy "$CURRENT_ROUTES_FILE")" || true
+                done
+            ) &
+            watchdog_pid=$!
         fi
 
         # Init slot overrides
@@ -1180,6 +1435,9 @@ case "$ACTION" in
 
         # Setup cleanup trap
         cleanup_proxy() {
+            if [[ -n "${watchdog_pid:-}" ]]; then
+                kill "$watchdog_pid" 2>/dev/null || true
+            fi
             if ! $PERSIST; then
                 if [[ -n "${proxy_pid:-}" ]]; then
                     stop_proxy_info "$proxy_pid"
@@ -1189,7 +1447,10 @@ case "$ACTION" in
         }
         trap cleanup_proxy EXIT
 
-        exec claude --dangerously-skip-permissions "$@"
+        claude --effort "$EFFORT" --dangerously-skip-permissions "$@"
+        local claude_exit=$?
+        cleanup_proxy
+        exit $claude_exit
         ;;
     launch)
         if [[ "$BACKEND" == "anthropic" ]]; then
@@ -1197,7 +1458,8 @@ case "$ACTION" in
             echo ""
             echo "  Launching Claude Code (normal Anthropic)..."
             echo ""
-            exec claude --dangerously-skip-permissions "$@"
+            claude --effort "$EFFORT" --dangerously-skip-permissions "$@"
+            exit $?
         fi
 
         # Same as launch-pos but uses named config
@@ -1240,14 +1502,30 @@ case "$ACTION" in
             write_atomic "$CURRENT_ROUTES_FILE" "$routes_json"
         else
             write_atomic "$CURRENT_ROUTES_FILE" "$routes_json"
-            proxy_port=$(start_proxy "$CURRENT_ROUTES_FILE")
-            proxy_pid=$(lsof -ti "tcp:127.0.0.1:$proxy_port" 2>/dev/null || fuser "$proxy_port/tcp" 2>/dev/null | head -1)
+            read -r proxy_port proxy_pid <<< "$(start_proxy "$CURRENT_ROUTES_FILE")"
             if $PERSIST; then
                 save_proxy_state "$proxy_pid" "$proxy_port" "$CURRENT_ROUTES_FILE"
                 echo "  Proxy on :$proxy_port (persistent)"
             else
                 echo "  Proxy on :$proxy_port"
             fi
+        fi
+
+        watchdog_pid=""
+        if [[ "${DEEPCLAUDE_WATCHDOG:-}" == "true" ]] && [[ -n "$proxy_pid" ]]; then
+            (
+                set +e
+                for attempt in 1 2; do
+                    wait "$proxy_pid" 2>/dev/null
+                    wait_rc=$?
+                    if [[ $wait_rc -le 128 ]]; then
+                        break
+                    fi
+                    echo "Proxy crashed. Restarting (attempt $attempt)..." >&2
+                    read -r proxy_port proxy_pid <<< "$(start_proxy "$CURRENT_ROUTES_FILE")" || true
+                done
+            ) &
+            watchdog_pid=$!
         fi
 
         # Init slot overrides
@@ -1275,6 +1553,9 @@ case "$ACTION" in
 
         # Setup cleanup trap
         cleanup_proxy() {
+            if [[ -n "${watchdog_pid:-}" ]]; then
+                kill "$watchdog_pid" 2>/dev/null || true
+            fi
             if ! $PERSIST; then
                 if [[ -n "${proxy_pid:-}" ]]; then
                     stop_proxy_info "$proxy_pid"
@@ -1284,6 +1565,9 @@ case "$ACTION" in
         }
         trap cleanup_proxy EXIT
 
-        exec claude --dangerously-skip-permissions "$@"
+        claude --effort "$EFFORT" --dangerously-skip-permissions "$@"
+        local claude_exit=$?
+        cleanup_proxy
+        exit $claude_exit
         ;;
 esac

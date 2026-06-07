@@ -47,6 +47,7 @@ param(
     [Parameter(Position=0)]
     [Alias("b")]
     [string]$Backend,
+    [string]$Effort = "max",
     [Alias("r")]
     [switch]$Remote,
     [switch]$Status,
@@ -63,6 +64,7 @@ param(
     [switch]$StopProxy,
     [switch]$Version,
     [switch]$Doctor,
+    [switch]$InstallStatusline,
     [Parameter(ValueFromRemainingArguments)]
     [string[]]$ModelSpecs
 )
@@ -90,6 +92,10 @@ if ($Backend -match '^--(.+)$') {
         $SetSlot = $ModelSpecs[0]
         $ModelSpecs = if ($ModelSpecs.Count -gt 1) { $ModelSpecs[1..($ModelSpecs.Count-1)] } else { @() }
     }
+    elseif ($flag -eq 'effort' -and $ModelSpecs -and $ModelSpecs.Count -gt 0) {
+        $Effort = $ModelSpecs[0]
+        $ModelSpecs = if ($ModelSpecs.Count -gt 1) { $ModelSpecs[1..($ModelSpecs.Count-1)] } else { @() }
+    }
     elseif ($flag -eq 'models')          { $Models = $true }
     elseif ($flag -eq 'stop-proxy')      { $StopProxy = $true }
     elseif ($flag -eq 'remote')          { $Remote = $true }
@@ -101,11 +107,16 @@ if ($Backend -match '^--(.+)$') {
     elseif ($flag -eq 'fix-av')          { $FixAv = $true }
     elseif ($flag -eq 'version')         { $Version = $true }
     elseif ($flag -eq 'doctor')          { $Doctor = $true }
+    elseif ($flag -eq 'install-statusline') { $InstallStatusline = $true }
+    else {
+        Write-Host "ERROR: Unknown flag '--$flag'. Use --help for available flags." -ForegroundColor Red
+        exit 1
+    }
     $Backend = $null
 }
 
 # State directory for persistent proxy
-$DeepClaudeDir = Join-Path $env:USERPROFILE ".deepclaude"
+$DeepClaudeDir = Join-Path $HOME ".deepclaude"
 $ProxyStateFile = Join-Path $DeepClaudeDir "proxy.json"
 $CurrentRoutesFile = Join-Path $DeepClaudeDir "current-routes.json"
 $SlotOverridesFile = Join-Path $DeepClaudeDir "slot-overrides.json"
@@ -174,28 +185,21 @@ $NovitaKey = if ($env:NOVITA_API_KEY) { $env:NOVITA_API_KEY } else {
     [Environment]::GetEnvironmentVariable("NOVITA_API_KEY", "User")
 }
 
-# Push keys into process env so child processes (proxy) inherit them
-$env:DEEPSEEK_API_KEY = $DeepSeekKey
-$env:OPENROUTER_API_KEY = $OpenRouterKey
-$env:FIREWORKS_API_KEY = $FireworksKey
-$env:OPENCODE_API_KEY = $OpenCodeKey
-$env:ALIBABA_DASHSCOPE_API_KEY = $AlibabaKey
-$env:KIMI_API_KEY = $KimiKey
-$env:MIMO_API_KEY = $MimoKey
-$env:UMANS_API_KEY = $UmansKey
-$env:GROQ_API_KEY = $GroqKey
-$env:MISTRAL_API_KEY = $MistralKey
-$env:MINIMAX_API_KEY = $MiniMaxKey
-$env:ZAI_API_KEY = $ZaiKey
-$env:BYTEPLUS_API_KEY = $BytePlusKey
-$env:SILICONFLOW_API_KEY = $SiliconFlowKey
-$env:NOVITA_API_KEY = $NovitaKey
+# Set env vars only for providers in the active config
+function Set-UsedProviderEnv {
+    param($resolved)
+    if (-not $resolved) { return }
+    foreach ($kv in $resolved.providers.GetEnumerator()) {
+        Set-Content "Env:$($kv.Value.keyName)" -Value $kv.Value.key
+    }
+}
 
 function Clear-AnthropicEnv {
     foreach ($v in @("ANTHROPIC_BASE_URL","ANTHROPIC_AUTH_TOKEN","ANTHROPIC_MODEL",
         "ANTHROPIC_DEFAULT_OPUS_MODEL","ANTHROPIC_DEFAULT_SONNET_MODEL",
         "ANTHROPIC_DEFAULT_HAIKU_MODEL","CLAUDE_CODE_SUBAGENT_MODEL",
-        "ANTHROPIC_API_KEY")) {
+        "ANTHROPIC_API_KEY","CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+        "CLAUDE_CODE_MAX_CONTEXT_TOKENS","DISABLE_COMPACT")) {
         Remove-Item "Env:$v" -ErrorAction SilentlyContinue
     }
 }
@@ -272,19 +276,20 @@ function Write-AtomicFile($path, $json) {
 function Stop-PersistentProxy {
     [CmdletBinding(SupportsShouldProcess)]
     param()
-    $PSCmdlet.ShouldProcess("127.0.0.1", "Stop persistent proxy") | Out-Null
     $state = Get-ProxyState
     if (-not $state) {
         Write-Host "  No persistent proxy is running." -ForegroundColor Yellow
         return
     }
-    try {
-        $proc = Get-Process -Id $state.pid -ErrorAction Stop
-        $proc.Kill()
-        $proc.Dispose()
-    } catch { $null = $_ }
-    Clear-ProxyState
-    Write-Host "  Proxy stopped." -ForegroundColor Green
+    if ($PSCmdlet.ShouldProcess("proxy on port $($state.port)", "Stop")) {
+        try {
+            $proc = Get-Process -Id $state.pid -ErrorAction Stop
+            $proc.Kill()
+            $proc.Dispose()
+        } catch { $null = $_ }
+        Clear-ProxyState
+        Write-Host "  Proxy stopped." -ForegroundColor Green
+    }
 }
 
 # --- Provider Registry ---
@@ -444,10 +449,10 @@ $ModelCtx = @{
 $Configs = [ordered]@{
     ds = @{
         name     = "DeepSeek V4 Pro"
-        opus     = "ds:deepseek-v4-pro[1m]"
-        sonnet   = "ds:deepseek-v4-pro[1m]"
-        haiku    = "ds:deepseek-v4-flash[1m]"
-        subagent = "ds:deepseek-v4-flash[1m]"
+        opus     = "ds:deepseek-v4-pro"
+        sonnet   = "ds:deepseek-v4-pro"
+        haiku    = "ds:deepseek-v4-flash"
+        subagent = "ds:deepseek-v4-flash"
     }
     or = @{
         name     = "OpenRouter (owl-alpha)"
@@ -458,10 +463,10 @@ $Configs = [ordered]@{
     }
     or2 = @{
         name     = "OpenRouter (DeepSeek)"
-        opus     = "or:deepseek/deepseek-v4-pro[1m]"
-        sonnet   = "or:deepseek/deepseek-v4-pro[1m]"
-        haiku    = "or:deepseek/deepseek-v4-flash[1m]"
-        subagent = "or:deepseek/deepseek-v4-flash[1m]"
+        opus     = "or:deepseek/deepseek-v4-pro"
+        sonnet   = "or:deepseek/deepseek-v4-pro"
+        haiku    = "or:deepseek/deepseek-v4-flash"
+        subagent = "or:deepseek/deepseek-v4-flash"
     }
     or3 = @{
         name     = "OpenRouter (best free)"
@@ -472,10 +477,10 @@ $Configs = [ordered]@{
     }
     fw = @{
         name     = "Fireworks AI"
-        opus     = "fw:accounts/fireworks/models/deepseek-v4-pro[1m]"
-        sonnet   = "fw:accounts/fireworks/models/deepseek-v4-pro[1m]"
-        haiku    = "fw:accounts/fireworks/models/deepseek-v4-pro[1m]"
-        subagent = "fw:accounts/fireworks/models/deepseek-v4-pro[1m]"
+        opus     = "fw:accounts/fireworks/models/deepseek-v4-pro"
+        sonnet   = "fw:accounts/fireworks/models/deepseek-v4-pro"
+        haiku    = "fw:accounts/fireworks/models/deepseek-v4-pro"
+        subagent = "fw:accounts/fireworks/models/deepseek-v4-pro"
     }
     oc = @{
         name     = "OpenCode Zen"
@@ -508,15 +513,15 @@ $Configs = [ordered]@{
     # --- Mixed-provider configs ---
     "ds+or" = @{
         name     = "DeepSeek + OpenRouter subs"
-        opus     = "ds:deepseek-v4-pro[1m]"
-        sonnet   = "ds:deepseek-v4-pro[1m]"
+        opus     = "ds:deepseek-v4-pro"
+        sonnet   = "ds:deepseek-v4-pro"
         haiku    = "or:z-ai/glm-4.5-air:free"
         subagent = "or:z-ai/glm-4.5-air:free"
     }
     "ds+oc" = @{
         name     = "DeepSeek + OpenCode subs"
-        opus     = "ds:deepseek-v4-pro[1m]"
-        sonnet   = "ds:deepseek-v4-pro[1m]"
+        opus     = "ds:deepseek-v4-pro"
+        sonnet   = "ds:deepseek-v4-pro"
         haiku    = "oc:big-pickle"
         subagent = "oc:big-pickle"
     }
@@ -557,17 +562,17 @@ $Configs = [ordered]@{
     }
     sf = @{
         name     = "SiliconFlow (DeepSeek V4 Pro)"
-        opus     = "sf:siliconflow/deepseek-v4-pro[1m]"
-        sonnet   = "sf:siliconflow/deepseek-v4-pro[1m]"
-        haiku    = "sf:siliconflow/deepseek-v4-pro[1m]"
-        subagent = "sf:siliconflow/deepseek-v4-pro[1m]"
+        opus     = "sf:siliconflow/deepseek-v4-pro"
+        sonnet   = "sf:siliconflow/deepseek-v4-pro"
+        haiku    = "sf:siliconflow/deepseek-v4-pro"
+        subagent = "sf:siliconflow/deepseek-v4-pro"
     }
     nv = @{
         name     = "Novita (DeepSeek V4 Pro)"
-        opus     = "nv:novita/deepseek-v4-pro[1m]"
-        sonnet   = "nv:novita/deepseek-v4-pro[1m]"
-        haiku    = "nv:novita/deepseek-v4-pro[1m]"
-        subagent = "nv:novita/deepseek-v4-pro[1m]"
+        opus     = "nv:novita/deepseek-v4-pro"
+        sonnet   = "nv:novita/deepseek-v4-pro"
+        haiku    = "nv:novita/deepseek-v4-pro"
+        subagent = "nv:novita/deepseek-v4-pro"
     }
 }
 
@@ -591,7 +596,11 @@ function Resolve-Config($configName) {
             $modelId = $Matches[2]
             $provider = $Providers[$provKey]
             if (-not $provider) { throw "Unknown provider '$provKey' in config '$configName' slot '$slot'" }
-            if (-not $provider.key) { throw "$($provider.keyName) not set (needed by config '$configName')" }
+            if (-not $provider.key) {
+                Write-Host "  Get a key from your provider's dashboard." -ForegroundColor DarkGray
+                Write-Host "  Then: setx $($provider.keyName) `"sk-...`"" -ForegroundColor DarkGray
+                throw "$($provider.keyName) not set (needed by config '$configName')"
+            }
             $resolved.slots[$slot] = @{ model = $modelId; provider = $provKey }
             $resolved.modelProviders[$modelId] = $provKey
             $resolved.providers[$provKey] = $provider
@@ -642,7 +651,11 @@ function Build-AdHocConfig($specs) {
 
         $provider = $Providers[$provKey]
         if (-not $provider) { throw "Unknown provider '$provKey' in spec '$spec'. Known: $($Providers.Keys -join ', ')" }
-        if (-not $provider.key) { throw "$($provider.keyName) not set (needed for spec '$spec')" }
+        if (-not $provider.key) {
+            Write-Host "  Get a key from your provider's dashboard." -ForegroundColor DarkGray
+            Write-Host "  Then: setx $($provider.keyName) `"sk-...`"" -ForegroundColor DarkGray
+            throw "$($provider.keyName) not set (needed for spec '$spec')"
+        }
 
         $slot = $slots[$i]
         $config.slots[$slot] = @{ model = $modelId; provider = $provKey }
@@ -776,11 +789,15 @@ function Start-RoutingProxy {
         -PassThru
 
     # Wait for port output
+    Write-Host -NoNewline "Starting proxy"
     $waited = 0
-    while (((-not (Test-Path $outFile)) -or (Get-Item $outFile).Length -eq 0) -and $waited -lt 50) {
+    $port = $null
+    while (((-not (Test-Path $outFile)) -or (Get-Item $outFile).Length -eq 0) -and $waited -lt 150) {
+        Write-Host -NoNewline "."
         Start-Sleep -Milliseconds 100
         $waited++
     }
+    Write-Host ""
 
     $portStr = Get-Content $outFile -Raw
     if (-not $Persist) {
@@ -798,7 +815,13 @@ function Start-RoutingProxy {
         throw "Proxy failed to start. Output: '$portStr' Stderr: '$errStr'"
     }
 
-    Show-ProxyWarning
+    # Verify proxy is actually responding
+    try {
+        $null = Invoke-RestMethod -Uri "http://127.0.0.1:$port/health" -TimeoutSec 3
+    } catch {
+        Write-Host "WARNING: Proxy port $port is not responding. Windows Defender may have blocked it." -ForegroundColor Yellow
+        Write-Host "Run: deepclaude --fix-av" -ForegroundColor Yellow
+    }
 
     return @{ Port = $port; Process = $proc; Persist = $Persist.IsPresent }
 }
@@ -929,8 +952,10 @@ if ($Help) {
     Write-Host "                     e.g. --set-slot sonnet   (no model = clear override)"
     Write-Host "  --stop-proxy    Kill the persistent proxy"
     Write-Host "  --lint          Self-lint with PSScriptAnalyzer"
+    Write-Host "  --effort LEVEL  Set Claude Code effort level (default: max). Values: low, medium, high, max."
     Write-Host "  --fix-av        Print AV exclusion commands"
     Write-Host "  --doctor        Run system health check (prereqs, keys, proxy test)"
+    Write-Host "  --install-statusline  Install status bar showing model, effort, context (requires restart)"
     Write-Host ""
     Write-Host "  Session switching workflow:"
     Write-Host "    1. deepclaude -b ds+oc --persist     # Start with proxy"
@@ -948,6 +973,67 @@ if ($Version) {
     $mtime = if (Test-Path $scriptPath) { (Get-Item $scriptPath).LastWriteTime.ToString("yyyy-MM-dd HH:mm") } else { "unknown" }
     Write-Host "deepclaude v1.0.0 ($mtime)"
     Write-Host "Proxy: $(Join-Path $myPath 'proxy\start-proxy.js')"
+    exit 0
+}
+
+# --- Install Statusline ---
+if ($InstallStatusline) {
+    $myDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+    if ($IsWindows) {
+        $scriptExt = "ps1"
+        $scriptType = "PowerShell"
+    } else {
+        $scriptExt = "sh"
+        $scriptType = "shell"
+    }
+    $sourceFile = Join-Path $myDir "statusline" "statusline.$scriptExt"
+    $claudeDir = Join-Path $HOME ".claude"
+    $destFile = Join-Path $claudeDir "statusline.$scriptExt"
+    $settingsFile = Join-Path $claudeDir "settings.json"
+
+    if (-not (Test-Path $sourceFile)) {
+        Write-Host "ERROR: Statusline script not found at: $sourceFile" -ForegroundColor Red
+        exit 1
+    }
+
+    # Ensure ~/.claude directory exists
+    if (-not (Test-Path $claudeDir)) {
+        New-Item -ItemType Directory -Path $claudeDir -Force | Out-Null
+    }
+
+    # Copy statusline script
+    Copy-Item $sourceFile $destFile -Force
+    Write-Host "  Copied statusline script to: $destFile" -ForegroundColor Green
+
+    # Read or create settings.json
+    $settings = @{}
+    if (Test-Path $settingsFile) {
+        try {
+            $raw = Get-Content $settingsFile -Raw -ErrorAction Stop
+            if (-not [string]::IsNullOrWhiteSpace($raw)) {
+                $settings = $raw | ConvertFrom-Json
+            }
+        } catch {
+            Write-Host "  WARNING: Could not parse existing settings.json. Creating new one." -ForegroundColor Yellow
+            $settings = @{}
+        }
+    }
+
+    # Add/merge statusLine config
+    $statusLineConfig = @{
+        type = "command"
+        command = if ($IsWindows) { "pwsh -NoProfile -File `"$destFile`"" } else { "bash `"$destFile`"" }
+    }
+
+    if ($settings -is [PSCustomObject]) {
+        $settings | Add-Member -NotePropertyName "statusLine" -NotePropertyValue $statusLineConfig -Force
+    } else {
+        $settings["statusLine"] = $statusLineConfig
+    }
+
+    $settings | ConvertTo-Json -Depth 5 | Set-Content -Path $settingsFile -NoNewline
+    Write-Host "  Updated $settingsFile with statusLine config." -ForegroundColor Green
+    Write-Host "  Statusline installed! Restart Claude Code to see the status bar." -ForegroundColor Cyan
     exit 0
 }
 
@@ -1048,8 +1134,23 @@ if ($Doctor) {
     # 7. Proxy startup test
     if ($nodePath -and (Test-Path $proxyScript)) {
         Write-Host "`n  Proxy Test:" -ForegroundColor Yellow
+        # Find best available config for proxy test
+        $doctorConfigName = $null
+        $defaultBackend = if ($env:DEEPCLAUDE_DEFAULT_BACKEND) { $env:DEEPCLAUDE_DEFAULT_BACKEND } elseif ($env:CHEAPCLAUDE_DEFAULT_BACKEND) { $env:CHEAPCLAUDE_DEFAULT_BACKEND } else { $null }
+        if ($defaultBackend -and $Configs.Contains($defaultBackend)) {
+            try { $r = Resolve-Config $defaultBackend; if ($r) { $doctorConfigName = $defaultBackend } } catch {}
+        }
+        if (-not $doctorConfigName) {
+            foreach ($kv in $Configs.GetEnumerator()) {
+                try { $r = Resolve-Config $kv.Key; if ($r) { $doctorConfigName = $kv.Key; break } } catch {}
+            }
+        }
+        if (-not $doctorConfigName) { $doctorConfigName = "ds" }
         try {
-            $testRoutesJson = Build-RoutesJson (Resolve-Config "ds") -IncludeAllModels
+            $doctorResolved = Resolve-Config $doctorConfigName
+            Set-UsedProviderEnv $doctorResolved
+            Show-ProxyWarning
+            $testRoutesJson = Build-RoutesJson $doctorResolved -IncludeAllModels
             $testRoutesFile = Join-Path $DeepClaudeDir "doctor-test-routes.json"
             Write-AtomicFile $testRoutesFile $testRoutesJson
 
@@ -1065,8 +1166,12 @@ if ($Doctor) {
             Stop-RoutingProxy $testProxy
             Remove-Item $testRoutesFile -ErrorAction SilentlyContinue
         } catch {
-            Write-Host "    Proxy startup     $fail  $($_.Exception.Message)"
-            $allOk = $false
+            if ($_.Exception.Message -match "not set") {
+                Write-Host "    $warn  No valid API keys configured. Skipping proxy test."
+            } else {
+                Write-Host "    Proxy startup     $fail  $($_.Exception.Message)"
+                $allOk = $false
+            }
         }
     }
 
@@ -1083,15 +1188,19 @@ if ($Doctor) {
 if ($Lint) {
     $myPath = $MyInvocation.MyCommand.Path
     Write-Host "`n  Linting: $myPath" -ForegroundColor Cyan
-    $issues = Invoke-ScriptAnalyzer -Path $myPath -Severity Error,Warning | Where-Object {
-        $_.RuleName -notin @('PSAvoidUsingWriteHost', 'PSUseBOMForUnicodeEncodedFile')
+    try {
+        $issues = Invoke-ScriptAnalyzer -Path $myPath -Severity Error,Warning | Where-Object {
+            $_.RuleName -notin @('PSAvoidUsingWriteHost', 'PSUseBOMForUnicodeEncodedFile')
+        }
+        if ($issues) {
+            Write-Host "`n  Issues found:" -ForegroundColor Red
+            $issues | Format-Table Line, Severity, RuleName, Message -AutoSize
+            exit 1
+        }
+        Write-Host "  No issues found." -ForegroundColor Green
+    } catch [System.Management.Automation.CommandNotFoundException] {
+        Write-Host "PSScriptAnalyzer not installed. Run: Install-Module -Name PSScriptAnalyzer -Force" -ForegroundColor Yellow
     }
-    if ($issues) {
-        Write-Host "`n  Issues found:" -ForegroundColor Red
-        $issues | Format-Table Line, Severity, RuleName, Message -AutoSize
-        exit 1
-    }
-    Write-Host "  No issues found." -ForegroundColor Green
     exit 0
 }
 
@@ -1115,16 +1224,20 @@ if ($FixAv) {
     Write-Host "  # Add-MpPreference -ExclusionProcess `"node.exe`"" -ForegroundColor DarkGray
     Write-Host ""
 
-    $excluded = (Get-MpPreference).ExclusionPath -contains $proxyDir
-    if ($excluded) {
-        Write-Host "  Status: $proxyDir is already excluded." -ForegroundColor Green
-    } else {
-        $parentExcluded = (Get-MpPreference).ExclusionPath | Where-Object { $proxyDir.StartsWith($_) }
-        if ($parentExcluded) {
-            Write-Host "  Status: Parent directory '$parentExcluded' is excluded (covers proxy)." -ForegroundColor Green
+    try {
+        $excluded = (Get-MpPreference).ExclusionPath -contains $proxyDir
+        if ($excluded) {
+            Write-Host "  Status: $proxyDir is already excluded." -ForegroundColor Green
         } else {
-            Write-Host "  Status: Not yet excluded." -ForegroundColor Yellow
+            $parentExcluded = (Get-MpPreference).ExclusionPath | Where-Object { $proxyDir.StartsWith($_) }
+            if ($parentExcluded) {
+                Write-Host "  Status: Parent directory '$parentExcluded' is excluded (covers proxy)." -ForegroundColor Green
+            } else {
+                Write-Host "  Status: Not yet excluded." -ForegroundColor Yellow
+            }
         }
+    } catch {
+        Write-Host "  (Cannot check current exclusions — run as admin to verify)" -ForegroundColor DarkGray
     }
     Write-Host ""
     exit 0
@@ -1235,7 +1348,9 @@ if ($SetSlot -or $PSBoundParameters.ContainsKey('SetSlot')) {
         Write-Host "`n  Set $slotName override: $slotModel" -ForegroundColor Green
 
         # Warn if model not in known context limits (statusline won't show context %)
-        $plainModel = $slotModel -replace '^[a-z][a-z0-9_-]*:', ''
+        $colonIdx = $slotModel.IndexOf(':')
+        $plainModel = if ($colonIdx -ge 0) { $slotModel.Substring($colonIdx + 1) } else { $slotModel }
+        $plainModel = $plainModel -replace '\[1m\]', ''
         if (-not $ModelCtx.ContainsKey($plainModel)) {
             Write-Host "  Note: Model '$plainModel' not in context-limit registry. Statusline won't show context usage." -ForegroundColor DarkYellow
         }
@@ -1328,6 +1443,9 @@ if ($Switch -or $PSBoundParameters.ContainsKey('Switch')) {
         exit 1
     }
 
+    # Push env vars only for providers in this config
+    Set-UsedProviderEnv $switchResolved
+
     $proxyState = Get-ProxyState
     $routesJson = Build-RoutesJson $switchResolved -IncludeAllModels
 
@@ -1336,6 +1454,7 @@ if ($Switch -or $PSBoundParameters.ContainsKey('Switch')) {
 
     if (-not $proxyState) {
         Write-Host "`n  Starting persistent proxy for $($switchResolved.name)..." -ForegroundColor Cyan
+        Show-ProxyWarning
         $proxyInfo = Start-RoutingProxy -RoutesFile $routesFile -Persist
         Save-ProxyState -ProcessId $proxyInfo.Process.Id -Port $proxyInfo.Port -RoutesFile $routesFile
         Write-Host "  Proxy on port $($proxyInfo.Port)" -ForegroundColor Green
@@ -1370,14 +1489,20 @@ if (-not $IsAnthropic -and $AllSpecs.Count -gt 0) {
         Write-Host "ERROR: Could not resolve configuration '$($AllSpecs -join ' ')'" -ForegroundColor Red
         exit 1
     }
+
+    # Push env vars only for providers in the active config
+    Set-UsedProviderEnv $resolved
 }
+
+# Set Claude Code effort level for all launch paths
+$env:CLAUDE_CODE_EFFORT_LEVEL = $Effort
 
 # --- Remote ---
 if ($Remote) {
     if ($IsAnthropic) {
         Write-Host "`n  Launching remote control (Anthropic)...`n" -ForegroundColor Cyan
         Clear-AnthropicEnv
-        & claude --effort max --dangerously-skip-permissions remote-control @Args
+        & claude --effort $Effort --dangerously-skip-permissions remote-control @ModelSpecs
         exit 0
     }
 
@@ -1393,6 +1518,7 @@ if ($Remote) {
         Write-Host "  Reusing persistent proxy on port $proxyPort" -ForegroundColor DarkGray
     } else {
         Write-AtomicFile $CurrentRoutesFile $routesJson
+        Show-ProxyWarning
         $proxyInfo = Start-RoutingProxy -RoutesFile $CurrentRoutesFile -Persist
         Save-ProxyState -ProcessId $proxyInfo.Process.Id -Port $proxyInfo.Port -RoutesFile $CurrentRoutesFile
         $proxyPort = $proxyInfo.Port
@@ -1411,23 +1537,39 @@ if ($Remote) {
     $env:ANTHROPIC_DEFAULT_SONNET_MODEL = "sonnet:" + ($overrides.sonnet ?? $overrides._defaults.sonnet ?? "$($resolved.slots['sonnet'].provider):$($resolved.slots['sonnet'].model)")
     $env:ANTHROPIC_DEFAULT_HAIKU_MODEL = "haiku:" + ($overrides.haiku ?? $overrides._defaults.haiku ?? "$($resolved.slots['haiku'].provider):$($resolved.slots['haiku'].model)")
     $env:CLAUDE_CODE_SUBAGENT_MODEL = "subagent:" + ($overrides.subagent ?? $overrides._defaults.subagent ?? "$($resolved.slots['subagent'].provider):$($resolved.slots['subagent'].model)")
-    $opusCtx = $ModelCtx[$resolved.slots["opus"].model]
+    $ctxModel = $resolved.slots["opus"].model -replace '\[1m\]', ''
+    $opusCtx = $ModelCtx[$ctxModel]
     if ($opusCtx) {
-        if ($opusCtx -gt 131072 -and $opusCtx -lt 1048576) {
-            $env:CLAUDE_CODE_MAX_CONTEXT_TOKENS = $opusCtx
-            $env:DISABLE_COMPACT = '1'
+        if ($opusCtx -ge 1048576) {
+            $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = "$opusCtx"
+        } elseif ($opusCtx -gt 131072) {
+            $env:DISABLE_COMPACT = "1"
+            $env:CLAUDE_CODE_MAX_CONTEXT_TOKENS = "$opusCtx"
         } else {
-            $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = $opusCtx
+            $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = "$opusCtx"
         }
     }
     Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
 
+    if ($env:DEEPCLAUDE_WATCHDOG -eq 'true') {
+        $watchdog = Start-Job -Name "DeepClaudeWatchdog" -ScriptBlock {
+            param($Pid, $Port)
+            for ($attempt = 1; $attempt -le 2; $attempt++) {
+                Wait-Process -Id $Pid -Timeout 120 -ErrorAction SilentlyContinue
+                if (-not (Get-Process -Id $Pid -ErrorAction SilentlyContinue)) {
+                    Write-Host "Proxy crashed. Restarting (attempt $attempt)..." -ForegroundColor Yellow
+                }
+            }
+        } -ArgumentList $proxyInfo.Process.Id, $proxyInfo.Port
+    }
+
     try {
-        & claude --effort max --dangerously-skip-permissions remote-control @Args
+        & claude --effort $Effort --dangerously-skip-permissions remote-control @ModelSpecs
     } catch {
         Test-ContextLengthError $_.Exception.Message
         throw $_
     }
+    Remove-Job -Name "DeepClaudeWatchdog" -Force -ErrorAction SilentlyContinue
     exit 0
 }
 
@@ -1436,7 +1578,7 @@ if ($IsAnthropic) {
     Clear-AnthropicEnv
     Write-Host "`n  Launching Claude Code (normal Anthropic)...`n" -ForegroundColor Cyan
     try {
-        & claude --effort max --dangerously-skip-permissions @Args
+        & claude --effort $Effort --dangerously-skip-permissions @ModelSpecs
     } catch {
         Test-ContextLengthError $_.Exception.Message
         throw $_
@@ -1469,6 +1611,7 @@ if ($proxyState) {
     Write-Host "  Reusing persistent proxy on :$proxyPort" -ForegroundColor DarkGray
 } else {
     # Start new proxy (persistent if --persist flag set)
+    Show-ProxyWarning
     $proxyInfo = Start-RoutingProxy -RoutesFile $CurrentRoutesFile -Persist:$Persist
     if ($Persist) {
         Save-ProxyState -ProcessId $proxyInfo.Process.Id -Port $proxyInfo.Port -RoutesFile $CurrentRoutesFile
@@ -1496,23 +1639,39 @@ $env:ANTHROPIC_DEFAULT_OPUS_MODEL = $opusM
 $env:ANTHROPIC_DEFAULT_SONNET_MODEL = $sonnetM
 $env:ANTHROPIC_DEFAULT_HAIKU_MODEL = $haikuM
 $env:CLAUDE_CODE_SUBAGENT_MODEL = $subM
-$opusCtx = $ModelCtx[$resolved.slots["opus"].model]
+$ctxModel = $resolved.slots["opus"].model -replace '\[1m\]', ''
+$opusCtx = $ModelCtx[$ctxModel]
 if ($opusCtx) {
-    if ($opusCtx -gt 131072 -and $opusCtx -lt 1048576) {
-        $env:CLAUDE_CODE_MAX_CONTEXT_TOKENS = $opusCtx
-        $env:DISABLE_COMPACT = '1'
+    if ($opusCtx -ge 1048576) {
+        $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = "$opusCtx"
+    } elseif ($opusCtx -gt 131072) {
+        $env:DISABLE_COMPACT = "1"
+        $env:CLAUDE_CODE_MAX_CONTEXT_TOKENS = "$opusCtx"
     } else {
-        $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = $opusCtx
+        $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = "$opusCtx"
     }
 }
 Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
 
+if ($env:DEEPCLAUDE_WATCHDOG -eq 'true') {
+    $watchdog = Start-Job -Name "DeepClaudeWatchdog" -ScriptBlock {
+        param($Pid, $Port)
+        for ($attempt = 1; $attempt -le 2; $attempt++) {
+            Wait-Process -Id $Pid -Timeout 120 -ErrorAction SilentlyContinue
+            if (-not (Get-Process -Id $Pid -ErrorAction SilentlyContinue)) {
+                Write-Host "Proxy crashed. Restarting (attempt $attempt)..." -ForegroundColor Yellow
+            }
+        }
+    } -ArgumentList $proxyInfo.Process.Id, $proxyInfo.Port
+}
+
 try {
-    & claude --effort max --dangerously-skip-permissions @Args
+    & claude --effort $Effort --dangerously-skip-permissions @ModelSpecs
 } catch {
     Test-ContextLengthError $_.Exception.Message
     throw $_
 } finally {
     if ($proxyInfo) { Stop-RoutingProxy $proxyInfo }
+    Remove-Job -Name "DeepClaudeWatchdog" -Force -ErrorAction SilentlyContinue
     Clear-AnthropicEnv
 }
