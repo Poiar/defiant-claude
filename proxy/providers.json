@@ -1,0 +1,193 @@
+{
+  "_comment": "Single source of truth for all provider definitions. Used by deepclaude.ps1, deepclaude.sh, and start-proxy.ts.",
+  "providers": {
+    "ds": {
+      "displayName": "DeepSeek (direct)",
+      "endpoint": "https://api.deepseek.com/anthropic",
+      "keyEnv": "DEEPSEEK_API_KEY",
+      "authHeader": "x-api-key",
+      "wireFormat": "anthropic",
+      "setupUrl": "https://platform.deepseek.com/api-keys",
+      "streamUsageReporting": null
+    },
+    "or": {
+      "displayName": "OpenRouter",
+      "endpoint": "https://openrouter.ai/api",
+      "keyEnv": "OPENROUTER_API_KEY",
+      "authHeader": "bearer",
+      "wireFormat": "anthropic",
+      "setupUrl": "https://openrouter.ai/keys",
+      "extraHeaders": {
+        "HTTP-Referer": "https://github.com/Poiar/deepclaude",
+        "X-Title": "deepclaude"
+      },
+      "streamUsageReporting": null
+    },
+    "fw": {
+      "displayName": "Fireworks AI",
+      "endpoint": "https://api.fireworks.ai/inference",
+      "keyEnv": "FIREWORKS_API_KEY",
+      "authHeader": "bearer",
+      "wireFormat": "anthropic",
+      "setupUrl": "https://fireworks.ai/api-keys",
+      "streamUsageReporting": null
+    },
+    "oc": {
+      "displayName": "OpenCode Zen",
+      "endpoint": "https://opencode.ai/zen",
+      "keyEnv": "OPENCODE_API_KEY",
+      "authHeader": "bearer",
+      "wireFormat": "anthropic",
+      "setupUrl": "https://opencode.ai/keys",
+      "streamUsageReporting": null
+    },
+    "al": {
+      "displayName": "Alibaba/DashScope",
+      "endpoint": "https://dashscope.aliyuncs.com/api/v1/chat/completions",
+      "keyEnv": "ALIBABA_DASHSCOPE_API_KEY",
+      "authHeader": "bearer",
+      "wireFormat": "openai",
+      "fallback": ["ds"],
+      "streamUsageReporting": "openai_stream_options"
+    },
+    "km": {
+      "displayName": "Kimi/Moonshot",
+      "endpoint": "https://api.moonshot.ai/v1",
+      "keyEnv": "KIMI_API_KEY",
+      "authHeader": "bearer",
+      "wireFormat": "openai",
+      "fallback": ["ds"],
+      "streamUsageReporting": "openai_stream_options"
+    },
+    "mm": {
+      "displayName": "Xiaomi Mimo",
+      "endpoint": "https://api.xiaomimimo.com/v1",
+      "keyEnv": "MIMO_API_KEY",
+      "authHeader": "bearer",
+      "wireFormat": "openai",
+      "fallback": ["oc"],
+      "streamUsageReporting": "openai_stream_options"
+    },
+    "um": {
+      "displayName": "Umans AI",
+      "endpoint": "https://api.code.umans.ai",
+      "keyEnv": "UMANS_API_KEY",
+      "authHeader": "x-api-key",
+      "wireFormat": "anthropic",
+      "streamUsageReporting": null
+    },
+    "gr": {
+      "displayName": "Groq",
+      "endpoint": "https://api.groq.com/openai/v1",
+      "keyEnv": "GROQ_API_KEY",
+      "authHeader": "bearer",
+      "wireFormat": "openai",
+      "setupUrl": "https://console.groq.com/keys",
+      "fallback": ["ds"],
+      "streamUsageReporting": "openai_stream_options"
+    },
+    "mt": {
+      "displayName": "Mistral",
+      "endpoint": "https://api.mistral.ai/v1",
+      "keyEnv": "MISTRAL_API_KEY",
+      "authHeader": "bearer",
+      "wireFormat": "openai",
+      "setupUrl": "https://console.mistral.ai/api-keys",
+      "fallback": ["ds"],
+      "streamUsageReporting": "openai_stream_options"
+    },
+    "mx": {
+      "displayName": "MiniMax",
+      "endpoint": "https://api.minimax.chat/v1",
+      "keyEnv": "MINIMAX_API_KEY",
+      "authHeader": "bearer",
+      "wireFormat": "openai",
+      "fallback": ["ds"],
+      "streamUsageReporting": "openai_stream_options"
+    },
+    "za": {
+      "displayName": "Z.ai / GLM",
+      "endpoint": "https://open.bigmodel.cn/api/paas/v4",
+      "keyEnv": "ZAI_API_KEY",
+      "authHeader": "bearer",
+      "wireFormat": "openai",
+      "fallback": ["ds"],
+      "streamUsageReporting": "openai_stream_options"
+    },
+    "bp": {
+      "displayName": "BytePlus/Doubao",
+      "endpoint": "https://ark.cn-beijing.volces.com/api/v3",
+      "keyEnv": "BYTEPLUS_API_KEY",
+      "authHeader": "bearer",
+      "wireFormat": "openai",
+      "fallback": ["ds"],
+      "streamUsageReporting": "openai_stream_options"
+    },
+    "sf": {
+      "displayName": "SiliconFlow",
+      "endpoint": "https://api.siliconflow.cn/v1",
+      "keyEnv": "SILICONFLOW_API_KEY",
+      "authHeader": "bearer",
+      "wireFormat": "openai",
+      "fallback": ["ds"],
+      "streamUsageReporting": "openai_stream_options"
+    },
+    "nv": {
+      "displayName": "Novita",
+      "endpoint": "https://api.novita.ai/v3/openai",
+      "keyEnv": "NOVITA_API_KEY",
+      "authHeader": "bearer",
+      "wireFormat": "openai",
+      "fallback": ["ds"],
+      "streamUsageReporting": "openai_stream_options"
+    }
+  },
+  "contextLimits": {
+    "deepseek-v4-pro": 1048576,
+    "deepseek-v4-flash": 1048576,
+    "deepseek/deepseek-v4-pro": 1048576,
+    "deepseek/deepseek-v4-flash": 1048576,
+    "accounts/fireworks/models/deepseek-v4-pro": 1048576,
+    "openrouter/owl-alpha": 200000,
+    "openai/gpt-oss-120b:free": 131072,
+    "poolside/laguna-m.1:free": 131072,
+    "z-ai/glm-4.5-air:free": 131072,
+    "liquid/lfm-2.5-1.2b-instruct:free": 32768,
+    "big-pickle": 131072,
+    "kimi-k2.6": 262144,
+    "mimo-v2.5-pro": 131072,
+    "umans-kimi-k2.6": 262144,
+    "umans-coder": 262144,
+    "umans-flash": 131072,
+    "umans-glm-5.1": 131072,
+    "groq/llama-4-maverick": 131072,
+    "groq/deepseek-r1-distill-qwen-32b": 131072,
+    "mistral/mistral-large": 131072,
+    "mistral/mistral-small": 131072,
+    "minimax/minimax-m1": 262144,
+    "zai/glm-4.5": 131072,
+    "byteplus/doubao-1.5-pro": 131072,
+    "siliconflow/deepseek-v4-pro": 1048576,
+    "novita/deepseek-v4-pro": 1048576
+  },
+  "configs": {
+    "ds":    { "name": "DeepSeek V4 Pro",                         "opus": "ds:deepseek-v4-pro", "sonnet": "ds:deepseek-v4-pro", "haiku": "ds:deepseek-v4-flash", "sub": "ds:deepseek-v4-flash" },
+    "or":    { "name": "OpenRouter (owl-alpha)",                  "opus": "or:openrouter/owl-alpha", "sonnet": "or:openrouter/owl-alpha", "haiku": "or:z-ai/glm-4.5-air:free", "sub": "or:z-ai/glm-4.5-air:free" },
+    "or2":   { "name": "OpenRouter (DeepSeek)",                   "opus": "or:deepseek/deepseek-v4-pro", "sonnet": "or:deepseek/deepseek-v4-pro", "haiku": "or:deepseek/deepseek-v4-flash", "sub": "or:deepseek/deepseek-v4-flash" },
+    "or3":   { "name": "OpenRouter (best free)",                  "opus": "or:openai/gpt-oss-120b:free", "sonnet": "or:poolside/laguna-m.1:free", "haiku": "or:z-ai/glm-4.5-air:free", "sub": "or:liquid/lfm-2.5-1.2b-instruct:free" },
+    "fw":    { "name": "Fireworks AI",                            "opus": "fw:accounts/fireworks/models/deepseek-v4-pro", "sonnet": "fw:accounts/fireworks/models/deepseek-v4-pro", "haiku": "fw:accounts/fireworks/models/deepseek-v4-pro", "sub": "fw:accounts/fireworks/models/deepseek-v4-pro" },
+    "oc":    { "name": "OpenCode Zen",                            "opus": "oc:big-pickle", "sonnet": "oc:big-pickle", "haiku": "oc:big-pickle", "sub": "oc:big-pickle" },
+    "km":    { "name": "Kimi K2.6",                               "opus": "km:kimi-k2.6", "sonnet": "km:kimi-k2.6", "haiku": "km:kimi-k2.6", "sub": "km:kimi-k2.6" },
+    "mm":    { "name": "Xiaomi Mimo V2.5 Pro",                     "opus": "mm:mimo-v2.5-pro", "sonnet": "mm:mimo-v2.5-pro", "haiku": "mm:mimo-v2.5-pro", "sub": "mm:mimo-v2.5-pro" },
+    "um":    { "name": "Umans Coder (Kimi K2.6)",                  "opus": "um:umans-coder", "sonnet": "um:umans-coder", "haiku": "um:umans-coder", "sub": "um:umans-coder" },
+    "gr":    { "name": "Groq (Llama 4 Maverick)",                 "opus": "gr:groq/llama-4-maverick", "sonnet": "gr:groq/llama-4-maverick", "haiku": "gr:groq/deepseek-r1-distill-qwen-32b", "sub": "gr:groq/deepseek-r1-distill-qwen-32b" },
+    "mt":    { "name": "Mistral Large",                           "opus": "mt:mistral/mistral-large", "sonnet": "mt:mistral/mistral-large", "haiku": "mt:mistral/mistral-small", "sub": "mt:mistral/mistral-small" },
+    "mx":    { "name": "MiniMax M1",                              "opus": "mx:minimax/minimax-m1", "sonnet": "mx:minimax/minimax-m1", "haiku": "mx:minimax/minimax-m1", "sub": "mx:minimax/minimax-m1" },
+    "za":    { "name": "Z.ai GLM 4.5",                            "opus": "za:zai/glm-4.5", "sonnet": "za:zai/glm-4.5", "haiku": "za:zai/glm-4.5", "sub": "za:zai/glm-4.5" },
+    "bp":    { "name": "BytePlus Doubao 1.5 Pro",                 "opus": "bp:byteplus/doubao-1.5-pro", "sonnet": "bp:byteplus/doubao-1.5-pro", "haiku": "bp:byteplus/doubao-1.5-pro", "sub": "bp:byteplus/doubao-1.5-pro" },
+    "sf":    { "name": "SiliconFlow (DeepSeek V4 Pro)",           "opus": "sf:siliconflow/deepseek-v4-pro", "sonnet": "sf:siliconflow/deepseek-v4-pro", "haiku": "sf:siliconflow/deepseek-v4-pro", "sub": "sf:siliconflow/deepseek-v4-pro" },
+    "nv":    { "name": "Novita (DeepSeek V4 Pro)",                "opus": "nv:novita/deepseek-v4-pro", "sonnet": "nv:novita/deepseek-v4-pro", "haiku": "nv:novita/deepseek-v4-pro", "sub": "nv:novita/deepseek-v4-pro" },
+    "ds+oc": { "name": "DeepSeek + OpenCode subs",                "opus": "ds:deepseek-v4-pro", "sonnet": "ds:deepseek-v4-pro", "haiku": "oc:big-pickle", "sub": "oc:big-pickle" },
+    "ds+or": { "name": "DeepSeek + OpenRouter subs",              "opus": "ds:deepseek-v4-pro", "sonnet": "ds:deepseek-v4-pro", "haiku": "or:z-ai/glm-4.5-air:free", "sub": "or:z-ai/glm-4.5-air:free" }
+  }
+}

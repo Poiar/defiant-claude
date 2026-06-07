@@ -45,120 +45,37 @@ BYTEPLUS_KEY="${BYTEPLUS_API_KEY:-}"
 SILICONFLOW_KEY="${SILICONFLOW_API_KEY:-}"
 NOVITA_KEY="${NOVITA_API_KEY:-}"
 
-# --- Provider Registry ---
-# auth: "x-api-key" or "bearer"
+# --- Provider Registry (loaded from providers.json) ---
+REGISTRY_FILE="${SCRIPT_DIR}/proxy/providers.json"
+
 declare -A PROVIDER_URL PROVIDER_AUTH PROVIDER_KEYNAME PROVIDER_NAME
-PROVIDER_NAME[ds]="DeepSeek (direct)"
-PROVIDER_URL[ds]="https://api.deepseek.com/anthropic"
-PROVIDER_AUTH[ds]="x-api-key"
-PROVIDER_KEYNAME[ds]="DEEPSEEK_API_KEY"
+declare -A PROVIDER_FORMAT PROVIDER_FALLBACK PROVIDER_SETUP_URL
 
-PROVIDER_NAME[or]="OpenRouter"
-PROVIDER_URL[or]="https://openrouter.ai/api"
-PROVIDER_AUTH[or]="bearer"
-PROVIDER_KEYNAME[or]="OPENROUTER_API_KEY"
+if [[ ! -f "$REGISTRY_FILE" ]] || ! jq empty "$REGISTRY_FILE" 2>/dev/null; then
+    echo "ERROR: providers.json is missing or invalid" >&2
+    echo "  Expected at: $REGISTRY_FILE" >&2
+    echo "  Ensure the deepclaude repository is complete and the file contains valid JSON." >&2
+    exit 1
+fi
 
-PROVIDER_NAME[fw]="Fireworks AI"
-PROVIDER_URL[fw]="https://api.fireworks.ai/inference"
-PROVIDER_AUTH[fw]="bearer"
-PROVIDER_KEYNAME[fw]="FIREWORKS_API_KEY"
+while IFS=$'\t' read -r pk name url auth keyname format fallback setup_url; do
+    PROVIDER_NAME[$pk]="$name"
+    PROVIDER_URL[$pk]="$url"
+    PROVIDER_AUTH[$pk]="$auth"
+    PROVIDER_KEYNAME[$pk]="$keyname"
+    PROVIDER_FORMAT[$pk]="$format"
+    [[ -n "$fallback" && "$fallback" != "null" ]] && PROVIDER_FALLBACK[$pk]="$fallback"
+    [[ -n "$setup_url" && "$setup_url" != "null" ]] && PROVIDER_SETUP_URL[$pk]="$setup_url"
+done < <(jq -r '.providers | to_entries[] | [.key, .value.displayName, .value.endpoint, .value.authHeader, .value.keyEnv, .value.wireFormat, (.value.fallback // [] | join(",")), (.value.setupUrl // "")] | @tsv' "$REGISTRY_FILE")
 
-PROVIDER_NAME[oc]="OpenCode Zen"
-PROVIDER_URL[oc]="https://opencode.ai/zen"
-PROVIDER_AUTH[oc]="bearer"
-PROVIDER_KEYNAME[oc]="OPENCODE_API_KEY"
+# Anthropic pseudo-provider (not in providers.json — used for --backend anthropic)
+PROVIDER_FORMAT[an]="anthropic"
 
-PROVIDER_NAME[al]="Alibaba/DashScope"
-PROVIDER_URL[al]="https://dashscope.aliyuncs.com/api/v1/chat/completions"
-PROVIDER_AUTH[al]="bearer"
-PROVIDER_KEYNAME[al]="ALIBABA_DASHSCOPE_API_KEY"
-
-PROVIDER_NAME[km]="Kimi/Moonshot"
-PROVIDER_URL[km]="https://api.moonshot.ai/v1"
-PROVIDER_AUTH[km]="bearer"
-PROVIDER_KEYNAME[km]="KIMI_API_KEY"
-
-PROVIDER_NAME[mm]="Xiaomi Mimo"
-PROVIDER_URL[mm]="https://api.xiaomimimo.com/v1"
-PROVIDER_AUTH[mm]="bearer"
-PROVIDER_KEYNAME[mm]="MIMO_API_KEY"
-
-PROVIDER_NAME[um]="Umans AI"
-PROVIDER_URL[um]="https://api.code.umans.ai"
-PROVIDER_AUTH[um]="x-api-key"
-PROVIDER_KEYNAME[um]="UMANS_API_KEY"
-
-PROVIDER_NAME[gr]="Groq"
-PROVIDER_URL[gr]="https://api.groq.com/openai/v1"
-PROVIDER_AUTH[gr]="bearer"
-PROVIDER_KEYNAME[gr]="GROQ_API_KEY"
-
-PROVIDER_NAME[mt]="Mistral"
-PROVIDER_URL[mt]="https://api.mistral.ai/v1"
-PROVIDER_AUTH[mt]="bearer"
-PROVIDER_KEYNAME[mt]="MISTRAL_API_KEY"
-
-PROVIDER_NAME[mx]="MiniMax"
-PROVIDER_URL[mx]="https://api.minimax.chat/v1"
-PROVIDER_AUTH[mx]="bearer"
-PROVIDER_KEYNAME[mx]="MINIMAX_API_KEY"
-
-PROVIDER_NAME[za]="Z.ai / GLM"
-PROVIDER_URL[za]="https://open.bigmodel.cn/api/paas/v4"
-PROVIDER_AUTH[za]="bearer"
-PROVIDER_KEYNAME[za]="ZAI_API_KEY"
-
-PROVIDER_NAME[bp]="BytePlus/Doubao"
-PROVIDER_URL[bp]="https://ark.cn-beijing.volces.com/api/v3"
-PROVIDER_AUTH[bp]="bearer"
-PROVIDER_KEYNAME[bp]="BYTEPLUS_API_KEY"
-
-PROVIDER_NAME[sf]="SiliconFlow"
-PROVIDER_URL[sf]="https://api.siliconflow.cn/v1"
-PROVIDER_AUTH[sf]="bearer"
-PROVIDER_KEYNAME[sf]="SILICONFLOW_API_KEY"
-
-PROVIDER_NAME[nv]="Novita"
-PROVIDER_URL[nv]="https://api.novita.ai/v3/openai"
-PROVIDER_AUTH[nv]="bearer"
-PROVIDER_KEYNAME[nv]="NOVITA_API_KEY"
-
-declare -A PROVIDER_SETUP_URL
-PROVIDER_SETUP_URL[ds]="https://platform.deepseek.com/api-keys"
-PROVIDER_SETUP_URL[or]="https://openrouter.ai/keys"
-PROVIDER_SETUP_URL[fw]="https://fireworks.ai/api-keys"
-PROVIDER_SETUP_URL[oc]="https://opencode.ai/keys"
-PROVIDER_SETUP_URL[gr]="https://console.groq.com/keys"
-PROVIDER_SETUP_URL[mt]="https://console.mistral.ai/api-keys"
-
-# --- Per-model context window limits (tokens) ---
+# --- Per-model context window limits (tokens, from providers.json) ---
 declare -A MODEL_CTX
-MODEL_CTX["deepseek-v4-pro"]=1048576
-MODEL_CTX["deepseek-v4-flash"]=1048576
-MODEL_CTX["deepseek/deepseek-v4-pro"]=1048576
-MODEL_CTX["deepseek/deepseek-v4-flash"]=1048576
-MODEL_CTX["accounts/fireworks/models/deepseek-v4-pro"]=1048576
-MODEL_CTX["openrouter/owl-alpha"]=200000
-MODEL_CTX["openai/gpt-oss-120b:free"]=131072
-MODEL_CTX["poolside/laguna-m.1:free"]=131072
-MODEL_CTX["z-ai/glm-4.5-air:free"]=131072
-MODEL_CTX["liquid/lfm-2.5-1.2b-instruct:free"]=32768
-MODEL_CTX["big-pickle"]=131072
-MODEL_CTX["kimi-k2.6"]=262144
-MODEL_CTX["mimo-v2.5-pro"]=131072
-MODEL_CTX["umans-kimi-k2.6"]=262144
-MODEL_CTX["umans-coder"]=262144
-MODEL_CTX["umans-flash"]=131072
-MODEL_CTX["umans-glm-5.1"]=131072
-MODEL_CTX["groq/llama-4-maverick"]=131072
-MODEL_CTX["groq/deepseek-r1-distill-qwen-32b"]=131072
-MODEL_CTX["mistral/mistral-large"]=131072
-MODEL_CTX["mistral/mistral-small"]=131072
-MODEL_CTX["minimax/minimax-m1"]=262144
-MODEL_CTX["zai/glm-4.5"]=131072
-MODEL_CTX["byteplus/doubao-1.5-pro"]=131072
-MODEL_CTX["siliconflow/deepseek-v4-pro"]=1048576
-MODEL_CTX["novita/deepseek-v4-pro"]=1048576
+while IFS=$'\t' read -r model limit; do
+    MODEL_CTX["$model"]="$limit"
+done < <(jq -r '.contextLimits | to_entries[] | [.key, .value] | @tsv' "$REGISTRY_FILE")
 
 get_provider_key() {
     local pk="$1"
@@ -194,6 +111,7 @@ write_atomic() {
     printf '%s' "$content" > "$tmp"
     rm -f "$path"
     mv "$tmp" "$path"
+    chmod 600 "$path" 2>/dev/null || true
 }
 
 # --- Persistent proxy state management ---
@@ -220,7 +138,7 @@ get_proxy_state() {
 
 save_proxy_state() {
     local pid="$1" port="$2" routes_file="$3"
-    mkdir -p "$DEEPCLAUDE_DIR"
+    mkdir -p -m 700 "$DEEPCLAUDE_DIR"
     local state
     state=$(jq -n --arg pid "$pid" --arg port "$port" --arg routes "$routes_file" \
         --arg started "$(date -Iseconds)" \
@@ -237,7 +155,7 @@ init_slot_overrides() {
     local opus_prov="$1" opus_model="$2" sonnet_prov="$3" sonnet_model="$4"
     local haiku_prov="$5" haiku_model="$6" subagent_prov="$7" subagent_model="$8"
 
-    mkdir -p "$DEEPCLAUDE_DIR"
+    mkdir -p -m 700 "$DEEPCLAUDE_DIR"
 
     # Build defaults
     local defaults
@@ -275,83 +193,17 @@ get_slot_model() {
     echo "$fallback"
 }
 
-# --- Config resolution ---
+# --- Config resolution (from providers.json) ---
 declare -A CONFIG_NAME CONFIG_OPUS CONFIG_SONNET CONFIG_HAIKU CONFIG_SUBAGENT
 
 init_configs() {
-    CONFIG_NAME[ds]="DeepSeek V4 Pro"
-    CONFIG_OPUS[ds]="ds:deepseek-v4-pro"; CONFIG_SONNET[ds]="ds:deepseek-v4-pro"
-    CONFIG_HAIKU[ds]="ds:deepseek-v4-flash"; CONFIG_SUBAGENT[ds]="ds:deepseek-v4-flash"
-
-    CONFIG_NAME[or]="OpenRouter (owl-alpha)"
-    CONFIG_OPUS[or]="or:openrouter/owl-alpha"; CONFIG_SONNET[or]="or:openrouter/owl-alpha"
-    CONFIG_HAIKU[or]="or:z-ai/glm-4.5-air:free"; CONFIG_SUBAGENT[or]="or:z-ai/glm-4.5-air:free"
-
-    CONFIG_NAME[or2]="OpenRouter (DeepSeek)"
-    CONFIG_OPUS[or2]="or:deepseek/deepseek-v4-pro"; CONFIG_SONNET[or2]="or:deepseek/deepseek-v4-pro"
-    CONFIG_HAIKU[or2]="or:deepseek/deepseek-v4-flash"; CONFIG_SUBAGENT[or2]="or:deepseek/deepseek-v4-flash"
-
-    CONFIG_NAME[or3]="OpenRouter (best free)"
-    CONFIG_OPUS[or3]="or:openai/gpt-oss-120b:free"; CONFIG_SONNET[or3]="or:poolside/laguna-m.1:free"
-    CONFIG_HAIKU[or3]="or:z-ai/glm-4.5-air:free"; CONFIG_SUBAGENT[or3]="or:liquid/lfm-2.5-1.2b-instruct:free"
-
-    CONFIG_NAME[fw]="Fireworks AI"
-    CONFIG_OPUS[fw]="fw:accounts/fireworks/models/deepseek-v4-pro"
-    CONFIG_SONNET[fw]="fw:accounts/fireworks/models/deepseek-v4-pro"
-    CONFIG_HAIKU[fw]="fw:accounts/fireworks/models/deepseek-v4-pro"
-    CONFIG_SUBAGENT[fw]="fw:accounts/fireworks/models/deepseek-v4-pro"
-
-    CONFIG_NAME[oc]="OpenCode Zen"
-    CONFIG_OPUS[oc]="oc:big-pickle"; CONFIG_SONNET[oc]="oc:big-pickle"
-    CONFIG_HAIKU[oc]="oc:big-pickle"; CONFIG_SUBAGENT[oc]="oc:big-pickle"
-
-    CONFIG_NAME["ds+oc"]="DeepSeek + OpenCode subs"
-    CONFIG_OPUS["ds+oc"]="ds:deepseek-v4-pro"; CONFIG_SONNET["ds+oc"]="ds:deepseek-v4-pro"
-    CONFIG_HAIKU["ds+oc"]="oc:big-pickle"; CONFIG_SUBAGENT["ds+oc"]="oc:big-pickle"
-
-    CONFIG_NAME["ds+or"]="DeepSeek + OpenRouter subs"
-    CONFIG_OPUS["ds+or"]="ds:deepseek-v4-pro"; CONFIG_SONNET["ds+or"]="ds:deepseek-v4-pro"
-    CONFIG_HAIKU["ds+or"]="or:z-ai/glm-4.5-air:free"; CONFIG_SUBAGENT["ds+or"]="or:z-ai/glm-4.5-air:free"
-
-    CONFIG_NAME[km]="Kimi K2.6"
-    CONFIG_OPUS[km]="km:kimi-k2.6"; CONFIG_SONNET[km]="km:kimi-k2.6"
-    CONFIG_HAIKU[km]="km:kimi-k2.6"; CONFIG_SUBAGENT[km]="km:kimi-k2.6"
-
-    CONFIG_NAME[mm]="Xiaomi Mimo V2.5 Pro"
-    CONFIG_OPUS[mm]="mm:mimo-v2.5-pro"; CONFIG_SONNET[mm]="mm:mimo-v2.5-pro"
-    CONFIG_HAIKU[mm]="mm:mimo-v2.5-pro"; CONFIG_SUBAGENT[mm]="mm:mimo-v2.5-pro"
-
-    CONFIG_NAME[um]="Umans Coder (Kimi K2.6)"
-    CONFIG_OPUS[um]="um:umans-coder"; CONFIG_SONNET[um]="um:umans-coder"
-    CONFIG_HAIKU[um]="um:umans-coder"; CONFIG_SUBAGENT[um]="um:umans-coder"
-
-    CONFIG_NAME[gr]="Groq (Llama 4 Maverick)"
-    CONFIG_OPUS[gr]="gr:groq/llama-4-maverick"; CONFIG_SONNET[gr]="gr:groq/llama-4-maverick"
-    CONFIG_HAIKU[gr]="gr:groq/deepseek-r1-distill-qwen-32b"; CONFIG_SUBAGENT[gr]="gr:groq/deepseek-r1-distill-qwen-32b"
-
-    CONFIG_NAME[mt]="Mistral Large"
-    CONFIG_OPUS[mt]="mt:mistral/mistral-large"; CONFIG_SONNET[mt]="mt:mistral/mistral-large"
-    CONFIG_HAIKU[mt]="mt:mistral/mistral-small"; CONFIG_SUBAGENT[mt]="mt:mistral/mistral-small"
-
-    CONFIG_NAME[mx]="MiniMax M1"
-    CONFIG_OPUS[mx]="mx:minimax/minimax-m1"; CONFIG_SONNET[mx]="mx:minimax/minimax-m1"
-    CONFIG_HAIKU[mx]="mx:minimax/minimax-m1"; CONFIG_SUBAGENT[mx]="mx:minimax/minimax-m1"
-
-    CONFIG_NAME[za]="Z.ai GLM 4.5"
-    CONFIG_OPUS[za]="za:zai/glm-4.5"; CONFIG_SONNET[za]="za:zai/glm-4.5"
-    CONFIG_HAIKU[za]="za:zai/glm-4.5"; CONFIG_SUBAGENT[za]="za:zai/glm-4.5"
-
-    CONFIG_NAME[bp]="BytePlus Doubao 1.5 Pro"
-    CONFIG_OPUS[bp]="bp:byteplus/doubao-1.5-pro"; CONFIG_SONNET[bp]="bp:byteplus/doubao-1.5-pro"
-    CONFIG_HAIKU[bp]="bp:byteplus/doubao-1.5-pro"; CONFIG_SUBAGENT[bp]="bp:byteplus/doubao-1.5-pro"
-
-    CONFIG_NAME[sf]="SiliconFlow (DeepSeek V4 Pro)"
-    CONFIG_OPUS[sf]="sf:siliconflow/deepseek-v4-pro"; CONFIG_SONNET[sf]="sf:siliconflow/deepseek-v4-pro"
-    CONFIG_HAIKU[sf]="sf:siliconflow/deepseek-v4-pro"; CONFIG_SUBAGENT[sf]="sf:siliconflow/deepseek-v4-pro"
-
-    CONFIG_NAME[nv]="Novita (DeepSeek V4 Pro)"
-    CONFIG_OPUS[nv]="nv:novita/deepseek-v4-pro"; CONFIG_SONNET[nv]="nv:novita/deepseek-v4-pro"
-    CONFIG_HAIKU[nv]="nv:novita/deepseek-v4-pro"; CONFIG_SUBAGENT[nv]="nv:novita/deepseek-v4-pro"
+    while IFS=$'\t' read -r cfg name opus sonnet haiku sub; do
+        CONFIG_NAME[$cfg]="$name"
+        CONFIG_OPUS[$cfg]="$opus"
+        CONFIG_SONNET[$cfg]="$sonnet"
+        CONFIG_HAIKU[$cfg]="$haiku"
+        CONFIG_SUBAGENT[$cfg]="$sub"
+    done < <(jq -r '.configs | to_entries[] | [.key, .value.name, .value.opus, .value.sonnet, .value.haiku, .value.sub] | @tsv' "$REGISTRY_FILE")
 }
 init_configs
 
@@ -476,7 +328,9 @@ build_routes_json() {
                 --arg url "${PROVIDER_URL[$prov_key]}" \
                 --arg keyEnv "${PROVIDER_KEYNAME[$prov_key]}" \
                 --arg auth "${PROVIDER_AUTH[$prov_key]}" \
-                '.[$pk] = {url: $url, keyEnv: $keyEnv, auth: $auth}')
+                --arg format "${PROVIDER_FORMAT[$prov_key]:-anthropic}" \
+                --arg fb "${PROVIDER_FALLBACK[$prov_key]:-}" \
+                '.[$pk] = {url: $url, keyEnv: $keyEnv, auth: $auth, format: $format, fallback: ($fb | if . == "" then [] else split(",") end)}')
         fi
     done
 
@@ -499,7 +353,9 @@ build_routes_json() {
                         --arg url "${PROVIDER_URL[$pk]}" \
                         --arg keyEnv "${PROVIDER_KEYNAME[$pk]}" \
                         --arg auth "${PROVIDER_AUTH[$pk]}" \
-                        '.[$pk] = {url: $url, keyEnv: $keyEnv, auth: $auth}')
+                        --arg format "${PROVIDER_FORMAT[$pk]:-anthropic}" \
+                        --arg fb "${PROVIDER_FALLBACK[$pk]:-}" \
+                        '.[$pk] = {url: $url, keyEnv: $keyEnv, auth: $auth, format: $format, fallback: ($fb | if . == "" then [] else split(",") end)}')
                 fi
             fi
         done
@@ -523,7 +379,7 @@ build_routes_json() {
 # --- Start the HTTP routing proxy ---
 start_proxy() {
     local routes_file="$1"
-    local proxy_script="${SCRIPT_DIR}/proxy/start-proxy.js"
+    local proxy_script="${SCRIPT_DIR}/proxy/start-proxy.ts"
 
     if [[ ! -f "$proxy_script" ]]; then
         echo "ERROR: Proxy script not found at $proxy_script" >&2
@@ -536,11 +392,17 @@ start_proxy() {
     fi
 
     local out_file err_file
-    out_file=$(mktemp)
-    err_file=$(mktemp)
+    out_file=$(mktemp "${TMPDIR:-/tmp}/deepclaude.XXXXXX")
+    err_file=$(mktemp "${TMPDIR:-/tmp}/deepclaude.XXXXXX")
 
-    node "$proxy_script" --routes "$routes_file" --overrides "$SLOT_OVERRIDES_FILE" \
-        > "$out_file" 2> "$err_file" &
+    local tsx_bin="${SCRIPT_DIR}/node_modules/.bin/tsx"
+    if [[ -x "$tsx_bin" ]]; then
+        "$tsx_bin" "$proxy_script" --routes "$routes_file" --overrides "$SLOT_OVERRIDES_FILE" \
+            > "$out_file" 2> "$err_file" &
+    else
+        node "$proxy_script" --routes "$routes_file" --overrides "$SLOT_OVERRIDES_FILE" \
+            > "$out_file" 2> "$err_file" &
+    fi
     local proxy_pid=$!
 
     # Wait for port output
@@ -574,6 +436,9 @@ stop_proxy_info() {
     local pid="$1"
     if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
         kill "$pid" 2>/dev/null || true
+    fi
+    if [[ -n "${watchdog_pid:-}" ]] && kill -0 "$watchdog_pid" 2>/dev/null; then
+        kill "$watchdog_pid" 2>/dev/null || true
     fi
     clear_proxy_state
 }
@@ -734,6 +599,7 @@ show_help() {
   echo "  --install-statusline   Auto-install statusline to ~/.claude/"
   echo "  --set-slot SLOT MODEL  Override a slot: opus/sonnet/haiku/subagent"
     echo "  --persist       Keep proxy running after CC exits"
+    echo "  --remote              Browser-based remote control (starts proxy automatically)"
     echo "  --switch CONFIG  Switch active config of a running persistent proxy"
     echo "  --stop-proxy    Kill the persistent proxy"
     echo "  --version       Show version and script location"
@@ -745,6 +611,10 @@ show_help() {
     echo "  3. /model or:new-model            Switch opus within running session"
     echo "  4. deepclaude --set-slot haiku or:model  Override a single slot"
     echo "  5. deepclaude --stop-proxy        Kill the persistent proxy"
+    echo ""
+    echo "Note: --fix-av, --lint, and --install-statusline are platform-specific."
+    echo "      --fix-av is Windows-only (PowerShell alternative to this script)."
+    echo "      --lint runs shellcheck on this script (bash only)."
     echo ""
 }
 
@@ -843,7 +713,7 @@ run_doctor() {
     fi
 
     # 2. Proxy script
-    local proxy_script="${SCRIPT_DIR}/proxy/start-proxy.js"
+    local proxy_script="${SCRIPT_DIR}/proxy/start-proxy.ts"
     if [[ -f "$proxy_script" ]]; then
         echo -e "    Proxy script      $pass  $proxy_script"
     else
@@ -860,7 +730,7 @@ run_doctor() {
     fi
 
     # 4. State directory
-    mkdir -p "$DEEPCLAUDE_DIR"
+    mkdir -p -m 700 "$DEEPCLAUDE_DIR"
 
     # 5. Stale .tmp files
     local stale_tmps
@@ -976,7 +846,7 @@ run_benchmark() {
 
     local configs="ds or or2 or3 fw oc km mm um gr mt mx za bp sf nv"
     local results_dir
-    results_dir=$(mktemp -d)
+    results_dir=$(mktemp -d "${TMPDIR:-/tmp}/deepclaude.XXXXXX")
     trap "rm -rf \"$results_dir\"" EXIT
 
     for id in $configs; do
@@ -1034,7 +904,7 @@ handle_set_slot() {
         exit 1
     fi
 
-    mkdir -p "$DEEPCLAUDE_DIR"
+    mkdir -p -m 700 "$DEEPCLAUDE_DIR"
 
     # Read current overrides
     local overrides="{}"
@@ -1091,7 +961,7 @@ handle_set_slot() {
 handle_switch() {
     local target="$1"
 
-    mkdir -p "$DEEPCLAUDE_DIR"
+    mkdir -p -m 700 "$DEEPCLAUDE_DIR"
 
     local config_name slot_data
     if [[ -n "${CONFIG_NAME[$target]:-}" ]]; then
@@ -1195,7 +1065,7 @@ while [[ $# -gt 0 ]]; do
 
             settings="$HOME/.claude/settings.json"
             if [[ -f "$settings" ]]; then
-                tmp=$(mktemp)
+                tmp=$(mktemp "${TMPDIR:-/tmp}/deepclaude.XXXXXX")
                 jq '.statusLine = {"type": "command", "command": ("bash " + $dest)}' --arg dest "$dest" "$settings" > "$tmp" && mv "$tmp" "$settings"
             else
                 mkdir -p "$HOME/.claude"
@@ -1208,11 +1078,11 @@ while [[ $# -gt 0 ]]; do
         --stop-proxy)
             ACTION="stop-proxy"; shift ;;
         --set-slot)
-            local slot_name="${2:-}" slot_model="$3"
+            slot_name="${2:-}" slot_model="$3"
             ACTION="set-slot"
             SLOT_NAME="$slot_name"
             SLOT_MODEL="$slot_model"
-            shift 3
+            if [[ -n "${3:-}" ]]; then shift 3; else shift 2; fi
             [[ "$slot_name" == -* ]] && { echo "ERROR: --set-slot requires SLOT and MODEL"; exit 1; }
             ;;
         --switch)
@@ -1220,13 +1090,21 @@ while [[ $# -gt 0 ]]; do
             SWITCH_TARGET="$2"; shift 2
             ;;
         --lint)
-            echo "Lint: Use shellcheck on this script."; exit 0 ;;
+            echo ""; echo "  Linting deepclaude.sh with shellcheck..."; echo ""
+            if command -v shellcheck &>/dev/null; then
+                shellcheck -x "$0" || true
+            else
+                echo "  shellcheck not installed. Install: brew install shellcheck (macOS) or apt install shellcheck (Linux)" >&2
+            fi
+            exit 0 ;;
         --fix-av)
             echo "AV exclusion is Windows-only. Ensure $(dirname "$0") is excluded."; exit 0 ;;
         *)
             if [[ "$1" =~ ^[a-z][a-z0-9_-]*:.+$ ]]; then
                 SPECS+=("$1")
-                ACTION="launch-pos"
+                if [[ "$ACTION" != "remote" && "$ACTION" != "launch-named" ]]; then
+                    ACTION="launch-pos"
+                fi
                 shift
             elif [[ "$1" == "anthropic" ]]; then
                 BACKEND="anthropic"
@@ -1245,6 +1123,22 @@ if [[ -z "$BACKEND" && ${#SPECS[@]} -eq 0 ]]; then
 fi
 
 # Execute action
+
+# cleanup_proxy is defined here (outside the case) so both launch-pos and launch
+# branches can reference it. Bash registers functions at execution time, not
+# parse time, so a function inside a case branch is invisible to other branches.
+cleanup_proxy() {
+    if [[ -n "${watchdog_pid:-}" ]]; then
+        kill "$watchdog_pid" 2>/dev/null || true
+    fi
+    if ! $PERSIST; then
+        if [[ -n "${proxy_pid:-}" ]]; then
+            stop_proxy_info "$proxy_pid"
+        fi
+    fi
+    clear_anthropic_env
+}
+
 case "$ACTION" in
     status)     show_status ;;
     cost)       show_cost ;;
@@ -1275,7 +1169,7 @@ case "$ACTION" in
         fi
 
         # Resolve config
-        local config_name slot_data
+        config_name="" slot_data=""
         if [[ ${#SPECS[@]} -gt 0 ]]; then
             config_name="Ad-hoc"
             slot_data=$(build_adhoc_config "${SPECS[@]}" | tail -n +2)
@@ -1288,11 +1182,11 @@ case "$ACTION" in
         echo "  Starting routing proxy for $config_name..."
 
         # Build routes and start proxy
-        local routes_json
+        routes_json=""
         routes_json=$(echo "$slot_data" | build_routes_json)
 
-        local proxy_port proxy_pid
-        mkdir -p "$DEEPCLAUDE_DIR"
+        proxy_port="" proxy_pid=""
+        mkdir -p -m 700 "$DEEPCLAUDE_DIR"
 
         if proxy_state=$(get_proxy_state); then
             read -r proxy_pid proxy_port <<< "$proxy_state"
@@ -1316,15 +1210,18 @@ case "$ACTION" in
                         break
                     fi
                     echo "Proxy crashed. Restarting (attempt $attempt)..." >&2
-                    read -r proxy_port proxy_pid <<< "$(start_proxy "$CURRENT_ROUTES_FILE")" || true
+                    read -r restart_port restart_pid <<< "$(start_proxy "$CURRENT_ROUTES_FILE")" || true
+                    if [[ -n "$restart_pid" ]] && [[ -n "$restart_port" ]]; then
+                        save_proxy_state "$restart_pid" "$restart_port" "$CURRENT_ROUTES_FILE"
+                    fi
                 done
             ) &
             watchdog_pid=$!
         fi
 
         # Init slot overrides
-        local opus_prov="" opus_model="" sonnet_prov="" sonnet_model=""
-        local haiku_prov="" haiku_model="" subagent_prov="" subagent_model=""
+        opus_prov="" opus_model="" sonnet_prov="" sonnet_model=""
+        haiku_prov="" haiku_model="" subagent_prov="" subagent_model=""
         while IFS=' ' read -r slot prov model; do
             case "$slot" in
                 opus) opus_prov="$prov"; opus_model="$model" ;;
@@ -1337,7 +1234,7 @@ case "$ACTION" in
             "$haiku_prov" "$haiku_model" "$subagent_prov" "$subagent_model"
 
         # Get actual models from overrides
-        local opus_m sonnet_m haiku_m sub_m
+        opus_m="" sonnet_m="" haiku_m="" sub_m=""
         opus_m=$(get_slot_model "opus" "${opus_prov}:${opus_model}")
         sonnet_m=$(get_slot_model "sonnet" "${sonnet_prov}:${sonnet_model}")
         haiku_m=$(get_slot_model "haiku" "${haiku_prov}:${haiku_model}")
@@ -1348,7 +1245,7 @@ case "$ACTION" in
 
         set_cc_env "$proxy_port" "$opus_m" "$sonnet_m" "$haiku_m" "$sub_m" "$opus_model"
         claude --effort "$EFFORT" --dangerously-skip-permissions remote-control "$@"
-        local claude_exit=$?
+        claude_exit=$?
         if ! $PERSIST; then
             stop_proxy_info "$proxy_pid"
         fi
@@ -1357,7 +1254,7 @@ case "$ACTION" in
         ;;
     launch-pos)
         # Ad-hoc positional specs
-        local config_name slot_data
+        config_name="" slot_data=""
         config_name=$(build_adhoc_config "${SPECS[@]}" | head -1)
         slot_data=$(build_adhoc_config "${SPECS[@]}" | tail -n +2)
 
@@ -1365,11 +1262,11 @@ case "$ACTION" in
         echo "  Launching Claude Code via $config_name..."
 
         # Build routes
-        local routes_json
+        routes_json=""
         routes_json=$(echo "$slot_data" | build_routes_json)
 
-        mkdir -p "$DEEPCLAUDE_DIR"
-        local proxy_port proxy_pid
+        mkdir -p -m 700 "$DEEPCLAUDE_DIR"
+        proxy_port="" proxy_pid=""
 
         if proxy_state=$(get_proxy_state); then
             read -r proxy_pid proxy_port <<< "$proxy_state"
@@ -1397,15 +1294,18 @@ case "$ACTION" in
                         break
                     fi
                     echo "Proxy crashed. Restarting (attempt $attempt)..." >&2
-                    read -r proxy_port proxy_pid <<< "$(start_proxy "$CURRENT_ROUTES_FILE")" || true
+                    read -r restart_port restart_pid <<< "$(start_proxy "$CURRENT_ROUTES_FILE")" || true
+                    if [[ -n "$restart_pid" ]] && [[ -n "$restart_port" ]]; then
+                        save_proxy_state "$restart_pid" "$restart_port" "$CURRENT_ROUTES_FILE"
+                    fi
                 done
             ) &
             watchdog_pid=$!
         fi
 
         # Init slot overrides
-        local opus_prov="" opus_model="" sonnet_prov="" sonnet_model=""
-        local haiku_prov="" haiku_model="" subagent_prov="" subagent_model=""
+        opus_prov="" opus_model="" sonnet_prov="" sonnet_model=""
+        haiku_prov="" haiku_model="" subagent_prov="" subagent_model=""
         while IFS=' ' read -r slot prov model; do
             case "$slot" in
                 opus) opus_prov="$prov"; opus_model="$model" ;;
@@ -1418,7 +1318,7 @@ case "$ACTION" in
             "$haiku_prov" "$haiku_model" "$subagent_prov" "$subagent_model"
 
         # Resolve actual models from overrides
-        local opus_m sonnet_m haiku_m sub_m
+        opus_m="" sonnet_m="" haiku_m="" sub_m=""
         opus_m=$(get_slot_model "opus" "${opus_prov}:${opus_model}")
         sonnet_m=$(get_slot_model "sonnet" "${sonnet_prov}:${sonnet_model}")
         haiku_m=$(get_slot_model "haiku" "${haiku_prov}:${haiku_model}")
@@ -1433,22 +1333,10 @@ case "$ACTION" in
 
         set_cc_env "$proxy_port" "$opus_m" "$sonnet_m" "$haiku_m" "$sub_m" "$opus_model"
 
-        # Setup cleanup trap
-        cleanup_proxy() {
-            if [[ -n "${watchdog_pid:-}" ]]; then
-                kill "$watchdog_pid" 2>/dev/null || true
-            fi
-            if ! $PERSIST; then
-                if [[ -n "${proxy_pid:-}" ]]; then
-                    stop_proxy_info "$proxy_pid"
-                fi
-            fi
-            clear_anthropic_env
-        }
         trap cleanup_proxy EXIT
 
         claude --effort "$EFFORT" --dangerously-skip-permissions "$@"
-        local claude_exit=$?
+        claude_exit=$?
         cleanup_proxy
         exit $claude_exit
         ;;
@@ -1463,7 +1351,7 @@ case "$ACTION" in
         fi
 
         # Same as launch-pos but uses named config
-        local config_name slot_data
+        config_name="" slot_data=""
         config_name=$(resolve_config "$BACKEND" | head -1)
         slot_data=$(resolve_config "$BACKEND" | tail -n +2)
 
@@ -1471,13 +1359,13 @@ case "$ACTION" in
         echo "  Launching Claude Code via $config_name..."
 
         # Show provider names
-        local prov_keys=()
+        prov_keys=()
         while IFS=' ' read -r _ prov _; do
             if [[ ! " ${prov_keys[*]} " =~ " $prov " ]]; then
                 prov_keys+=("$prov")
             fi
         done <<< "$slot_data"
-        local prov_names=""
+        prov_names=""
         for pk in "${prov_keys[@]}"; do
             [[ -n "$prov_names" ]] && prov_names+=" + "
             prov_names+="${PROVIDER_NAME[$pk]}"
@@ -1490,11 +1378,11 @@ case "$ACTION" in
         echo ""
 
         # Build routes
-        local routes_json
+        routes_json=""
         routes_json=$(echo "$slot_data" | build_routes_json)
 
-        mkdir -p "$DEEPCLAUDE_DIR"
-        local proxy_port proxy_pid
+        mkdir -p -m 700 "$DEEPCLAUDE_DIR"
+        proxy_port="" proxy_pid=""
 
         if proxy_state=$(get_proxy_state); then
             read -r proxy_pid proxy_port <<< "$proxy_state"
@@ -1522,15 +1410,18 @@ case "$ACTION" in
                         break
                     fi
                     echo "Proxy crashed. Restarting (attempt $attempt)..." >&2
-                    read -r proxy_port proxy_pid <<< "$(start_proxy "$CURRENT_ROUTES_FILE")" || true
+                    read -r restart_port restart_pid <<< "$(start_proxy "$CURRENT_ROUTES_FILE")" || true
+                    if [[ -n "$restart_pid" ]] && [[ -n "$restart_port" ]]; then
+                        save_proxy_state "$restart_pid" "$restart_port" "$CURRENT_ROUTES_FILE"
+                    fi
                 done
             ) &
             watchdog_pid=$!
         fi
 
         # Init slot overrides
-        local opus_prov="" opus_model="" sonnet_prov="" sonnet_model=""
-        local haiku_prov="" haiku_model="" subagent_prov="" subagent_model=""
+        opus_prov="" opus_model="" sonnet_prov="" sonnet_model=""
+        haiku_prov="" haiku_model="" subagent_prov="" subagent_model=""
         while IFS=' ' read -r slot prov model; do
             case "$slot" in
                 opus) opus_prov="$prov"; opus_model="$model" ;;
@@ -1543,7 +1434,7 @@ case "$ACTION" in
             "$haiku_prov" "$haiku_model" "$subagent_prov" "$subagent_model"
 
         # Resolve actual models from overrides
-        local opus_m sonnet_m haiku_m sub_m
+        opus_m="" sonnet_m="" haiku_m="" sub_m=""
         opus_m=$(get_slot_model "opus" "${opus_prov}:${opus_model}")
         sonnet_m=$(get_slot_model "sonnet" "${sonnet_prov}:${sonnet_model}")
         haiku_m=$(get_slot_model "haiku" "${haiku_prov}:${haiku_model}")
@@ -1551,22 +1442,10 @@ case "$ACTION" in
 
         set_cc_env "$proxy_port" "$opus_m" "$sonnet_m" "$haiku_m" "$sub_m" "$opus_model"
 
-        # Setup cleanup trap
-        cleanup_proxy() {
-            if [[ -n "${watchdog_pid:-}" ]]; then
-                kill "$watchdog_pid" 2>/dev/null || true
-            fi
-            if ! $PERSIST; then
-                if [[ -n "${proxy_pid:-}" ]]; then
-                    stop_proxy_info "$proxy_pid"
-                fi
-            fi
-            clear_anthropic_env
-        }
         trap cleanup_proxy EXIT
 
         claude --effort "$EFFORT" --dangerously-skip-permissions "$@"
-        local claude_exit=$?
+        claude_exit=$?
         cleanup_proxy
         exit $claude_exit
         ;;

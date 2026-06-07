@@ -1,6 +1,54 @@
 # deepclaude
 
-Provider-agnostic Claude Code wrapper. Route each model slot (Opus, Sonnet, Haiku, subagent) to a different provider. Mix DeepSeek, OpenRouter, OpenCode Zen, Fireworks, Kimi, Mimo, Umans, and Anthropic in one session.
+Provider-agnostic Claude Code wrapper. Route each model slot (Opus, Sonnet, Haiku, subagent) to a different provider. Mix DeepSeek, OpenRouter, Fireworks, OpenCode, Kimi, Mimo, Umans, Groq, Mistral, MiniMax, Z.ai, BytePlus, SiliconFlow, Novita, and Anthropic in one session.
+
+## Architecture
+
+DeepClaude runs a local HTTP routing proxy that intercepts Claude Code's Anthropic API calls and dispatches each model slot (Opus, Sonnet, Haiku, subagent) to a different upstream provider. The proxy is built from original Node.js modules — no third-party proxy frameworks, no copied code.
+
+### Proxy modules (`proxy/`)
+
+| Module | Purpose |
+|---|---|
+| `start-proxy.js` | Entry point — HTTP server, request lifecycle, health endpoint |
+| `routing.js` | Slot-based routing with prefix matching, fallback chain construction, circuit breaker |
+| `protocol-translate.js` | Bidirectional Anthropic Messages ↔ OpenAI Chat Completions format translation |
+| `forward.js` | Upstream HTTP forwarding with SSE streaming, fallback header injection, stream buffer guarding |
+| `thinking-cache.js` | Thinking block extraction, caching, and injection across providers that strip them |
+| `transport-errors.js` | Network failure classification via ordered signature tuples (`FAILURE_SIGNATURES`) with cause chain walking |
+| `error-codes.js` | Structured error codes with template interpolation, dev/production mode, credential scrubbing (`scrubCredentials`) via data-driven pattern list |
+| `concurrency.js` | Promise-queue-based semaphore with FIFO ordering and `acquire`/`release` pump pattern |
+| `lru-cache.js` | TTL cache with LRU eviction using delete-then-set MRU promotion and lazy shared cleanup |
+| `server-tools.js` | Anthropic server tool conversion (`web_search`, `web_fetch`, `url_fetch`, `computer`, `bash`, `text_editor`, `memory`, `tool_search_tool`), DuckDuckGo web search, SSRF-protected web fetch, tool result population |
+| `config.js` | CLI argument parsing, JSON config loading with mtime-based hot reload, constraint validation |
+| `stats.js` | Provider health tracking, request statistics, utilization reporting |
+| `util.js` | Path deduplication for `/v1`-prefixed providers, safe header construction |
+
+### Data-driven provider registry
+
+Both the proxy and the launcher scripts (`deepclaude.ps1`, `deepclaude.sh`) read from a single `proxy/providers.json` file. This eliminates duplicated provider, config, and context-limit definitions across languages.
+
+```
+providers.json
+├── providers     →  endpoint, auth, wire format, fallbacks, setup URLs
+├── contextLimits →  per-model token windows
+└── configs       →  named preset configs (slot → provider:model)
+```
+
+### Launcher scripts
+
+Two launcher scripts with identical behavior, each loading `providers.json` natively:
+
+- **`deepclaude.ps1`** — PowerShell 7+, uses `ConvertFrom-Json`
+- **`deepclaude.sh`** — Bash 4+, uses `jq` with `@tsv` output to avoid delimiter issues
+
+### Test coverage
+
+114 tests across 10 suites covering all proxy modules — transport errors, concurrency, LRU cache, provider registry validation, error codes, routing, stats, forwarding, server tools, and config.
+
+### Pre-commit
+
+Husky v9 + lint-staged: JS syntax check (`node -c`) on all proxy modules, PSScriptAnalyzer on PowerShell scripts.
 
 ## Quick start
 
@@ -68,7 +116,7 @@ deepclaude ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free  # 3 specs 
 --status        Show keys, configs, and active slot mapping
 --doctor        System health check (prereqs, keys, proxy test)
 --cost          Pricing comparison
---benchmark     Latency test across all configs (parallel on .ps1, sequential on .sh)
+--benchmark     Latency test across all configs (parallel via background jobs)
 --models        List all available model IDs (for /model in CC)
 --remote        Browser-based remote control (starts proxy automatically)
 --persist       Keep proxy alive after CC exits

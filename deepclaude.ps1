@@ -35,6 +35,7 @@
 
     # Info / debugging
     deepclaude --status             # Show keys, providers, and active slot mapping
+    deepclaude --stats              # Show proxy stats (requests, success rate, latency)
     deepclaude --doctor             # System health check (prereqs, keys, proxy test)
     deepclaude --cost               # Pricing comparison
     deepclaude --benchmark          # Parallel latency test across all configs
@@ -65,6 +66,7 @@ param(
     [switch]$Version,
     [switch]$Doctor,
     [switch]$InstallStatusline,
+    [switch]$Stats,
     [Parameter(ValueFromRemainingArguments)]
     [string[]]$ModelSpecs
 )
@@ -108,6 +110,7 @@ if ($Backend -match '^--(.+)$') {
     elseif ($flag -eq 'version')         { $Version = $true }
     elseif ($flag -eq 'doctor')          { $Doctor = $true }
     elseif ($flag -eq 'install-statusline') { $InstallStatusline = $true }
+    elseif ($flag -eq 'stats')           { $Stats = $true }
     else {
         Write-Host "ERROR: Unknown flag '--$flag'. Use --help for available flags." -ForegroundColor Red
         exit 1
@@ -134,7 +137,7 @@ $AllSpecs = @()
 if ($Backend) { $AllSpecs += $Backend }
 if ($ModelSpecs) { $AllSpecs += $ModelSpecs }
 
-if (-not $AllSpecs -and -not $Status -and -not $Cost -and -not $Benchmark -and -not $Help -and -not $Lint -and -not $FixAv -and -not $Switch -and -not $SetSlot -and -not $Models -and -not $StopProxy -and -not $Version -and -not $Doctor) {
+if (-not $AllSpecs -and -not $Status -and -not $Cost -and -not $Benchmark -and -not $Help -and -not $Lint -and -not $FixAv -and -not $Switch -and -not $SetSlot -and -not $Models -and -not $StopProxy -and -not $Version -and -not $Doctor -and -not $Stats) {
     $AllSpecs = @(if ($env:DEEPCLAUDE_DEFAULT_BACKEND) { $env:DEEPCLAUDE_DEFAULT_BACKEND } elseif ($env:CHEAPCLAUDE_DEFAULT_BACKEND) { $env:CHEAPCLAUDE_DEFAULT_BACKEND } else { "ds" })
 }
 
@@ -192,6 +195,13 @@ function Set-UsedProviderEnv {
     foreach ($kv in $resolved.providers.GetEnumerator()) {
         Set-Content "Env:$($kv.Value.keyName)" -Value $kv.Value.key
     }
+    # Also push env vars for fallback providers not in the active config,
+    # so the proxy child process inherits all available keys
+    foreach ($p in $Providers.Values) {
+        if ($p.key) {
+            Set-Content "Env:$($p.keyName)" -Value $p.key
+        }
+    }
 }
 
 function Clear-AnthropicEnv {
@@ -199,7 +209,7 @@ function Clear-AnthropicEnv {
         "ANTHROPIC_DEFAULT_OPUS_MODEL","ANTHROPIC_DEFAULT_SONNET_MODEL",
         "ANTHROPIC_DEFAULT_HAIKU_MODEL","CLAUDE_CODE_SUBAGENT_MODEL",
         "ANTHROPIC_API_KEY","CLAUDE_CODE_AUTO_COMPACT_WINDOW",
-        "CLAUDE_CODE_MAX_CONTEXT_TOKENS","DISABLE_COMPACT")) {
+        "CLAUDE_CODE_MAX_CONTEXT_TOKENS","CLAUDE_CONTEXT_COMPRESSION","DISABLE_COMPACT")) {
         Remove-Item "Env:$v" -ErrorAction SilentlyContinue
     }
 }
@@ -267,10 +277,18 @@ function Test-ContextLengthError($msg) {
 }
 
 function Write-AtomicFile($path, $json) {
-    $tmpFile = $path + ".tmp"
-    [System.IO.File]::WriteAllText($tmpFile, $json)
-    if (Test-Path $path) { Remove-Item $path }
-    Rename-Item $tmpFile $path
+    try {
+        $tmpFile = $path + ".tmp"
+        [System.IO.File]::WriteAllText($tmpFile, $json)
+        if (Test-Path $path) { Remove-Item $path }
+        Move-Item -Force $tmpFile $path
+        # Restrict permissions on Unix — state files contain route/provider config
+        if ($IsLinux -or $IsMacOS) {
+            try { chmod 600 $path 2>$null } catch {}
+        }
+    } catch {
+        Write-Host "  WARNING: Failed to write $path : $_" -ForegroundColor Yellow
+    }
 }
 
 function Stop-PersistentProxy {
@@ -292,287 +310,52 @@ function Stop-PersistentProxy {
     }
 }
 
-# --- Provider Registry ---
-# auth = "x-api-key" or "bearer"
-$Providers = @{
-    ds = @{
-        name = "DeepSeek (direct)"
-        url  = "https://api.deepseek.com/anthropic"
-        key  = $DeepSeekKey; keyName = "DEEPSEEK_API_KEY"
-        auth = "x-api-key"
-        format = "anthropic"
-    }
-    or = @{
-        name = "OpenRouter"
-        url  = "https://openrouter.ai/api"
-        key  = $OpenRouterKey; keyName = "OPENROUTER_API_KEY"
-        auth = "bearer"
-        format = "anthropic"
-    }
-    fw = @{
-        name = "Fireworks AI"
-        url  = "https://api.fireworks.ai/inference"
-        key  = $FireworksKey; keyName = "FIREWORKS_API_KEY"
-        auth = "bearer"
-        format = "anthropic"
-    }
-    oc = @{
-        name = "OpenCode Zen"
-        url  = "https://opencode.ai/zen"
-        key  = $OpenCodeKey; keyName = "OPENCODE_API_KEY"
-        auth = "bearer"
-        format = "anthropic"
-    }
-    al = @{
-        name = "Alibaba/DashScope"
-        url  = "https://dashscope.aliyuncs.com/api/v1/chat/completions"
-        key  = $AlibabaKey; keyName = "ALIBABA_DASHSCOPE_API_KEY"
-        auth = "bearer"
-        format = "openai"
-        fallback = @("ds")
-    }
-    km = @{
-        name = "Kimi/Moonshot"
-        url  = "https://api.moonshot.ai/v1"
-        key  = $KimiKey; keyName = "KIMI_API_KEY"
-        auth = "bearer"
-        format = "openai"
-        fallback = @("ds")
-    }
-    mm = @{
-        name = "Xiaomi Mimo"
-        url  = "https://api.xiaomimimo.com/v1"
-        key  = $MimoKey; keyName = "MIMO_API_KEY"
-        auth = "bearer"
-        format = "openai"
-        fallback = @("oc")
-    }
-    um = @{
-        name = "Umans AI"
-        url  = "https://api.code.umans.ai"
-        key  = $UmansKey; keyName = "UMANS_API_KEY"
-        auth = "x-api-key"
-        format = "anthropic"
-    }
-    gr = @{
-        name = "Groq"
-        url  = "https://api.groq.com/openai/v1"
-        key  = $GroqKey; keyName = "GROQ_API_KEY"
-        auth = "bearer"
-        format = "openai"
-        fallback = @("ds")
-    }
-    mt = @{
-        name = "Mistral"
-        url  = "https://api.mistral.ai/v1"
-        key  = $MistralKey; keyName = "MISTRAL_API_KEY"
-        auth = "bearer"
-        format = "openai"
-        fallback = @("ds")
-    }
-    mx = @{
-        name = "MiniMax"
-        url  = "https://api.minimax.chat/v1"
-        key  = $MiniMaxKey; keyName = "MINIMAX_API_KEY"
-        auth = "bearer"
-        format = "openai"
-        fallback = @("ds")
-    }
-    za = @{
-        name = "Z.ai / GLM"
-        url  = "https://open.bigmodel.cn/api/paas/v4"
-        key  = $ZaiKey; keyName = "ZAI_API_KEY"
-        auth = "bearer"
-        format = "openai"
-        fallback = @("ds")
-    }
-    bp = @{
-        name = "BytePlus/Doubao"
-        url  = "https://ark.cn-beijing.volces.com/api/v3"
-        key  = $BytePlusKey; keyName = "BYTEPLUS_API_KEY"
-        auth = "bearer"
-        format = "openai"
-        fallback = @("ds")
-    }
-    sf = @{
-        name = "SiliconFlow"
-        url  = "https://api.siliconflow.cn/v1"
-        key  = $SiliconFlowKey; keyName = "SILICONFLOW_API_KEY"
-        auth = "bearer"
-        format = "openai"
-        fallback = @("ds")
-    }
-    nv = @{
-        name = "Novita"
-        url  = "https://api.novita.ai/v3/openai"
-        key  = $NovitaKey; keyName = "NOVITA_API_KEY"
-        auth = "bearer"
-        format = "openai"
-        fallback = @("ds")
-    }
+# --- Provider Registry (loaded from providers.json) ---
+$ScriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+$Registry = Get-Content (Join-Path $ScriptRoot "proxy\providers.json") -Raw | ConvertFrom-Json
+
+# Key lookup — resolves keys loaded above from env vars (kept for backward compat)
+$keyLookup = @{
+    ds = $DeepSeekKey; or = $OpenRouterKey; fw = $FireworksKey
+    oc = $OpenCodeKey; al = $AlibabaKey; km = $KimiKey
+    mm = $MimoKey; um = $UmansKey; gr = $GroqKey
+    mt = $MistralKey; mx = $MiniMaxKey; za = $ZaiKey
+    bp = $BytePlusKey; sf = $SiliconFlowKey; nv = $NovitaKey
 }
 
-# --- Per-model context window limits (tokens) ---
-$ModelCtx = @{
-    "deepseek-v4-pro"                        = 1048576  # 1M
-    "deepseek-v4-flash"                      = 1048576  # 1M
-    "deepseek/deepseek-v4-pro"               = 1048576  # 1M via OpenRouter
-    "deepseek/deepseek-v4-flash"             = 1048576  # 1M via OpenRouter
-    "accounts/fireworks/models/deepseek-v4-pro" = 1048576  # 1M via Fireworks
-    "openrouter/owl-alpha"                   = 200000   # 200K
-    "openai/gpt-oss-120b:free"              = 131072   # 128K
-    "poolside/laguna-m.1:free"             = 131072   # 128K
-    "z-ai/glm-4.5-air:free"                 = 131072   # 128K
-    "liquid/lfm-2.5-1.2b-instruct:free"     = 32768    # 32K
-    "big-pickle"                             = 131072   # 128K (conservative)
-    "kimi-k2.6"                              = 262144   # 256K
-    "mimo-v2.5-pro"                          = 131072   # 128K (conservative)
-    "umans-kimi-k2.6"                        = 262144   # 256K (Kimi K2.6)
-    "umans-coder"                            = 262144   # 256K (Kimi K2.6)
-    "umans-flash"                            = 131072   # 128K (Qwen3.6-35B-A3B)
-    "umans-glm-5.1"                          = 131072   # 128K (GLM 5.1)
-    "groq/llama-4-maverick"                  = 131072   # 128K
-    "groq/deepseek-r1-distill-qwen-32b"      = 131072   # 128K
-    "mistral/mistral-large"                  = 131072   # 128K
-    "mistral/mistral-small"                  = 131072   # 128K
-    "minimax/minimax-m1"                     = 262144   # 256K
-    "zai/glm-4.5"                            = 131072   # 128K
-    "byteplus/doubao-1.5-pro"                = 131072   # 128K
-    "siliconflow/deepseek-v4-pro"            = 1048576  # 1M
-    "novita/deepseek-v4-pro"                 = 1048576  # 1M
+$Providers = @{}
+foreach ($prop in $Registry.providers.PSObject.Properties) {
+    $pk = $prop.Name
+    $def = $prop.Value
+    $entry = @{
+        name    = $def.displayName
+        url     = $def.endpoint
+        key     = $keyLookup[$pk]
+        keyName = $def.keyEnv
+        auth    = $def.authHeader
+        format  = $def.wireFormat
+    }
+    if ($def.fallback) { $entry.fallback = $def.fallback }
+    $Providers[$pk] = $entry
 }
 
-# --- Configuration Registry ---
+# --- Per-model context window limits (tokens, from providers.json) ---
+$ModelCtx = @{}
+foreach ($prop in $Registry.contextLimits.PSObject.Properties) {
+    $ModelCtx[$prop.Name] = [int]$prop.Value
+}
+
+# --- Configuration Registry (from providers.json) ---
 # Each config maps model slots to "providerKey:modelId"
-# Single-provider configs -> direct mode (no proxy)
-# Multi-provider configs  -> auto-starts local proxy
-$Configs = [ordered]@{
-    ds = @{
-        name     = "DeepSeek V4 Pro"
-        opus     = "ds:deepseek-v4-pro"
-        sonnet   = "ds:deepseek-v4-pro"
-        haiku    = "ds:deepseek-v4-flash"
-        subagent = "ds:deepseek-v4-flash"
-    }
-    or = @{
-        name     = "OpenRouter (owl-alpha)"
-        opus     = "or:openrouter/owl-alpha"
-        sonnet   = "or:openrouter/owl-alpha"
-        haiku    = "or:z-ai/glm-4.5-air:free"
-        subagent = "or:z-ai/glm-4.5-air:free"
-    }
-    or2 = @{
-        name     = "OpenRouter (DeepSeek)"
-        opus     = "or:deepseek/deepseek-v4-pro"
-        sonnet   = "or:deepseek/deepseek-v4-pro"
-        haiku    = "or:deepseek/deepseek-v4-flash"
-        subagent = "or:deepseek/deepseek-v4-flash"
-    }
-    or3 = @{
-        name     = "OpenRouter (best free)"
-        opus     = "or:openai/gpt-oss-120b:free"
-        sonnet   = "or:poolside/laguna-m.1:free"
-        haiku    = "or:z-ai/glm-4.5-air:free"
-        subagent = "or:liquid/lfm-2.5-1.2b-instruct:free"
-    }
-    fw = @{
-        name     = "Fireworks AI"
-        opus     = "fw:accounts/fireworks/models/deepseek-v4-pro"
-        sonnet   = "fw:accounts/fireworks/models/deepseek-v4-pro"
-        haiku    = "fw:accounts/fireworks/models/deepseek-v4-pro"
-        subagent = "fw:accounts/fireworks/models/deepseek-v4-pro"
-    }
-    oc = @{
-        name     = "OpenCode Zen"
-        opus     = "oc:big-pickle"
-        sonnet   = "oc:big-pickle"
-        haiku    = "oc:big-pickle"
-        subagent = "oc:big-pickle"
-    }
-    km = @{
-        name     = "Kimi K2.6"
-        opus     = "km:kimi-k2.6"
-        sonnet   = "km:kimi-k2.6"
-        haiku    = "km:kimi-k2.6"
-        subagent = "km:kimi-k2.6"
-    }
-    mm = @{
-        name     = "Xiaomi Mimo V2.5 Pro"
-        opus     = "mm:mimo-v2.5-pro"
-        sonnet   = "mm:mimo-v2.5-pro"
-        haiku    = "mm:mimo-v2.5-pro"
-        subagent = "mm:mimo-v2.5-pro"
-    }
-    um = @{
-        name     = "Umans Coder (Kimi K2.6)"
-        opus     = "um:umans-coder"
-        sonnet   = "um:umans-coder"
-        haiku    = "um:umans-coder"
-        subagent = "um:umans-coder"
-    }
-    # --- Mixed-provider configs ---
-    "ds+or" = @{
-        name     = "DeepSeek + OpenRouter subs"
-        opus     = "ds:deepseek-v4-pro"
-        sonnet   = "ds:deepseek-v4-pro"
-        haiku    = "or:z-ai/glm-4.5-air:free"
-        subagent = "or:z-ai/glm-4.5-air:free"
-    }
-    "ds+oc" = @{
-        name     = "DeepSeek + OpenCode subs"
-        opus     = "ds:deepseek-v4-pro"
-        sonnet   = "ds:deepseek-v4-pro"
-        haiku    = "oc:big-pickle"
-        subagent = "oc:big-pickle"
-    }
-    gr = @{
-        name     = "Groq (Llama 4 Maverick)"
-        opus     = "gr:groq/llama-4-maverick"
-        sonnet   = "gr:groq/llama-4-maverick"
-        haiku    = "gr:groq/deepseek-r1-distill-qwen-32b"
-        subagent = "gr:groq/deepseek-r1-distill-qwen-32b"
-    }
-    mt = @{
-        name     = "Mistral Large"
-        opus     = "mt:mistral/mistral-large"
-        sonnet   = "mt:mistral/mistral-large"
-        haiku    = "mt:mistral/mistral-small"
-        subagent = "mt:mistral/mistral-small"
-    }
-    mx = @{
-        name     = "MiniMax M1"
-        opus     = "mx:minimax/minimax-m1"
-        sonnet   = "mx:minimax/minimax-m1"
-        haiku    = "mx:minimax/minimax-m1"
-        subagent = "mx:minimax/minimax-m1"
-    }
-    za = @{
-        name     = "Z.ai GLM 4.5"
-        opus     = "za:zai/glm-4.5"
-        sonnet   = "za:zai/glm-4.5"
-        haiku    = "za:zai/glm-4.5"
-        subagent = "za:zai/glm-4.5"
-    }
-    bp = @{
-        name     = "BytePlus Doubao 1.5 Pro"
-        opus     = "bp:byteplus/doubao-1.5-pro"
-        sonnet   = "bp:byteplus/doubao-1.5-pro"
-        haiku    = "bp:byteplus/doubao-1.5-pro"
-        subagent = "bp:byteplus/doubao-1.5-pro"
-    }
-    sf = @{
-        name     = "SiliconFlow (DeepSeek V4 Pro)"
-        opus     = "sf:siliconflow/deepseek-v4-pro"
-        sonnet   = "sf:siliconflow/deepseek-v4-pro"
-        haiku    = "sf:siliconflow/deepseek-v4-pro"
-        subagent = "sf:siliconflow/deepseek-v4-pro"
-    }
-    nv = @{
-        name     = "Novita (DeepSeek V4 Pro)"
-        opus     = "nv:novita/deepseek-v4-pro"
-        sonnet   = "nv:novita/deepseek-v4-pro"
-        haiku    = "nv:novita/deepseek-v4-pro"
-        subagent = "nv:novita/deepseek-v4-pro"
+$Configs = [ordered]@{}
+foreach ($prop in $Registry.configs.PSObject.Properties) {
+    $cfg = $prop.Value
+    $Configs[$prop.Name] = @{
+        name     = $cfg.name
+        opus     = $cfg.opus
+        sonnet   = $cfg.sonnet
+        haiku    = $cfg.haiku
+        subagent = $cfg.sub
     }
 }
 
@@ -764,7 +547,7 @@ function Start-RoutingProxy {
     $PSCmdlet.ShouldProcess("127.0.0.1", "Start routing proxy") | Out-Null
 
     $myDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
-    $proxyScript = Join-Path $myDir "proxy\start-proxy.js"
+    $proxyScript = Join-Path $myDir "proxy\start-proxy.ts"
 
     if (-not (Test-Path $proxyScript)) {
         throw "Proxy script not found at: $proxyScript"
@@ -781,12 +564,23 @@ function Start-RoutingProxy {
         throw "Node.js is not installed or not in PATH. Install Node.js from https://nodejs.org and ensure it's in your PATH."
     }
 
-    $proc = Start-Process -FilePath $nodePath `
-        -ArgumentList $proxyScript, '--routes', $RoutesFile, '--overrides', $SlotOverridesFile `
-        -NoNewWindow `
-        -RedirectStandardOutput $outFile `
-        -RedirectStandardError $errFile `
-        -PassThru
+    # Use tsx via npx if local tsx not found (handles fresh clones before npm install)
+    $tsxBin = Join-Path $myDir "node_modules\.bin\tsx.cmd"
+    if (Test-Path $tsxBin) {
+        $proc = Start-Process -FilePath $tsxBin `
+            -ArgumentList ($proxyScript, '--routes', $RoutesFile, '--overrides', $SlotOverridesFile) `
+            -NoNewWindow `
+            -RedirectStandardOutput $outFile `
+            -RedirectStandardError $errFile `
+            -PassThru
+    } else {
+        $proc = Start-Process -FilePath $nodePath `
+            -ArgumentList ($proxyScript, '--routes', $RoutesFile, '--overrides', $SlotOverridesFile) `
+            -NoNewWindow `
+            -RedirectStandardOutput $outFile `
+            -RedirectStandardError $errFile `
+            -PassThru
+    }
 
     # Wait for port output
     Write-Host -NoNewline "Starting proxy"
@@ -906,6 +700,63 @@ if ($Status) {
     exit 0
 }
 
+# --- Stats ---
+if ($Stats) {
+    Write-Host "`n  deepclaude - Proxy Stats" -ForegroundColor Cyan
+    Write-Host "  ===========================" -ForegroundColor DarkGray
+
+    if (-not (Test-Path $ProxyStateFile)) {
+        Write-Host "`n  No proxy running. Start a proxy first with any backend." -ForegroundColor Yellow
+        Write-Host ""
+        exit 0
+    }
+
+    try {
+        $state = Get-Content $ProxyStateFile -Raw | ConvertFrom-Json
+        $port = $state.port
+        $pid = $state.pid
+
+        $procAlive = try { (Get-Process -Id $pid -ErrorAction Stop) -ne $null } catch { $false }
+        if (-not $procAlive) {
+            Write-Host "  Proxy process (PID $pid) is no longer running." -ForegroundColor Red
+            Write-Host "  Removing stale state file..." -ForegroundColor DarkGray
+            Remove-Item $ProxyStateFile -Force
+            exit 1
+        }
+
+        $health = Invoke-RestMethod -Uri "http://127.0.0.1:${port}/health" -TimeoutSec 5
+
+        Write-Host "`n  Proxy: 127.0.0.1:$port (PID $pid)" -ForegroundColor Green
+        Write-Host "  Uptime: $([math]::Round($health.uptime / 1000))s"
+        Write-Host ""
+
+        $providers = $health.providers
+        if ($providers.PSObject.Properties.Count -eq 0) {
+            Write-Host "  No requests recorded yet." -ForegroundColor DarkGray
+        } else {
+            Write-Host "  Provider         Req   OK   Fail   Rate   Avg" -ForegroundColor Yellow
+            Write-Host "  ---------------  ----  ---  -----  -----  ---"
+            foreach ($prop in ($providers.PSObject.Properties | Sort-Object Name)) {
+                $k = $prop.Name
+                $v = $prop.Value
+                $rate = if ($v.requests -gt 0) { "{0:P0}" -f ($v.successes / $v.requests) } else { "—" }
+                $avg = if ($v.avgMs -gt 0) { "$($v.avgMs)ms" } else { "—" }
+                $healthIcon = if ($v.fails -eq 0) { "●" } elseif ($v.requests -lt 3) { "○" } elseif ($v.fails / $v.requests -lt 0.5) { "●" } else { "◐" }
+                $color = if ($v.fails -eq 0) { "Green" } elseif ($v.requests -lt 3) { "DarkGray" } elseif ($v.fails / $v.requests -lt 0.25) { "Green" } elseif ($v.fails / $v.requests -lt 0.5) { "Yellow" } else { "Red" }
+                Write-Host ("  {0,-3} {1,-14}  {2,4}  {3,3}  {4,5}  {5,5}  {6,4}" -f $healthIcon,
+                    ($k.PadRight(14)), $v.requests, $v.successes, $v.fails, $rate, $avg) -ForegroundColor $color
+            }
+            Write-Host ""
+            Write-Host "  ● healthy  ○ new/unknown  ◐ degraded (>50% failures)" -ForegroundColor DarkGray
+        }
+    } catch {
+        Write-Host "  Failed to reach proxy:" $_.Exception.Message -ForegroundColor Red
+        exit 1
+    }
+    Write-Host ""
+    exit 0
+}
+
 # --- Cost ---
 if ($Cost) {
     Write-Host "`n  DeepSeek V4 Pro Pricing" -ForegroundColor Cyan
@@ -942,9 +793,11 @@ if ($Help) {
     Write-Host ""
     Write-Host "  Named configs: $($Configs.Keys -join ', '), anthropic"
     Write-Host "  --status        Show keys and configurations"
+    Write-Host "  --stats         Show proxy request stats and health"
     Write-Host "  --cost          Pricing comparison"
     Write-Host "  --benchmark     Latency test"
     Write-Host "  --persist       Keep proxy running after CC exits (enables --switch)"
+    Write-Host "  --remote        Browser-based remote control (starts proxy automatically)"
     Write-Host "  --switch CONFIG  Switch active config of a running persistent proxy"
     Write-Host "  --models        List all available models (for use with /model in CC)"
     Write-Host "  --set-slot SLOT MODEL  Override a slot's model: opus/sonnet/haiku/subagent"
@@ -952,6 +805,7 @@ if ($Help) {
     Write-Host "                     e.g. --set-slot sonnet   (no model = clear override)"
     Write-Host "  --stop-proxy    Kill the persistent proxy"
     Write-Host "  --lint          Self-lint with PSScriptAnalyzer"
+    Write-Host "  --version       Print version and proxy path"
     Write-Host "  --effort LEVEL  Set Claude Code effort level (default: max). Values: low, medium, high, max."
     Write-Host "  --fix-av        Print AV exclusion commands"
     Write-Host "  --doctor        Run system health check (prereqs, keys, proxy test)"
@@ -1040,7 +894,7 @@ if ($InstallStatusline) {
 # --- Doctor ---
 if ($Doctor) {
     $myDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
-    $proxyScript = Join-Path $myDir "proxy\start-proxy.js"
+    $proxyScript = Join-Path $myDir "proxy\start-proxy.ts"
     $allOk = $true
     $pass = "$([char]0x1b)[32mPASS$([char]0x1b)[0m"
     $fail = "$([char]0x1b)[31mFAIL$([char]0x1b)[0m"
@@ -1550,14 +1404,27 @@ if ($Remote) {
         }
     }
     Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
+    $env:ANTHROPIC_AUTH_TOKEN = "proxy"  # dummy — proxy handles real auth
+    $env:CLAUDE_CONTEXT_COMPRESSION = 'true'
+    $env:ANTHROPIC_MODEL = $resolved.slots['opus'].model -replace '\[1m\]', ''
 
-    if ($env:DEEPCLAUDE_WATCHDOG -eq 'true') {
+    if ($env:DEEPCLAUDE_WATCHDOG -eq 'true' -and $proxyInfo.Process) {
         $watchdog = Start-Job -Name "DeepClaudeWatchdog" -ScriptBlock {
             param($Pid, $Port)
             for ($attempt = 1; $attempt -le 2; $attempt++) {
                 Wait-Process -Id $Pid -Timeout 120 -ErrorAction SilentlyContinue
                 if (-not (Get-Process -Id $Pid -ErrorAction SilentlyContinue)) {
                     Write-Host "Proxy crashed. Restarting (attempt $attempt)..." -ForegroundColor Yellow
+                    try {
+                        $newProxy = Start-RoutingProxy -RoutesFile $using:CurrentRoutesFile -Persist
+                        if ($newProxy -and $newProxy.Process) {
+                            Save-ProxyState -ProcessId $newProxy.Process.Id -Port $newProxy.Port -RoutesFile $using:CurrentRoutesFile
+                            $Pid = $newProxy.Process.Id
+                        }
+                    } catch {
+                        Write-Host "  Failed to restart proxy: $_" -ForegroundColor Red
+                        break
+                    }
                 }
             }
         } -ArgumentList $proxyInfo.Process.Id, $proxyInfo.Port
@@ -1653,13 +1520,23 @@ if ($opusCtx) {
 }
 Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
 
-if ($env:DEEPCLAUDE_WATCHDOG -eq 'true') {
+if ($env:DEEPCLAUDE_WATCHDOG -eq 'true' -and $proxyInfo.Process) {
     $watchdog = Start-Job -Name "DeepClaudeWatchdog" -ScriptBlock {
         param($Pid, $Port)
         for ($attempt = 1; $attempt -le 2; $attempt++) {
             Wait-Process -Id $Pid -Timeout 120 -ErrorAction SilentlyContinue
             if (-not (Get-Process -Id $Pid -ErrorAction SilentlyContinue)) {
                 Write-Host "Proxy crashed. Restarting (attempt $attempt)..." -ForegroundColor Yellow
+                try {
+                    $newProxy = Start-RoutingProxy -RoutesFile $using:CurrentRoutesFile -Persist:$using:Persist
+                    if ($newProxy -and $newProxy.Process) {
+                        Save-ProxyState -ProcessId $newProxy.Process.Id -Port $newProxy.Port -RoutesFile $using:CurrentRoutesFile
+                        $Pid = $newProxy.Process.Id
+                    }
+                } catch {
+                    Write-Host "  Failed to restart proxy: $_" -ForegroundColor Red
+                    break
+                }
             }
         }
     } -ArgumentList $proxyInfo.Process.Id, $proxyInfo.Port
