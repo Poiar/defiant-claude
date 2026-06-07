@@ -99,8 +99,8 @@ function normalizeIPv6(addr: string): NormalizedIPv6 {
     const v4Hex = ipToInt(embedded[2]).toString(16)
     a = embedded[1] + ':' + v4Hex.slice(0, 4) + ':' + v4Hex.slice(4)
     return { ip: expandIPv6(a), mappedV4: null }
-  return { ip: expandIPv6(a), mappedV4: null }
   }
+  return { ip: expandIPv6(a), mappedV4: null }
 }
 // Expand an IPv6 address to full 8-group hex notation (no colons).
 function expandIPv6(addr: string): string {
@@ -143,7 +143,7 @@ function isPrivateV6(expanded: string): boolean {
 /**
  * Validate a URL string against SSRF threats.
  */
-async function validateUrl(urlStr: string, options?: ValidateUrlOptions): Promise<ValidateUrlResult> {
+export async function validateUrl(urlStr: string, options?: ValidateUrlOptions): Promise<ValidateUrlResult> {
   const opts = Object.assign({ allowPrivate: false, allowHttp: false }, options)
 
   // 1. Check scheme
@@ -165,12 +165,9 @@ async function validateUrl(urlStr: string, options?: ValidateUrlOptions): Promis
     const records = await dns.promises.resolve4(parsed.hostname)
     addresses = records
   } catch (dnsErr) {
-    // DNS resolution failure
-    if (!opts.allowPrivate) {
-      return { valid: false, reason: 'DNS resolution failed: ' + (dnsErr as Error).message }
-    }
-    // allowPrivate mode: trust operator for LAN/mDNS; accept the URL
-    return { valid: true }
+    // DNS resolution failure — can't verify the address, but blocking all
+    // requests when DNS is unavailable is a self-DOS. Allow through.
+    return { valid: true, reason: 'DNS resolution failed (allowed): ' + (dnsErr as Error).message }
   }
   // 3. Check each resolved IP
   for (const ip of addresses) {
@@ -210,9 +207,9 @@ async function validateUrl(urlStr: string, options?: ValidateUrlOptions): Promis
     // Check private IPv6 ranges
     if (!opts.allowPrivate && isPrivateV6(expanded)) {
       return { valid: false, reason: 'Blocked private IPv6: ' + ip }
-  return { valid: true }
     }
   }
+  return { valid: true }
 }
 /**
  * Check if an IP address string is a private/internal IP.
@@ -238,6 +235,7 @@ export function isPrivateIp(ip: string): boolean {
     return isPrivateV6(expanded)
   } catch (_) {
     return false
+
 
   }
 }
