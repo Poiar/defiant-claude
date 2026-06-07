@@ -5,12 +5,12 @@ import { scrubCredentials } from './error-codes';
 export const MAX_LOG_CHARS = 500;
 export const MAX_STORAGE_CHARS = 2000;
 
-export function truncateForLog(body: unknown, maxLen?: number): string | null | undefined {
-    return truncate(body, maxLen != null ? maxLen : MAX_LOG_CHARS);
+export function truncateForLog(body: unknown, maxLen?: number): string {
+    return truncate(body, maxLen != null ? maxLen : MAX_LOG_CHARS) || '';
 }
 
-export function truncateForStorage(body: unknown, maxLen?: number): string | null | undefined {
-    return truncate(body, maxLen != null ? maxLen : MAX_STORAGE_CHARS);
+export function truncateForStorage(body: unknown, maxLen?: number): string {
+    return truncate(body, maxLen != null ? maxLen : MAX_STORAGE_CHARS) || '';
 }
 
 function truncate(body: unknown, maxLen: number): string | null | undefined {

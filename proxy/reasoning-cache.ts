@@ -34,6 +34,7 @@ interface Message {
 
 interface ReqBody {
     messages?: Message[];
+    system?: string | Array<{ type: string; text?: string }>;
 }
 
 interface ExtractResult {

@@ -83,8 +83,8 @@ export function isNetworkFailure(err: Record<string, unknown> | null | undefined
 
 // Build a user-facing error message from a transport error.
 // Returns a short string suitable for logs or error responses.
-export function describe(err: Record<string, unknown> | null | undefined): string {
-    const match = classify(err);
+export function describe(err: Error | Record<string, unknown> | null | undefined): string {
+    const match = classify(err as Record<string, unknown> | null | undefined);
     if (match) {
         const detail = err && err.message ? ': ' + String(err.message) : '';
         return match.label + detail;

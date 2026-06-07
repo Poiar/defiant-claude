@@ -20,9 +20,9 @@ interface ProviderEntry {
 }
 
 interface RoutingConfig {
-    providers: Record<string, ProviderEntry>;
+    providers?: Record<string, ProviderEntry>;
     defaultProvider?: string;
-    routes: Record<string, string | { provider: string; rewrite?: string }>;
+    routes?: Record<string, string | { provider: string; rewrite?: string }>;
 }
 
 interface SlotOverrides {
@@ -92,7 +92,7 @@ export function resolveTarget(
 
     // Check for providerKey:modelId prefix (explicit provider override from /model)
     const prefixMatch = resolvedModel && resolvedModel.match(/^([a-z][a-z0-9_-]*):(.+)$/);
-    if (prefixMatch && routing.providers[prefixMatch[1]]) {
+    if (prefixMatch && routing.providers && routing.providers[prefixMatch[1]]) {
         providerKey = prefixMatch[1];
         rewriteModel = prefixMatch[2];
     } else {
@@ -111,8 +111,8 @@ export function resolveTarget(
         }
     }
 
-    const provider = providerKey ? routing.providers[providerKey] : null;
-    if (!provider) {
+    const provider = (providerKey && routing.providers) ? routing.providers[providerKey] : null;
+    if (!provider || !providerKey) {
         return { error: providerKey ? 'Unknown provider: ' + providerKey : 'No default provider configured' };
     }
 
@@ -123,7 +123,7 @@ export function resolveTarget(
         return { error: 'Provider "' + providerKey + '" has encrypted key but DEEPCLAUDE_ENCRYPTION_KEY is not set or decryption failed' };
     }
 
-    const primary: ResolvedTarget = {
+    let primary: ResolvedTarget = {
         providerKey,
         url: provider.url,
         key: resolvedKey,
@@ -138,9 +138,10 @@ export function resolveTarget(
     if (provider.fallback && Array.isArray(provider.fallback)) {
         for (const fbKey of provider.fallback) {
             if (fbKey === providerKey) continue;
-            const fb = routing.providers[fbKey];
+            const fb = routing.providers ? routing.providers[fbKey] : undefined;
+            if (!fb) continue;
             const fbRawKey = process.env[fb.keyEnv || ''] || fb.key;
-            if (!fb || !fbRawKey) continue;
+            if (!fbRawKey) continue;
             const fbResolvedKey = resolveKey(fbRawKey);
             if (fbRawKey.startsWith('$aes256gcm:') && fbResolvedKey === null) continue;
             const fbUrl = new URL(fb.url);

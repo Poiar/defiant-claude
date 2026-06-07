@@ -195,7 +195,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
         (async () => {
             let model: string | null = null;
             let parsedBody: Record<string, unknown> | null = null;
-            try { parsedBody = JSON.parse(rawBody.toString()); model = parsedBody.model as string; } catch (e) {
+            try { const parsed = JSON.parse(rawBody.toString()) as Record<string, unknown>; parsedBody = parsed; model = parsed.model as string; } catch (e) {
                 log.error(reqId, 'body parse error: ' + truncateForLog((e as Error).message));
             }
 
@@ -249,7 +249,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
             const resolved = resolveTarget(model, state.routing, state.slotOverrides, parsed.singleUrl, parsed.singleKey);
 
             if (resolved.error) {
-                const err = formatError(502, { provider: (resolved as { error: string }).providerKey || 'unknown' }, isDev);
+                const err = formatError(502, { provider: 'unknown' }, isDev);
                 err.message = resolved.error;
                 res.writeHead(502);
                 res.end(JSON.stringify(err));
@@ -424,7 +424,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
 
                 // Per-provider retry loop: retry transport errors with exponential
                 // backoff before moving to the next fallback provider.
-                let result: ForwardResult;
+                let result: ForwardResult = { success: false };
                 for (let provAttempt = 0; provAttempt <= MAX_PER_PROVIDER_RETRIES; provAttempt++) {
                     // Acquire concurrency slot before each attempt
                     const { promise: slotPromise, cancel: cancelSlot } = concurrency.acquire();
@@ -481,7 +481,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                     }
 
                     // Add fallback response headers
-                    let outHeaders = result.headers;
+                    let outHeaders = result.headers || {};
                     if (isRetry) {
                         outHeaders = addFallbackHeaders(outHeaders, {
                             fallbackFromModel,

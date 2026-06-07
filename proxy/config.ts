@@ -19,7 +19,7 @@ interface ParsedArgs {
     singleKey: string | null;
 }
 interface ProviderEntry {
-    url?: string;
+    url: string;
     auth?: string;
     format?: string;
     fallback?: string[];

@@ -9,21 +9,21 @@ function ts(): string {
 }
 
 interface Logger {
-    info(rid: string | null | undefined, msg: string): void;
-    warn(rid: string | null | undefined, msg: string): void;
-    error(rid: string | null | undefined, msg: string): void;
+    info(rid: string | number | null | undefined, msg: string): void;
+    warn(rid: string | number | null | undefined, msg: string): void;
+    error(rid: string | number | null | undefined, msg: string): void;
 }
 
 export function createLogger(name: string): Logger {
     return {
-        info(rid: string | null | undefined, msg: string): void {
-            console.error(`[${ts()}] [INFO] [${name}]${rid ? ' [#' + rid + ']' : ''} ${msg}`);
+        info(rid: string | number | null | undefined, msg: string): void {
+            console.error(`[${ts()}] [INFO] [${name}]${rid != null ? ' [#' + rid + ']' : ''} ${msg}`);
         },
-        warn(rid: string | null | undefined, msg: string): void {
-            console.error(`[${ts()}] [WARN] [${name}]${rid ? ' [#' + rid + ']' : ''} ${msg}`);
+        warn(rid: string | number | null | undefined, msg: string): void {
+            console.error(`[${ts()}] [WARN] [${name}]${rid != null ? ' [#' + rid + ']' : ''} ${msg}`);
         },
-        error(rid: string | null | undefined, msg: string): void {
-            console.error(`[${ts()}] [ERROR] [${name}]${rid ? ' [#' + rid + ']' : ''} ${msg}`);
+        error(rid: string | number | null | undefined, msg: string): void {
+            console.error(`[${ts()}] [ERROR] [${name}]${rid != null ? ' [#' + rid + ']' : ''} ${msg}`);
         },
     };
 }

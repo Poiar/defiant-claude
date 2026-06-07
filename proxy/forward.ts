@@ -89,7 +89,7 @@ export function peekFirstChunk(proxyRes: NodeJS.ReadableStream, timeoutMs?: numb
                 proxyRes.removeListener('readable', onReadable);
                 proxyRes.removeListener('error', onError);
                 (proxyRes as NodeJS.ReadableStream & { unshift(chunk: Buffer): void }).unshift(chunk);
-                resolve({ ok: true, firstChunk: chunk });
+                resolve({ ok: true, firstChunk: chunk as Buffer });
         }
         };
 
@@ -127,7 +127,7 @@ export function tryForward(
     isOpenAI: boolean,
     parsed: Record<string, unknown> | null | undefined,
     model: string | null | undefined,
-    reqId: string | null | undefined
+    reqId: string | number | null | undefined
 ): Promise<ForwardResult> {
     return new Promise((resolve) => {
         let streamUsage: { prompt_tokens: number; completion_tokens: number } | null = null;
@@ -218,8 +218,8 @@ export function tryForward(
                     resolve({ success: true, status: proxyRes.statusCode, headers: outHeaders, stream: outStream as Transform, streamUsage });
                 });
             } else {
-                (proxyRes as NodeJS.ReadableStream & { setTimeout(ms: number, cb: () => void): void }).setTimeout(30000, () => {
-                    (proxyRes as NodeJS.ReadableStream & { destroy(): void }).destroy();
+                (proxyRes as unknown as NodeJS.ReadableStream & { setTimeout(ms: number, cb: () => void): void }).setTimeout(30000, () => {
+                    (proxyRes as unknown as NodeJS.ReadableStream & { destroy(): void }).destroy();
                     resolve({ success: false, error: 'Response read timeout after 30s', transportError: true });
                 });
                 const chunks: Buffer[] = [];
@@ -227,7 +227,7 @@ export function tryForward(
                 proxyRes.on('data', (c: Buffer) => {
                     totalSize += c.length;
                     if (totalSize > 20_000_000) {
-                        (proxyRes as NodeJS.ReadableStream & { destroy(): void }).destroy();
+                        (proxyRes as unknown as NodeJS.ReadableStream & { destroy(): void }).destroy();
                         return resolve({ success: false, error: 'Response body too large' });
                     }
                     chunks.push(c);
