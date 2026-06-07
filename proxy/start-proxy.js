@@ -521,7 +521,15 @@ const server = http.createServer((req, res) => {
                 } catch (e) {}
             }
 
-            const upstreamPath = target.targetUrl.pathname.replace(/\/+$/, '') + req.url;
+            // Build upstream path. target.pathname may overlap with req.url
+            // (e.g. provider URL /v1 + request /v1/messages → /v1/messages not /v1/v1/messages).
+            // Strip the shared prefix to avoid double path segments.
+            const basePath = target.targetUrl.pathname.replace(/\/+$/, '');
+            let overlap = '';
+            for (let i = 1; i <= Math.min(basePath.length, req.url.length); i++) {
+                if (basePath.endsWith(req.url.substring(0, i))) overlap = req.url.substring(0, i);
+            }
+            const upstreamPath = overlap ? basePath + req.url.substring(overlap.length) : basePath + req.url;
 
             const options = {
                 hostname: target.targetUrl.hostname,
@@ -583,6 +591,10 @@ const server = http.createServer((req, res) => {
                 if (result.body) {
                     res.end(result.body);
                 } else if (result.stream) {
+                    result.stream.on('error', (err) => {
+                        if (!res.headersSent) { res.writeHead(502); }
+                        res.end();
+                    });
                     result.stream.pipe(res);
                 }
                 return;
