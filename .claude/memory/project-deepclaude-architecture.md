@@ -7,7 +7,7 @@ metadata:
 
 DeepClaude is a local HTTP proxy that sits between Claude Code and model APIs. Claude Code thinks it's talking to Anthropic's API, but the proxy intercepts `/v1/messages` and routes to configured providers (DeepSeek, OpenRouter, Fireworks, OpenCode, Kimi, Mimo, Umans, Groq, Mistral, MiniMax, Z.ai, BytePlus, SiliconFlow, Novita, or Anthropic direct). Non-model calls (OAuth, agent infrastructure) pass through to `api.anthropic.com` transparently.
 
-**Why:** The user (Mathias Mattson) built this to use cheaper/faster non-Anthropic models with Claude Code, mixing providers per model slot, while keeping OAuth bridge auth working.
+**Why:** Built to use cheaper/faster non-Anthropic models with Claude Code, mixing providers per model slot, while keeping OAuth bridge auth working.
 
 **Key architectural details:**
 

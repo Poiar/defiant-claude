@@ -133,13 +133,27 @@ function resolveTarget(model) {
             const fb = routing.providers[fbKey];
             if (!fb || !(process.env[fb.keyEnv] || fb.key)) continue;
             const fbUrl = new URL(fb.url);
+
+            // Resolve the correct model rewrite for the fallback provider.
+            // Don't inherit the primary's rewriteModel — different providers
+            // use different model names (e.g. oc rewrites to "big-pickle"
+            // but ds needs "deepseek-v4-pro").
+            let fbRewrite = null;
+            const fbRouteEntry = (model && routing.routes[model]) || null;
+            if (fbRouteEntry) {
+                const fbProv = typeof fbRouteEntry === 'string' ? fbRouteEntry : (fbRouteEntry.provider || null);
+                if (fbProv === fbKey) {
+                    fbRewrite = typeof fbRouteEntry === 'object' ? (fbRouteEntry.rewrite || null) : null;
+                }
+            }
+
             fallbacks.push({
                 providerKey: fbKey,
                 url: fb.url,
                 key: process.env[fb.keyEnv] || fb.key,
                 isBearer: fb.auth === 'bearer',
                 targetUrl: fbUrl,
-                rewriteModel: rewriteModel,
+                rewriteModel: fbRewrite,
                 format: fb.format || 'anthropic',
             });
         }
