@@ -4,25 +4,35 @@ Provider-agnostic Claude Code wrapper. Route each model slot (Opus, Sonnet, Haik
 
 ## Architecture
 
-DeepClaude runs a local HTTP routing proxy that intercepts Claude Code's Anthropic API calls and dispatches each model slot (Opus, Sonnet, Haiku, subagent) to a different upstream provider. The proxy is built from original Node.js modules — no third-party proxy frameworks, no copied code.
+DeepClaude runs a local HTTP routing proxy that intercepts Claude Code's Anthropic API calls and dispatches each model slot (Opus, Sonnet, Haiku, subagent) to a different upstream provider. The proxy is written in TypeScript — no third-party proxy frameworks, no copied code.
 
 ### Proxy modules (`proxy/`)
 
 | Module | Purpose |
 |---|---|
-| `start-proxy.js` | Entry point — HTTP server, request lifecycle, health endpoint |
-| `routing.js` | Slot-based routing with prefix matching, fallback chain construction, circuit breaker |
-| `protocol-translate.js` | Bidirectional Anthropic Messages ↔ OpenAI Chat Completions format translation |
-| `forward.js` | Upstream HTTP forwarding with SSE streaming, fallback header injection, stream buffer guarding |
-| `thinking-cache.js` | Thinking block extraction, caching, and injection across providers that strip them |
-| `transport-errors.js` | Network failure classification via ordered signature tuples (`FAILURE_SIGNATURES`) with cause chain walking |
-| `error-codes.js` | Structured error codes with template interpolation, dev/production mode, credential scrubbing (`scrubCredentials`) via data-driven pattern list |
-| `concurrency.js` | Promise-queue-based semaphore with FIFO ordering and `acquire`/`release` pump pattern |
-| `lru-cache.js` | TTL cache with LRU eviction using delete-then-set MRU promotion and lazy shared cleanup |
-| `server-tools.js` | Anthropic server tool conversion (`web_search`, `web_fetch`, `url_fetch`, `computer`, `bash`, `text_editor`, `memory`, `tool_search_tool`), DuckDuckGo web search, SSRF-protected web fetch, tool result population |
-| `config.js` | CLI argument parsing, JSON config loading with mtime-based hot reload, constraint validation |
-| `stats.js` | Provider health tracking, request statistics, utilization reporting |
-| `util.js` | Path deduplication for `/v1`-prefixed providers, safe header construction |
+| `start-proxy.ts` | Entry point — HTTP server, request lifecycle, health endpoint |
+| `routing.ts` | Slot-based routing with prefix matching, fallback chain construction, circuit breaker |
+| `protocol-translate.ts` | Bidirectional Anthropic Messages ↔ OpenAI Chat Completions format translation |
+| `forward.ts` | Upstream HTTP forwarding with SSE streaming, fallback header injection, stream buffer guarding, usage token extraction |
+| `thinking-cache.ts` | Anthropic-format thinking block extraction, caching, and injection across providers that strip them |
+| `reasoning-cache.ts` | OpenAI-format reasoning content cache with session-keyed LRU and re-injection |
+| `transport-errors.ts` | Network failure classification via ordered signature tuples with cause chain walking |
+| `error-codes.ts` | Structured error codes with template interpolation, dev/production mode, credential scrubbing via data-driven pattern list |
+| `concurrency.ts` | Promise-queue-based semaphore with FIFO ordering and acquire/release pump pattern |
+| `lru-cache.ts` | TTL cache with LRU eviction using delete-then-set MRU promotion and lazy shared cleanup |
+| `server-tools.ts` | Anthropic server tool conversion (web_search, web_fetch, url_fetch, computer, bash, text_editor, memory, tool_search_tool), DuckDuckGo web search, SSRF-protected web fetch, tool result population |
+| `config.ts` | CLI argument parsing, JSON config loading with mtime-based hot reload, key resolution with AES-256-GCM decryption |
+| `stats.ts` | Provider health tracking, request statistics, token usage reporting |
+| `util.ts` | Path deduplication for /v1-prefixed providers, safe header construction |
+| `crypto.ts` | AES-256-GCM encryption/decryption for provider API keys |
+| `encrypt-key.ts` | CLI tool for encrypting API keys |
+| `friendly-error.ts` | Conversational error responses for exhausted fallback chains |
+| `header-sanitizer.ts` | Request header sanitization before logging (drops auth, cookies, noise) |
+| `log.ts` | Structured logger with per-module namespacing and request IDs |
+| `momentum.ts` | Session-based provider stickiness (tracks last 5 provider decisions) |
+| `rate-limiter.ts` | Per-IP fixed-window rate limiter with LRU eviction |
+| `ssrf.ts` | URL validation against SSRF/DNS rebinding, blocks private/internal IPs and metadata endpoints |
+| `truncate.ts` | Log/error body length truncation with credential scrubbing |
 
 ### Data-driven provider registry
 
@@ -44,11 +54,11 @@ Two launcher scripts with identical behavior, each loading `providers.json` nati
 
 ### Test coverage
 
-114 tests across 10 suites covering all proxy modules — transport errors, concurrency, LRU cache, provider registry validation, error codes, routing, stats, forwarding, server tools, and config.
+301 tests across 18 suites covering all proxy modules — transport errors, concurrency, LRU cache, provider registry validation, error codes, routing, stats, forwarding, server tools, config, protocol translation, thinking cache, reasoning cache, header sanitization, truncation, crypto, friendly errors, and SSRF validation. Run with `npm test`.
 
 ### Pre-commit
 
-Husky v9 + lint-staged: JS syntax check (`node -c`) on all proxy modules, PSScriptAnalyzer on PowerShell scripts.
+Husky v9 + lint-staged: syntax check on staged files, TypeScript compilation guard.
 
 ## Quick start
 
