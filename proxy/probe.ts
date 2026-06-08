@@ -12,7 +12,7 @@ const PROBE_TIMEOUT = 15_000;
 const TEST_PROMPT = 'Hi';
 const TEST_MAX_TOKENS = 10;
 
-interface ProbeSlot {
+export interface ProbeSlot {
     slot: string;
     providerKey: string;
     model: string;
@@ -22,7 +22,7 @@ interface ProbeSlot {
     format: string;
 }
 
-interface ProbeResult {
+export interface ProbeResult {
     slot: string;
     provider: string;
     model: string;
@@ -110,7 +110,7 @@ function printResults(results: ProbeResult[]): void {
     console.log(passCount + '/' + results.length + ' probes passed' + (failCount > 0 ? ', ' + failCount + ' failed' : ''));
 }
 
-function sendProbe(target: ProbeSlot): Promise<ProbeResult> {
+export function sendProbe(target: ProbeSlot): Promise<ProbeResult> {
     const t0 = Date.now();
     const result: ProbeResult = {
         slot: target.slot,
