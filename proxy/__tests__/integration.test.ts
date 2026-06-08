@@ -206,12 +206,12 @@ describe('Proxy integration tests', () => {
         }
     });
 
-    test('POST /v1/messages without Content-Type header is allowed and returns 502', async () => {
+    test('POST /v1/messages without Content-Type header is rejected with 415', async () => {
         const res = await request('POST', '/v1/messages', {
             body: JSON.stringify({}),
         });
 
-        expect(res.status).toBe(502);
+        expect(res.status).toBe(415);
         expect((res.body as Record<string, unknown>).type).toBe('api_error');
     });
 

@@ -211,31 +211,3 @@ export async function validateUrl(urlStr: string, options?: ValidateUrlOptions):
   }
   return { valid: true }
 }
-/**
- * Check if an IP address string is a private/internal IP.
- * Accepts both IPv4 and IPv6 strings.
- */
-export function isPrivateIp(ip: string): boolean {
-  // Check metadata IPs
-  if (METADATA_IPS.has(ip)) return true
-
-  // Check if it's an IPv4 address
-  const v4Match = ip.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/)
-  if (v4Match) {
-    return isPrivateV4(ip)
-  }
-  // IPv6 check
-  try {
-    const { ip: expanded, mappedV4 } = normalizeIPv6(ip)
-
-    if (mappedV4) {
-      if (METADATA_IPS.has(mappedV4)) return true
-      if (isPrivateV4(mappedV4)) return true
-    }
-    return isPrivateV6(expanded)
-  } catch (_) {
-    return false
-
-
-  }
-}

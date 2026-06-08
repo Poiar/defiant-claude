@@ -1,6 +1,6 @@
 'use strict';
 
-import { parseArgs, loadConfig, checkReload, validateConfig } from '../config';
+import { parseArgs, loadConfig, validateConfig } from '../config';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -84,7 +84,7 @@ describe('validateConfig', () => {
             routes: {},
             defaultProvider: 'nonexistent',
         };
-        const warnings = validateConfig({ routing }, {} as never);
+        const warnings = validateConfig({ routing });
         expect(warnings.some(w => w.includes('nonexistent'))).toBe(true);
     });
 
@@ -94,7 +94,7 @@ describe('validateConfig', () => {
             routes: {},
             defaultProvider: 'bad',
         };
-        const warnings = validateConfig({ routing }, {} as never);
+        const warnings = validateConfig({ routing });
         expect(warnings.some(w => w.includes('URL'))).toBe(true);
     });
 
@@ -104,7 +104,7 @@ describe('validateConfig', () => {
             routes: {},
             defaultProvider: 'ds',
         };
-        const warnings = validateConfig({ routing }, {} as never);
+        const warnings = validateConfig({ routing });
         expect(warnings).toHaveLength(0);
     });
 });

@@ -44,7 +44,7 @@ const parsed = parseArgs(process.argv);
 const state = loadConfig(parsed);
 
 // Validate at startup (warn but don't block)
-const configWarnings = validateConfig(state, parsed);
+const configWarnings = validateConfig(state);
 for (const w of configWarnings) {
     log.warn(null, w);
 }
@@ -98,7 +98,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
     // Content-Type validation for model calls
     if (isModelCall) {
         const ct = (req.headers['content-type'] || '').toLowerCase();
-        if (ct && !ct.includes('application/json')) {
+        if (!ct.includes('application/json')) {
             res.writeHead(415, { 'content-type': 'application/json' });
             res.end(JSON.stringify({ type: 'api_error', message: 'Content-Type must be application/json' }));
             return;
@@ -139,18 +139,22 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
             req.removeAllListeners('data');
             req.removeAllListeners('end');
         }
-        if (!res.headersSent && !res.destroyed) {
-            res.writeHead(400, { 'content-type': 'application/json' });
-            res.end(JSON.stringify(formatError(400)));
-        }
+        try {
+            if (!res.headersSent && !res.destroyed) {
+                res.writeHead(400, { 'content-type': 'application/json' });
+                res.end(JSON.stringify(formatError(400)));
+            }
+        } catch (_) { /* socket may already be destroyed */ }
     });
     req.on('data', (chunk: Buffer) => {
         bodySize += chunk.length;
         if (bodySize > 10_000_000) {
-            if (!res.destroyed) {
-                res.writeHead(413, { 'content-type': 'application/json' });
-                res.end(JSON.stringify(formatError(413)));
-            }
+            try {
+                if (!res.destroyed) {
+                    res.writeHead(413, { 'content-type': 'application/json' });
+                    res.end(JSON.stringify(formatError(413)));
+                }
+            } catch (_) { /* socket may already be destroyed */ }
             req.destroy();
             req.removeAllListeners('data');
             req.removeAllListeners('end');
@@ -528,14 +532,14 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                     isModelCall;
 
                 if (streamingClient) {
-                    const friendlyEvents = buildFriendlyStreamEvents(lastStatus, lastRawBody, model, attemptedProviders);
+                    const friendlyEvents = buildFriendlyStreamEvents(lastStatus, model, attemptedProviders);
                     try {
                         res.writeHead(200, sseHeaders({ 'x-fallback-exhausted': 'true' }) as Record<string, string | number>);
                         res.write(friendlyEvents);
                         res.end();
                     } catch (_) { /* socket may already be destroyed */ }
                 } else if (isChatClient) {
-                    const friendlyResp = buildFriendlyResponse(lastStatus, lastRawBody, model, attemptedProviders);
+                    const friendlyResp = buildFriendlyResponse(lastStatus, model, attemptedProviders);
                     try {
                         res.writeHead(friendlyResp.status, friendlyResp.headers);
                         res.end(friendlyResp.body);
