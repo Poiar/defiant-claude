@@ -601,6 +601,10 @@ show_help() {
     echo "  --remote              Browser-based remote control (starts proxy automatically)"
     echo "  --switch CONFIG  Switch active config of a running persistent proxy"
     echo "  --stop-proxy    Kill the persistent proxy"
+    echo "  --probe [FILE]  Test each configured provider with a minimal prompt"
+    echo "  --dry-run [FILE] Show resolved routing table without starting proxy"
+    echo "  --dashboard     Start proxy and print health dashboard URL"
+    echo "  --open          Open dashboard in browser (use with --dashboard)"
     echo "  --version       Show version and script location"
     echo "  -h, --help      This help"
     echo ""
@@ -1026,6 +1030,10 @@ PERSIST=false
 REMOTE=false
 EFFORT="max"
 declare -a SPECS=()
+DASHBOARD=false
+OPEN_BROWSER=false
+PROBE_FILE=""
+DRY_RUN_FILE=""
 
 # Parse args
 while [[ $# -gt 0 ]]; do
@@ -1076,6 +1084,22 @@ while [[ $# -gt 0 ]]; do
             ;;
         --stop-proxy)
             ACTION="stop-proxy"; shift ;;
+        --dashboard)
+            DASHBOARD=true; shift ;;
+        --open)
+            OPEN_BROWSER=true; shift ;;
+        --probe)
+            ACTION="probe"
+            if [[ -n "${2:-}" && "$2" != -* ]]; then
+                PROBE_FILE="$2"; shift
+            fi
+            shift ;;
+        --dry-run|--what-if)
+            ACTION="dry-run"
+            if [[ -n "${2:-}" && "$2" != -* ]]; then
+                DRY_RUN_FILE="$2"; shift
+            fi
+            shift ;;
         --set-slot)
             slot_name="${2:-}" slot_model="$3"
             ACTION="set-slot"
@@ -1145,6 +1169,37 @@ case "$ACTION" in
     help)       show_help ;;
     version)    show_version ;;
     doctor)     run_doctor "${BACKEND:-ds}" ;;
+    probe)
+        # Build routes file if none provided
+        local probe_routes="${PROBE_FILE}"
+        if [[ -z "$probe_routes" ]]; then
+            local slot_data=""
+            if [[ ${#SPECS[@]} -gt 0 ]]; then
+                slot_data=$(build_adhoc_config "${SPECS[@]}" | tail -n +2)
+            else
+                slot_data=$(resolve_config "${BACKEND:-ds}" | tail -n +2)
+            fi
+            probe_routes="${DEEPCLAUDE_DIR}/probe-routes.json"
+            mkdir -p -m 700 "$DEEPCLAUDE_DIR"
+            echo "$slot_data" | build_routes_json > "$probe_routes"
+        fi
+        "$SCRIPT_DIR/node_modules/.bin/tsx" "$SCRIPT_DIR/proxy/start-proxy.ts" --probe "$probe_routes"
+        exit $? ;;
+    dry-run)
+        local dry_routes="${DRY_RUN_FILE}"
+        if [[ -z "$dry_routes" ]]; then
+            local dry_slot_data=""
+            if [[ ${#SPECS[@]} -gt 0 ]]; then
+                dry_slot_data=$(build_adhoc_config "${SPECS[@]}" | tail -n +2)
+            else
+                dry_slot_data=$(resolve_config "${BACKEND:-ds}" | tail -n +2)
+            fi
+            dry_routes="${DEEPCLAUDE_DIR}/dryrun-routes.json"
+            mkdir -p -m 700 "$DEEPCLAUDE_DIR"
+            echo "$dry_slot_data" | build_routes_json > "$dry_routes"
+        fi
+        "$SCRIPT_DIR/node_modules/.bin/tsx" "$SCRIPT_DIR/proxy/start-proxy.ts" --dry-run "$dry_routes"
+        exit $? ;;
     models)     show_models ;;
     stop-proxy)
         if proxy_state=$(get_proxy_state); then
@@ -1242,6 +1297,14 @@ case "$ACTION" in
         echo "  Launching remote control..."
         echo ""
 
+        if $DASHBOARD; then
+            echo "  Dashboard: http://127.0.0.1:${proxy_port}/dashboard"
+            if $OPEN_BROWSER; then
+                open "http://127.0.0.1:${proxy_port}/dashboard" 2>/dev/null || \
+                xdg-open "http://127.0.0.1:${proxy_port}/dashboard" 2>/dev/null || true
+            fi
+        fi
+
         set_cc_env "$proxy_port" "$opus_m" "$sonnet_m" "$haiku_m" "$sub_m" "$opus_model"
         claude --effort "$EFFORT" --dangerously-skip-permissions remote-control "$@"
         claude_exit=$?
@@ -1329,6 +1392,14 @@ case "$ACTION" in
             printf "    %-10s %s:%s  ->  %s\n" "$slot" "$prov" "$model" "${PROVIDER_NAME[$prov]}"
         done <<< "$slot_data"
         echo ""
+
+        if $DASHBOARD; then
+            echo "  Dashboard: http://127.0.0.1:${proxy_port}/dashboard"
+            if $OPEN_BROWSER; then
+                open "http://127.0.0.1:${proxy_port}/dashboard" 2>/dev/null || \
+                xdg-open "http://127.0.0.1:${proxy_port}/dashboard" 2>/dev/null || true
+            fi
+        fi
 
         set_cc_env "$proxy_port" "$opus_m" "$sonnet_m" "$haiku_m" "$sub_m" "$opus_model"
 
@@ -1438,6 +1509,14 @@ case "$ACTION" in
         sonnet_m=$(get_slot_model "sonnet" "${sonnet_prov}:${sonnet_model}")
         haiku_m=$(get_slot_model "haiku" "${haiku_prov}:${haiku_model}")
         sub_m=$(get_slot_model "subagent" "${subagent_prov}:${subagent_model}")
+
+        if $DASHBOARD; then
+            echo "  Dashboard: http://127.0.0.1:${proxy_port}/dashboard"
+            if $OPEN_BROWSER; then
+                open "http://127.0.0.1:${proxy_port}/dashboard" 2>/dev/null || \
+                xdg-open "http://127.0.0.1:${proxy_port}/dashboard" 2>/dev/null || true
+            fi
+        fi
 
         set_cc_env "$proxy_port" "$opus_m" "$sonnet_m" "$haiku_m" "$sub_m" "$opus_model"
 
