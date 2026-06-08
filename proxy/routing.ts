@@ -5,6 +5,8 @@
 // route table lookups, and fallback chain construction with circuit breaker.
 
 import { URL } from 'url';
+import fs from 'fs';
+import path from 'path';
 import { isProviderHealthy } from './stats';
 import { resolveKey, resolveAlias } from './config';
 
@@ -60,6 +62,25 @@ interface ResolveResult {
     error?: string;
 }
 
+// Read the dedicated subagent model from ~/.deepclaude/subagent-model.json.
+// Returns null when the file does not exist, is invalid, or an I/O error occurs.
+// Used by resolveTarget to override the subagent slot when no slot override is set.
+export function resolveSubagentModel(): { providerKey: string; modelId: string } | null {
+    const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+    if (!homeDir) return null;
+    const filePath = path.join(homeDir, '.deepclaude', 'subagent-model.json');
+    try {
+        const raw = fs.readFileSync(filePath, 'utf-8');
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed.providerKey === 'string' && typeof parsed.modelId === 'string') {
+            return { providerKey: parsed.providerKey, modelId: parsed.modelId };
+        }
+        return null;
+    } catch {
+        return null;
+    }
+}
+
 // Resolve the primary provider and fallback chain for a given model name.
 //
 // Routing priority:
@@ -67,6 +88,12 @@ interface ResolveResult {
 //   2. Explicit provider prefix ("ds:", "oc:", "or:") -> direct provider lookup
 //   3. Routes table lookup by model ID
 //   4. Default provider fallback
+//
+// Subagent slot priority (overrides the above):
+//   1. --set-slot sub X:Y (slot override) — highest priority
+//   2. --subagent-model X:Y (dedicated subagent model)
+//   3. Routes table sub entry (from config)
+//   4. Same as haiku / last slot (fallback)
 //
 // Returns { primary, fallbacks } on success, { error } on failure.
 
@@ -94,12 +121,28 @@ export function resolveTarget(
     }
 
     // Slot prefix: "sonnet:oc:big-pickle" -> check overrides, fall back to model after prefix
+    // Subagent slot priority:
+    //   1. Slot override (highest)
+    //   2. Dedicated subagent model (--subagent-model)
+    //   3. Routes table fallback (from config)
+    //   4. Default provider fallback
     const slotMatch = model && model.match(/^(sonnet|opus|haiku|subagent):(.+)$/);
     let resolvedModel = model;
     if (slotMatch) {
         const slot = slotMatch[1];
         const fallback = slotMatch[2];
-        resolvedModel = (slotOverrides && slotOverrides[slot]) || fallback;
+        if (slotOverrides && slotOverrides[slot]) {
+            resolvedModel = slotOverrides[slot];
+        } else if (slot === 'subagent') {
+            const subagentModel = resolveSubagentModel();
+            if (subagentModel) {
+                resolvedModel = subagentModel.providerKey + ':' + subagentModel.modelId;
+            } else {
+                resolvedModel = fallback;
+            }
+        } else {
+            resolvedModel = fallback;
+        }
     }
 
     let providerKey: string | null = null;

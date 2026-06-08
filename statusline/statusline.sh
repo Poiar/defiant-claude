@@ -52,7 +52,18 @@ try {
     const fallback = slotMatch[2];
     const slotAbbr = { opus: 'o', sonnet: 's', haiku: 'h', subagent: 'sub' }[slot] || slot;
     slotLabel = slotAbbr + ' ';
+    // Slot override takes highest priority
     model = overrides[slot] || fallback;
+    // Check dedicated subagent model when no override and slot is subagent
+    if (!overrides[slot] && (slot === 'sub' || slot === 'subagent')) {
+      try {
+        const subModelFile = (process.env.USERPROFILE || require('os').homedir()) + '/.deepclaude/subagent-model.json';
+        const subData = JSON.parse(fs.readFileSync(subModelFile, 'utf8'));
+        if (subData.providerKey && subData.modelId) {
+          model = subData.providerKey + ':' + subData.modelId;
+        }
+      } catch(e) {}
+    }
   }
 } catch(e) {}
 

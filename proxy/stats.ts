@@ -192,9 +192,33 @@ export function getFullHealthSnapshot(concurrencyStatus: unknown, rateLimiterSta
     if (rateLimiterStatus) {
         base.rateLimiter = rateLimiterStatus;
     }
-    // Add circuit breaker state and streaming metrics per provider
+    // Add circuit breaker state, streaming metrics, and spend data per provider
     const providers = base.providers as Record<string, Record<string, unknown>>;
     if (providers) {
+        // Load spend data once for this snapshot
+        let spendByProvider: Record<string, { todayAmount: number; dailyHistory: Record<string, number> }> | null = null;
+        try {
+            if (fs.existsSync(spendFile)) {
+                const raw = fs.readFileSync(spendFile, 'utf-8');
+                const data = JSON.parse(raw);
+                const rawDaily = data.daily as Record<string, unknown> || {};
+                const today = new Date().toISOString().slice(0, 10);
+                spendByProvider = {};
+                for (const [date, value] of Object.entries(rawDaily)) {
+                    if (typeof value === 'object' && value !== null) {
+                        const byProvider = (value as { byProvider?: Record<string, number> }).byProvider;
+                        if (byProvider) {
+                            for (const [pk, amt] of Object.entries(byProvider)) {
+                                if (!spendByProvider[pk]) spendByProvider[pk] = { todayAmount: 0, dailyHistory: {} };
+                                if (date === today) spendByProvider[pk].todayAmount += amt;
+                                spendByProvider[pk].dailyHistory[date] = (spendByProvider[pk].dailyHistory[date] || 0) + amt;
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (_) { /* non-fatal -- spend data omitted from snapshot */ }
+
         for (const k of Object.keys(providers)) {
             providers[k].circuitBreaker = getCircuitBreakerState(k);
             providers[k].lastRequest = providerStats[k] ? providerStats[k].lastRequest : undefined;
@@ -205,6 +229,37 @@ export function getFullHealthSnapshot(concurrencyStatus: unknown, rateLimiterSta
             } else {
                 providers[k].avgTTFT = 0;
                 providers[k].avgTPS = 0;
+            }
+
+            // Per-provider daily spend (persisted + pending in-memory)
+            const persistedAmount = spendByProvider?.[k]?.todayAmount || 0;
+            const pendingAmount = providerDailyAccumulators[k] || 0;
+            const totalProviderSpend = parseFloat((persistedAmount + pendingAmount).toFixed(4));
+            if (totalProviderSpend > 0) {
+                providers[k].dailySpend = { amount: totalProviderSpend, currency: 'USD' };
+            }
+
+            // Monthly budget (from providers.json or DEFAULT_LIMITS)
+            const budget = getMonthlyBudget(k);
+            if (budget !== null) {
+                providers[k].monthlyBudget = budget;
+            }
+
+            // Average daily spend over last 7 days for days-remaining estimate
+            if (spendByProvider?.[k]) {
+                let sum = 0;
+                let count = 0;
+                const today = new Date();
+                for (let i = 0; i < 7; i++) {
+                    const d = new Date(today);
+                    d.setDate(d.getDate() - i);
+                    const ds = d.toISOString().slice(0, 10);
+                    const amt = spendByProvider[k].dailyHistory[ds] || 0;
+                    if (amt > 0) { sum += amt; count++; }
+                }
+                if (count > 0) {
+                    providers[k].avgDailySpend7d = parseFloat((sum / count).toFixed(4));
+                }
             }
         }
     }
@@ -316,6 +371,7 @@ const SPEND_WRITE_THROTTLE_MS = 1000;
 let runningTotal = 0;
 let sessionTotal = 0;
 let dailyAccumulator = 0;
+const providerDailyAccumulators: Record<string, number> = {};
 let sessionCap = 0;
 let sessionDailyBudget = 0;
 let lastDailyRead = 0;
@@ -326,6 +382,33 @@ const sessionStarted = new Date().toISOString();
 let pricingData: Record<string, { input: number; output: number }> = {};
 try { pricingData = require('./providers.json').pricing || {}; } catch (_) { /* continue without pricing */ }
 
+// Monthly budget defaults for free-tier providers (used when providers.json has no monthlyBudget)
+const DEFAULT_LIMITS: Record<string, number> = {
+  or: 1.00,
+  gr: 5.00,
+  oc: 0.50,
+  km: 1.00,
+  mm: 1.00,
+  um: 1.00,
+  mt: 1.00,
+  mx: 1.00,
+  za: 1.00,
+  bp: 1.00,
+  sf: 1.00,
+  nv: 1.00,
+};
+
+let providerMonthlyBudgets: Record<string, number> = {};
+try {
+  const providersData = require('./providers.json').providers || {};
+  for (const [key, def] of Object.entries(providersData)) {
+    const pDef = def as { monthlyBudget?: number };
+    if (pDef.monthlyBudget !== undefined) {
+      providerMonthlyBudgets[key] = pDef.monthlyBudget;
+    }
+  }
+} catch (_) { /* continue without provider budgets */ }
+
 function lookupPrice(modelName: string): { input: number; output: number } | null {
   if (pricingData[modelName]) return pricingData[modelName];
   const stripped = modelName.replace(/^[a-z][a-z0-9_-]*:/, '');
@@ -333,7 +416,16 @@ function lookupPrice(modelName: string): { input: number; output: number } | nul
   return null;
 }
 
-export async function recordSpend(modelName: string, usage: { prompt_tokens: number; completion_tokens: number }): Promise<void> {
+// Record per-provider spend in the in-memory accumulator.
+// Never throws.
+export function recordProviderSpend(providerKey: string, amount: number): void {
+  if (!providerKey || amount <= 0) return;
+  try {
+    providerDailyAccumulators[providerKey] = (providerDailyAccumulators[providerKey] || 0) + amount;
+  } catch (_) { /* non-fatal */ }
+}
+
+export async function recordSpend(modelName: string, usage: { prompt_tokens: number; completion_tokens: number }, providerKey?: string): Promise<void> {
   const price = lookupPrice(modelName);
   if (!price) return;
 
@@ -341,6 +433,9 @@ export async function recordSpend(modelName: string, usage: { prompt_tokens: num
   runningTotal += cost;
   sessionTotal += cost;
   dailyAccumulator += cost;
+  if (providerKey) {
+    recordProviderSpend(providerKey, cost);
+  }
 
   const now = Date.now();
   if (now - lastSpendWrite < SPEND_WRITE_THROTTLE_MS) return;
@@ -363,9 +458,37 @@ export async function recordSpend(modelName: string, usage: { prompt_tokens: num
       } catch (_) { /* ignore corrupt file */ }
     }
     const today = new Date().toISOString().slice(0, 10);
-    const daily: Record<string, number> = (existing.daily as Record<string, number>) || {};
-    daily[today] = (daily[today] || 0) + dailyAccumulator;
+
+    // Normalize daily entries (handle legacy number format and new object format)
+    const rawDaily = (existing.daily as Record<string, unknown>) || {};
+    const daily: Record<string, { total: number; byProvider: Record<string, number> }> = {};
+    for (const [date, value] of Object.entries(rawDaily)) {
+      if (typeof value === 'number') {
+        daily[date] = { total: value, byProvider: {} };
+      } else if (typeof value === 'object' && value !== null) {
+        const entry = value as { total?: number; byProvider?: Record<string, number> };
+        daily[date] = { total: entry.total ?? 0, byProvider: { ...(entry.byProvider || {}) } };
+      }
+    }
+
+    // Update today's entry with accumulated totals
+    const todayEntry = daily[today] || { total: 0, byProvider: {} };
+    todayEntry.total = parseFloat((todayEntry.total + dailyAccumulator).toFixed(4));
+
+    // Flush per-provider accumulators into today's byProvider breakdown
+    for (const [pk, amount] of Object.entries(providerDailyAccumulators)) {
+      if (amount > 0) {
+        todayEntry.byProvider[pk] = parseFloat(((todayEntry.byProvider[pk] || 0) + amount).toFixed(4));
+      }
+    }
+    daily[today] = todayEntry;
+
     dailyAccumulator = 0;
+    // Clear provider accumulators
+    for (const pk of Object.keys(providerDailyAccumulators)) {
+      delete providerDailyAccumulators[pk];
+    }
+
     const data = {
       total: parseFloat(runningTotal.toFixed(4)),
       daily,
@@ -400,8 +523,18 @@ export function getDailySpend(): number {
     const raw = fs.readFileSync(spendFile, 'utf-8');
     const data = JSON.parse(raw);
     const today = new Date().toISOString().slice(0, 10);
-    const daily = data.daily as Record<string, number> | undefined;
-    cachedDailySpend = (daily?.[today] ?? 0) + dailyAccumulator;
+    const daily = data.daily as Record<string, unknown> | undefined;
+    // Handle both legacy number format and new { total, byProvider } format
+    let dailyTotal = 0;
+    if (daily?.[today] !== undefined) {
+      const entry = daily[today];
+      if (typeof entry === 'number') {
+        dailyTotal = entry;
+      } else if (typeof entry === 'object' && entry !== null) {
+        dailyTotal = (entry as { total?: number }).total ?? 0;
+      }
+    }
+    cachedDailySpend = dailyTotal + dailyAccumulator;
     return cachedDailySpend;
   } catch (_) {
     cachedDailySpend = 0;
@@ -427,6 +560,14 @@ export function setSpendFilePath(p: string): void {
   spendFile = p;
 }
 
+// Get the monthly budget for a provider.
+// Returns null for paid providers with no configured limit.
+export function getMonthlyBudget(providerKey: string): number | null {
+  if (providerMonthlyBudgets[providerKey] !== undefined) return providerMonthlyBudgets[providerKey];
+  if (DEFAULT_LIMITS[providerKey] !== undefined) return DEFAULT_LIMITS[providerKey];
+  return null;
+}
+
 export function _resetBudgetState(): void {
   sessionCap = 0;
   sessionDailyBudget = 0;
@@ -435,6 +576,9 @@ export function _resetBudgetState(): void {
   dailyAccumulator = 0;
   lastDailyRead = 0;
   cachedDailySpend = 0;
+  for (const k of Object.keys(providerDailyAccumulators)) {
+    delete providerDailyAccumulators[k];
+  }
 }
 
 export function _setSessionTotal(val: number): void {

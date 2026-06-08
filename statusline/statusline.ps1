@@ -24,7 +24,20 @@ if ($model -and (Test-Path $overridesFile)) {
       $fallback = $Matches[2]
       $abbr = @{ opus = 'o'; sonnet = 's'; haiku = 'h'; subagent = 'sub' }
       $slotLabel = ($abbr[$slot] ?? $slot) + ' '
+      # Slot override takes highest priority
       $model = $overrides.$slot ?? $fallback
+      # Check dedicated subagent model when no override and slot is subagent
+      if (-not $overrides.$slot -and ($slot -eq 'sub' -or $slot -eq 'subagent')) {
+        $subModelFile = "$env:USERPROFILE\.deepclaude\subagent-model.json"
+        if (Test-Path $subModelFile) {
+          try {
+            $subData = Get-Content $subModelFile -Raw | ConvertFrom-Json
+            if ($subData.providerKey -and $subData.modelId) {
+              $model = "$($subData.providerKey):$($subData.modelId)"
+            }
+          } catch {}
+        }
+      }
     }
   } catch {}
 }

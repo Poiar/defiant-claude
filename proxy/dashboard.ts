@@ -91,6 +91,9 @@ export function buildDashboardHtml(providerDisplayNames?: Record<string, string>
 '.cb-closed{color:#3fb950}' +
 '.cb-open{color:#f85149}' +
 '.cb-half-open{color:#d29922}' +
+'.quota-ok{color:#3fb950}' +
+'.quota-warning{color:#d29922}' +
+'.quota-critical{color:#f85149}' +
 '.recent-section{background:#161b22;border:1px solid #30363d;border-radius:8px;overflow:hidden}' +
 '.recent-section h2{font-size:16px;font-weight:600;padding:16px 20px;border-bottom:1px solid #30363d}' +
 '.recent-section table{width:100%;border-collapse:collapse}' +
@@ -111,6 +114,7 @@ export function buildDashboardHtml(providerDisplayNames?: Record<string, string>
 '<span class="stat">Version: <strong id="version">--</strong></span>' +
 '<span class="stat">Uptime: <strong id="uptime">0s</strong></span>' +
 '<span class="stat">Spend: <strong id="spend">$0.0000</strong></span>' +
+'<span class="stat" id="quota-summary"></span>' +
 '</div>' +
 '<div class="cards" id="cards">' +
 '<div class="loading">Connecting to proxy...</div>' +
@@ -133,6 +137,7 @@ export function buildDashboardHtml(providerDisplayNames?: Record<string, string>
 'var verEl=document.getElementById("version");' +
 'var uptimeEl=document.getElementById("uptime");' +
 'var spendEl=document.getElementById("spend");' +
+'var quotaEl=document.getElementById("quota-summary");' +
 'var lastData=null;' +
 'function fmtUptime(ms){' +
 'var s=Math.floor(ms/1000);if(s<60)return s+"s";' +
@@ -168,6 +173,17 @@ export function buildDashboardHtml(providerDisplayNames?: Record<string, string>
 'if(!s)return"";' +
 'return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")' +
 '}' +
+'function getQuotaStatus(p){' +
+'var budget=p.monthlyBudget;' +
+'if(!budget)return null;' +
+'var spent=p.dailySpend?p.dailySpend.amount:0;' +
+'var pct=(spent/budget)*100;' +
+'if(pct<50)return{status:"ok",pct:pct,spent:spent,budget:budget,daysLeft:null};' +
+'var ad=p.avgDailySpend7d;' +
+'var daysLeft=ad&&ad>0?Math.floor((budget-spent)/ad):null;' +
+'if(pct<80)return{status:"warning",pct:pct,spent:spent,budget:budget,daysLeft:daysLeft};' +
+'return{status:"critical",pct:pct,spent:spent,budget:budget,daysLeft:daysLeft}' +
+'}' +
 'function render(data){' +
 'lastData=data;' +
 'verEl.textContent=data.version||"--";' +
@@ -175,6 +191,29 @@ export function buildDashboardHtml(providerDisplayNames?: Record<string, string>
 'spendEl.textContent="$"+(data.spend||0).toFixed(4);' +
 'var provs=data.providers||{};' +
 'var keys=Object.keys(provs);' +
+'// Quota summary in header: only show if any provider is warning or critical' +
+'var okCount=0,warningList=[],criticalList=[];' +
+'for(var qi=0;qi<keys.length;qi++){' +
+'var qp=provs[keys[qi]];' +
+'if(qp.monthlyBudget){' +
+'var qs=getQuotaStatus(qp);' +
+'if(qs.pct<50)okCount++;' +
+'else if(qs.pct<80)warningList.push({k:keys[qi],pct:qs.pct});' +
+'else criticalList.push({k:keys[qi],pct:qs.pct});' +
+'}' +
+'}' +
+'if(warningList.length>0||criticalList.length>0){' +
+'var qsText="Quota: "+okCount+" under limit";' +
+'for(var wi=0;wi<warningList.length;wi++){' +
+'qsText+=", "+esc(PROVIDER_NAMES[warningList[wi].k]||warningList[wi].k)+" "+Math.round(warningList[wi].pct)+"%";' +
+'}' +
+'for(var ci=0;ci<criticalList.length;ci++){' +
+'qsText+=", "+esc(PROVIDER_NAMES[criticalList[ci].k]||criticalList[ci].k)+" "+Math.round(criticalList[ci].pct)+"%";' +
+'}' +
+'quotaEl.textContent=qsText' +
+'}else{' +
+'quotaEl.textContent=""' +
+'}' +
 'if(keys.length===0){' +
 'cardsEl.innerHTML="<div class=\\"loading\\">No provider data yet.</div>"' +
 '}else{' +
@@ -199,6 +238,7 @@ export function buildDashboardHtml(providerDisplayNames?: Record<string, string>
 '+"<div class=\\"card-stat\\"><div class=\\"card-stat-label\\">Avg TPS</div><div class=\\"card-stat-value\\">"+(p.avgTPS||0)+"</div></div>"' +
 '+"<div class=\\"card-stat\\"><div class=\\"card-stat-label\\">Tokens (In/Out)</div><div class=\\"card-stat-value\\">"+(p.inputTokens||0)+" / "+(p.outputTokens||0)+"</div></div>"' +
 '+"<div class=\\"card-stat\\"><div class=\\"card-stat-label\\">Last Request</div><div class=\\"card-stat-value\\">"+timeAgo(p.lastRequest)+"</div></div>"' +
+'+(p.monthlyBudget?function(){var q=getQuotaStatus(p);return"<div class=\\"card-stat\\"><div class=\\"card-stat-label\\">Monthly Quota</div><div class=\\"card-stat-value quota-"+q.status+"\\">$"+q.spent.toFixed(2)+" / $"+q.budget.toFixed(2)+" ("+Math.round(q.pct)+"%)"+(q.daysLeft!==null?" "+q.daysLeft+" days left":"")+"</div></div>"}():"")' +
 '+"</div></div>"' +
 '}cardsEl.innerHTML=html' +
 '}' +
