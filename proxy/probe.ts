@@ -236,46 +236,69 @@ function sendProbe(target: ProbeSlot): Promise<ProbeResult> {
     });
 }
 
+function resolveSlotProvider(config: RoutingConfig, modelName: string, slotValue: string): { providerKey: string; actualModel: string } | null {
+    const slotMatch = slotValue.match(/^(sonnet|opus|haiku|subagent):(\w+):(.+)$/);
+    if (!slotMatch) return null;
+    const providerKey = slotMatch[2];
+    const actualModel = slotMatch[3];
+    if (!config.providers || !config.providers[providerKey]) return null;
+    return { providerKey, actualModel };
+}
+
+function addSlot(config: RoutingConfig, seen: Set<string>, slots: ProbeSlot[], slot: string, providerKey: string, actualModel: string): void {
+    const pairKey = providerKey + ':' + actualModel;
+    if (seen.has(pairKey)) return;
+    seen.add(pairKey);
+
+    const provider = config.providers![providerKey];
+    const rawKey = provider.keyEnv
+        ? (process.env[provider.keyEnv] || provider.key || null)
+        : (provider.key || null);
+    const resolvedKey = resolveKey(rawKey);
+
+    slots.push({
+        slot,
+        providerKey,
+        model: actualModel,
+        url: provider.url,
+        key: resolvedKey,
+        isBearer: provider.auth === 'bearer',
+        format: provider.format || 'anthropic',
+    });
+}
+
 function collectSlots(config: RoutingConfig): ProbeSlot[] {
     const slots: ProbeSlot[] = [];
     const seen = new Set<string>();
+    if (!config.providers) return slots;
 
-    if (!config.routes || !config.providers) return slots;
-
-    for (const [modelName, routeEntry] of Object.entries(config.routes)) {
-        let providerKey: string | null = null;
-        let rewriteModel: string | null = null;
-
-        if (typeof routeEntry === 'string') {
-            providerKey = routeEntry;
-        } else if (routeEntry && typeof routeEntry === 'object') {
-            const entry = routeEntry as { provider?: string; rewrite?: string };
-            providerKey = entry.provider || null;
-            rewriteModel = entry.rewrite || null;
+    const maybeSlots = (config as unknown as { slots?: Record<string, string> }).slots;
+    if (maybeSlots) {
+        for (const [slotName, slotValue] of Object.entries(maybeSlots)) {
+            const resolved = resolveSlotProvider(config, slotName, slotValue);
+            if (resolved) {
+                addSlot(config, seen, slots, slotName, resolved.providerKey, resolved.actualModel);
+            }
         }
+    }
 
-        if (!providerKey || !config.providers[providerKey]) continue;
+    if (config.routes) {
+        for (const [modelName, routeEntry] of Object.entries(config.routes)) {
+            let providerKey: string | null = null;
+            let rewriteModel: string | null = null;
 
-        const provider = config.providers[providerKey];
-        const rawKey = provider.keyEnv
-            ? (process.env[provider.keyEnv] || provider.key || null)
-            : (provider.key || null);
-        const resolvedKey = resolveKey(rawKey);
-        const actualModel = rewriteModel || modelName;
-        const pairKey = providerKey + ':' + actualModel;
+            if (typeof routeEntry === 'string') {
+                providerKey = routeEntry;
+            } else if (routeEntry && typeof routeEntry === 'object') {
+                const entry = routeEntry as { provider?: string; rewrite?: string };
+                providerKey = entry.provider || null;
+                rewriteModel = entry.rewrite || null;
+            }
 
-        if (seen.has(pairKey)) continue;
-        seen.add(pairKey);
-
-        slots.push({
-            slot: modelName,
-            providerKey,
-            model: actualModel,
-            url: provider.url,
-            key: resolvedKey,
-            isBearer: provider.auth === 'bearer',
-            format: provider.format || 'anthropic',
-        });
+            if (!providerKey || !config.providers[providerKey]) continue;
+            const actualModel = rewriteModel || modelName;
+            addSlot(config, seen, slots, modelName, providerKey, actualModel);
+        }
     }
 
     return slots;
