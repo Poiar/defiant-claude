@@ -89,4 +89,85 @@ describe('createSlotLimiter', () => {
         const limiter = createSlotLimiter();
         expect(limiter.status().limit).toBe(DEFAULT_MAX_CONCURRENT);
     });
+
+    test('cancel while waiting rejects the promise', async () => {
+        const limiter = createSlotLimiter(1);
+        const { promise: p1 } = limiter.acquire();
+        const r1 = await p1;
+
+        const { promise: p2, cancel } = limiter.acquire();
+        expect(limiter.status().waiting).toBe(1);
+
+        cancel();
+        await expect(p2).rejects.toThrow('Slot cancelled');
+
+        // Cancelled entry remains in queue until pump() sweeps it
+        expect(limiter.status().waiting).toBe(1);
+        expect(limiter.status().active).toBe(1);
+
+        r1(); // pump() removes the cancelled entry
+        expect(limiter.status().waiting).toBe(0);
+        expect(limiter.status().active).toBe(0);
+    });
+
+    test('cancel is no-op after promise already resolved', async () => {
+        const limiter = createSlotLimiter(5);
+        const { promise, cancel } = limiter.acquire();
+
+        const release = await promise;
+        cancel();
+
+        expect(typeof release).toBe('function');
+        expect(limiter.status().active).toBe(1);
+
+        release();
+        expect(limiter.status().active).toBe(0);
+    });
+
+    test('timeout rejects when slot not available within timeout', async () => {
+        const limiter = createSlotLimiter(1);
+        const { promise: p1 } = limiter.acquire();
+        const r1 = await p1;
+
+        const timeoutMs = 50;
+        const { promise: p2 } = limiter.acquire(timeoutMs);
+
+        await expect(p2).rejects.toThrow('Slot acquire timeout after ' + timeoutMs + 'ms');
+
+        // Timed-out entry remains in queue until pump() sweeps it
+        expect(limiter.status().waiting).toBe(1);
+        expect(limiter.status().active).toBe(1);
+
+        r1(); // pump() removes the timed-out entry
+        expect(limiter.status().waiting).toBe(0);
+        expect(limiter.status().active).toBe(0);
+    });
+
+    test('multiple waiters, cancel middle one, rest get slots', async () => {
+        const limiter = createSlotLimiter(1);
+        const { promise: p1 } = limiter.acquire();
+        const r1 = await p1;
+
+        const waiters = [limiter.acquire(), limiter.acquire(), limiter.acquire()];
+        expect(limiter.status().waiting).toBe(3);
+
+        // Cancel the middle waiter
+        waiters[1].cancel();
+        await expect(waiters[1].promise).rejects.toThrow('Slot cancelled');
+
+        // Release the first slot — first waiter should be woken
+        r1();
+        const r2 = await waiters[0].promise;
+        expect(typeof r2).toBe('function');
+        expect(limiter.status().active).toBe(1);
+
+        // Release the second slot — pump skips cancelled entry, wakes third waiter
+        r2();
+        const r3 = await waiters[2].promise;
+        expect(typeof r3).toBe('function');
+        expect(limiter.status().active).toBe(1);
+
+        r3();
+        expect(limiter.status().active).toBe(0);
+    });
 });
