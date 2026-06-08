@@ -3,6 +3,7 @@
 // Upstream forwarding with stream warmup, protocol translation, and
 // fallback response headers.
 
+import http from 'http';
 import { pipeline, Transform } from 'stream';
 import { buildSafeHeaders } from './util';
 import { translateResponse } from './protocol-translate';
@@ -20,10 +21,10 @@ export const MAX_SSE_BUFFER = 1_048_576; // 1MB
 
 // --- Types ---
 
-interface ForwardHeaders {
+export interface ForwardHeaders {
     [key: string]: string | string[] | undefined;
 }
-interface ForwardResult {
+export interface ForwardResult {
     success: boolean;
     status?: number;
     headers?: ForwardHeaders;
@@ -117,7 +118,7 @@ interface TryForwardOptions {
     method: string;
     headers: Record<string, string | string[] | undefined>;
     timeout: number;
-    agent?: unknown;
+    agent?: http.Agent | boolean;
 }
 export function tryForward(
     transport: { request: (opts: TryForwardOptions, callback: (res: NodeJS.ReadableStream & { statusCode?: number; headers: Record<string, string | string[] | undefined> }) => void) => NodeJS.WritableStream },
@@ -174,6 +175,13 @@ export function tryForward(
                     let rawUsageBuf = '';
                     proxyRes.on('data', (chunk: Buffer | string) => {
                         rawUsageBuf += typeof chunk === 'string' ? chunk : chunk.toString();
+                        if (rawUsageBuf.length > MAX_SSE_BUFFER) {
+                            // Malformed upstream stream (missing SSE delimiters) — discard
+                            // usage buffer to prevent unbounded memory growth, same guard
+                            // as the outStream SSE buffer below.
+                            rawUsageBuf = '';
+                            return;
+                        }
                         const parts = rawUsageBuf.split('\n\n');
                         rawUsageBuf = parts.pop() || '';
                         for (const part of parts) {
