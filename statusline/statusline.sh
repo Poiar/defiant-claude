@@ -72,5 +72,13 @@ const modelGroup = [
 
 const ctxGroup = ctxStr ? bold + ctxColor + ctxStr + reset : '';
 
-console.log([locationGroup, modelGroup, ctxGroup].filter(Boolean).join(wide));
+let spendTotal = null;
+try {
+  const spendDir = process.env.USERPROFILE ? process.env.USERPROFILE + '/.deepclaude' : require('os').homedir() + '/.deepclaude';
+  const spendData = JSON.parse(fs.readFileSync(spendDir + '/spend.json', 'utf8'));
+  if (spendData.total > 0) spendTotal = spendData.total;
+} catch(e) {}
+const spendGroup = spendTotal ? bold + fg(80,200,120) + '$' + Number(spendTotal).toFixed(4) + reset : '';
+
+console.log([locationGroup, modelGroup, ctxGroup, spendGroup].filter(Boolean).join(wide));
 " 2>/dev/null

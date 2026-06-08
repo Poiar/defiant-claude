@@ -43,6 +43,8 @@ export interface ForwardResult {
     error?: string;
     rawBody?: string | null;
     transportError?: boolean;
+    qualityFailure?: boolean;
+    qualityReason?: string;
 }
 interface PeekResult {
     ok: boolean;
@@ -334,7 +336,45 @@ export function tryForward(
                                 }
                             }
                         } catch (_) { /* non-fatal */ }
-                        resolve({ success: true, status: proxyRes.statusCode, headers: outHeaders, body: responseBody, streamUsage });
+                        // Quality checks on non-streaming response
+                        let qualityReason = '';
+                        if (!qualityReason && streamUsage && streamUsage.completion_tokens > 0) {
+                            try {
+                                const reqBody = JSON.parse(forwardedBody);
+                                if (typeof reqBody.max_tokens === 'number') {
+                                    const limit = reqBody.max_tokens * 2;
+                                    if (streamUsage.completion_tokens > limit) {
+                                        qualityReason = 'Completion tokens (' + streamUsage.completion_tokens + ') exceed max_tokens limit (' + reqBody.max_tokens + ')';
+                                    }
+                                }
+                            } catch (_) { /* non-fatal */ }
+                        }
+                        if (!qualityReason) {
+                            const bodyStr = responseBody.toString().trim();
+                            if (bodyStr.length === 0) {
+                                qualityReason = 'Response body is empty';
+                            }
+                        }
+                        if (!qualityReason) {
+                            try {
+                                const parsed = JSON.parse(responseBody.toString());
+                                if (parsed.content && Array.isArray(parsed.content) && parsed.content.length === 0) {
+                                    qualityReason = 'Response contains no content';
+                                }
+                            } catch (_) { /* non-fatal */ }
+                        }
+                        if (!qualityReason) {
+                            try {
+                                JSON.parse(responseBody.toString());
+                            } catch (_) {
+                                qualityReason = 'Response body is not valid JSON';
+                            }
+                        }
+                        if (qualityReason) {
+                            resolve({ success: false, status: proxyRes.statusCode, headers: outHeaders, body: responseBody, streamUsage, error: qualityReason, qualityFailure: true, qualityReason });
+                        } else {
+                            resolve({ success: true, status: proxyRes.statusCode, headers: outHeaders, body: responseBody, streamUsage });
+                        }
                     }
                 });
         }
