@@ -339,7 +339,7 @@ function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends, defaul
             }
 
             const chunks = [];
-            var bodySize = 0;
+            let bodySize = 0;
             clientReq.on('data', c => {
                 bodySize += c.length;
                 if (bodySize > 10000000) {
