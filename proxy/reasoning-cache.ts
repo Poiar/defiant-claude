@@ -25,7 +25,7 @@ interface ToolCall {
     function: { name: string; arguments: string };
 }
 
-interface Message {
+export interface Message {
     role: string;
     content?: string | MessageBlock[];
     tool_calls?: ToolCall[];

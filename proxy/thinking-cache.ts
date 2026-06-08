@@ -22,7 +22,7 @@ interface MessageBlock {
     signature?: string;
 }
 
-interface Message {
+export interface Message {
     role: string;
     content: string | MessageBlock[];
 }

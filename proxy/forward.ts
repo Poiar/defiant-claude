@@ -8,7 +8,9 @@ import { pipeline, Transform } from 'stream';
 import { buildSafeHeaders } from './util';
 import { translateResponse } from './protocol-translate';
 import { extractThinkingBlocks, store } from './thinking-cache';
+import type { Message as ThinkingMessage } from './thinking-cache';
 import { extractReasoningContent, store as storeReasoning } from './reasoning-cache';
+import type { Message as ReasoningMessage } from './reasoning-cache';
 import { describe as describeTransportError } from './transport-errors';
 import { createLogger } from './log';
 import { truncateForLog } from './truncate';
@@ -18,6 +20,11 @@ const log = createLogger('forward');
 // Max buffer size per SSE event before we abort (prevents unbounded memory
 // from a misbehaving upstream).
 export const MAX_SSE_BUFFER = 1_048_576; // 1MB
+
+// Read timeout for upstream SSE streams during the active streaming phase.
+// If no data arrives within this window the stream is destroyed, preventing
+// the proxy from hanging forever on silently-dropped connections.
+export const STREAM_READ_TIMEOUT_MS = 120_000;
 
 // --- Types ---
 
@@ -160,6 +167,26 @@ export function tryForward(
                         (proxy as NodeJS.WritableStream & { destroy(): void }).destroy();
                         return resolve({ success: false, error: 'Stream peek: ' + peek.reason });
                     }
+                    // Read timeout: if no data arrives during the active streaming
+                    // phase the upstream connection is considered dead.  The timer
+                    // resets on each chunk and is cleaned up on end/error.
+                    let streamTimeout: ReturnType<typeof setTimeout> | null = null;
+                    const cancelStreamTimeout = () => {
+                        if (streamTimeout) { clearTimeout(streamTimeout); streamTimeout = null; }
+                    };
+                    const resetStreamTimeout = () => {
+                        cancelStreamTimeout();
+                        streamTimeout = setTimeout(() => {
+                            (proxyRes as unknown as NodeJS.ReadableStream & { destroy(err?: Error): void }).destroy(
+                                new Error('Upstream stream read timeout after ' + STREAM_READ_TIMEOUT_MS / 1000 + 's')
+                            );
+                        }, STREAM_READ_TIMEOUT_MS);
+                    };
+                    resetStreamTimeout();
+                    proxyRes.on('data', resetStreamTimeout);
+                    proxyRes.once('end', cancelStreamTimeout);
+                    proxyRes.once('error', cancelStreamTimeout);
+
                     const outHeaders = sseHeaders(buildSafeHeaders(proxyRes.headers as Record<string, string | string[] | undefined>));
                     if (!outHeaders['content-type']) {
                         outHeaders['content-type'] = (proxyRes.headers['content-type'] as string) || 'text/event-stream';
@@ -260,7 +287,7 @@ export function tryForward(
                                         tool_calls: responseMsg.tool_calls,
                                         reasoning_content: responseMsg.reasoning_content,
                                     }];
-                                    const rc = extractReasoningContent(fullMessages as unknown as never[]);
+                                    const rc = extractReasoningContent(fullMessages as ReasoningMessage[]);
                                     if (rc) storeReasoning(rc.sk, rc.firstToolCallId, rc.reasoningContent);
                                 }
                             } catch (_) { /* non-fatal */ }
@@ -276,7 +303,7 @@ export function tryForward(
                             if (resp.content && Array.isArray(resp.content)) {
                                 const responseMsg = { role: 'assistant', content: resp.content };
                                 const fullMessages = parsed && parsed.messages ? [...(parsed.messages as Array<Record<string, unknown>>), responseMsg] : [responseMsg];
-                                const tc = extractThinkingBlocks(fullMessages as never[]);
+                                const tc = extractThinkingBlocks(fullMessages as ThinkingMessage[]);
                                 if (tc) {
                                     store(tc.sk, tc.firstToolUseId, tc.blocks, undefined, tc.fp);
                                     resp.content = resp.content.filter(
