@@ -81,9 +81,13 @@ export function formatError(status: number, templateVars?: Record<string, string
 }
 // Build the final JSON body for exhausted-fallback responses.
 // In dev mode, includes the original error detail so developers can debug.
-export function formatExhaustedError(lastStatus: number | null | undefined, lastBody: string | null | undefined, isDev?: boolean): ApiError {
+export function formatExhaustedError(lastStatus: number | null | undefined, lastBody: string | null | undefined, isDev?: boolean, qualityReason?: string | null): ApiError {
     const base = formatError(lastStatus || 502, null, isDev);
-    base.message = 'All configured providers failed' + (lastStatus ? ' (last error: ' + lastStatus + ')' : '');
+    if (qualityReason) {
+        base.message = 'All configured providers failed (last error: ' + qualityReason + ')';
+    } else {
+        base.message = 'All configured providers failed' + (lastStatus ? ' (last error: ' + lastStatus + ')' : '');
+    }
     base.error_code = 'E012';
     base.suggestion = 'All configured providers failed. Check your API keys with \'deepclaude --doctor\' and verify your network connection.';
     if (isDev && lastBody) {

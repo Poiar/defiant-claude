@@ -12,7 +12,7 @@ import { parseArgs, loadConfig, checkReload, validateConfig } from './config';
 import { resolveTarget, ResolvedTarget } from './routing';
 import { tryForward, addFallbackHeaders, sseHeaders, type ForwardHeaders, type ForwardResult } from './forward';
 import { convertServerTools, populateToolResults } from './server-tools';
-import { isProviderHealthy, recordStat, recordUsage, getFullHealthSnapshot, nextRequestId } from './stats';
+import { isProviderHealthy, recordSpend, recordStat, recordUsage, getFullHealthSnapshot, nextRequestId } from './stats';
 import { formatError, formatExhaustedError, scrubCredentials, isStreamingClient } from './error-codes';
 import { truncateForLog } from './truncate';
 import { createSlotLimiter } from './concurrency';
@@ -41,6 +41,9 @@ const log = createLogger('proxy');
 
 // Check for --probe flag before normal startup
 const probeIdx = process.argv.indexOf('--probe');
+const dryRunIdx = process.argv.indexOf('--dry-run');
+const whatIfIdx = process.argv.indexOf('--what-if');
+const dryIdx = dryRunIdx >= 0 ? dryRunIdx : whatIfIdx;
 if (probeIdx >= 2) {
     const nextArg = process.argv[probeIdx + 1];
     let routesFile: string | null = null;
@@ -59,6 +62,33 @@ if (probeIdx >= 2) {
     }
     const { runProbe } = require('./probe');
     runProbe(routesFile).catch((err: Error) => { console.error('Probe error:', err.message); process.exit(1); });
+} else if (dryIdx >= 2) {
+    let routesFile: string | null = null;
+    const nextArg = process.argv[dryIdx + 1];
+    if (nextArg && !nextArg.startsWith('-')) {
+        routesFile = nextArg;
+    } else {
+        const routesIdx = process.argv.indexOf('--routes');
+        if (routesIdx >= 2 && process.argv[routesIdx + 1]) {
+            routesFile = process.argv[routesIdx + 1];
+        }
+    }
+    if (!routesFile) {
+        const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+        const defaultPath = homeDir + '/.deepclaude/current-routes.json';
+        try {
+            require('fs').accessSync(defaultPath);
+            routesFile = defaultPath;
+        } catch (_) {
+            console.error('Usage: npx tsx start-proxy.ts --dry-run <routes.json>');
+            console.error('       npx tsx start-proxy.ts --dry-run --routes <routes.json>');
+            console.error('       npx tsx start-proxy.ts --dry-run (uses ~/.deepclaude/current-routes.json)');
+            process.exit(1);
+        }
+    }
+    const { runDryRun } = require('./dry-run');
+    runDryRun(routesFile);
+    process.exit(0);
 } else {
     // --- Normal server startup ---
 
@@ -307,6 +337,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
 
             let lastStatus: number | null = null;
             let lastRawBody: string | null = null;
+            let lastQualityReason: string | null = null;
             let fallbackFromModel: string | null = null;
             const attemptedProviders: Array<{ providerKey: string }> = [];
 
@@ -474,6 +505,8 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                     recordStat(target.providerKey, true, ms);
                     if (result.streamUsage) {
                         recordUsage(target.providerKey, result.streamUsage.prompt_tokens || 0, result.streamUsage.completion_tokens || 0);
+                        const upstreamModel = target.rewriteModel || model;
+                        if (upstreamModel) recordSpend(upstreamModel, result.streamUsage).catch(() => {});
                     }
                     if (sk) recordMomentum(sk, target.providerKey, model || '');
 
@@ -513,6 +546,8 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                             pipeline(result.stream, res, (err: Error | null) => {
                                 if (result.streamUsage) {
                                     recordUsage(target.providerKey, result.streamUsage.prompt_tokens || 0, result.streamUsage.completion_tokens || 0);
+                                    const upstreamModel = target.rewriteModel || model;
+                                    if (upstreamModel) recordSpend(upstreamModel, result.streamUsage).catch(() => {});
                                 }
                                 if (err) log.error(reqId, 'stream error: ' + scrubCredentials(err.message));
                             });
@@ -531,6 +566,13 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                 lastRawBody = result.rawBody || null;
 
                 const label = target.providerKey || 'upstream';
+
+                // Quality failure -- continue to next fallback provider
+                if (result.qualityFailure) {
+                    lastQualityReason = result.qualityReason || null;
+                    log.warn(reqId, req.method + ' ' + (model || '-') + ' -> ' + label + ' quality failure: ' + result.qualityReason + ' ' + ms + 'ms, trying next...');
+                    continue;
+                }
 
                 // Don't continue fallback chain for non-retryable status codes.
                 if (result.status && !FALLBACKABLE_STATUS.has(result.status)) {
@@ -555,20 +597,20 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                     isModelCall;
 
                 if (streamingClient) {
-                    const friendlyEvents = buildFriendlyStreamEvents(lastStatus, model, attemptedProviders);
+                    const friendlyEvents = buildFriendlyStreamEvents(lastStatus, model, attemptedProviders, lastQualityReason);
                     try {
                         res.writeHead(200, sseHeaders({ 'x-fallback-exhausted': 'true' }) as Record<string, string | number>);
                         res.write(friendlyEvents);
                         res.end();
                     } catch (_) { /* socket may already be destroyed */ }
                 } else if (isChatClient) {
-                    const friendlyResp = buildFriendlyResponse(lastStatus, model, attemptedProviders);
+                    const friendlyResp = buildFriendlyResponse(lastStatus, model, attemptedProviders, lastQualityReason);
                     try {
                         res.writeHead(friendlyResp.status, friendlyResp.headers);
                         res.end(friendlyResp.body);
                     } catch (_) { /* socket may already be destroyed */ }
                 } else {
-                    const exhaustedError = formatExhaustedError(lastStatus, lastRawBody, isDev);
+                    const exhaustedError = formatExhaustedError(lastStatus, lastRawBody, isDev, lastQualityReason);
                     const statusCode = (lastStatus && lastStatus >= 400 && lastStatus < 500) ? lastStatus : 502;
                     try {
                         res.writeHead(statusCode, { 'content-type': 'application/json', 'x-fallback-exhausted': 'true' });

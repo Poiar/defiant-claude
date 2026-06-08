@@ -13,13 +13,20 @@ interface FriendlyResponse {
 interface AttemptedProvider {
     providerKey?: string;
 }
-export function buildFriendlyResponse(lastStatus: number | null | undefined, model: string | null | undefined, attemptedProviders: AttemptedProvider[] | null | undefined): FriendlyResponse {
+export function buildFriendlyResponse(lastStatus: number | null | undefined, model: string | null | undefined, attemptedProviders: AttemptedProvider[] | null | undefined, qualityReason?: string | null): FriendlyResponse {
     const triedList = (attemptedProviders || [])
         .map(p => p.providerKey || 'unknown')
         .join(', ') || 'all configured providers';
-    const errorMsg = 'All AI providers are currently unavailable (tried: ' + triedList +
-        '). Last error: HTTP ' + (lastStatus || 'connection failure') +
-        '. Please check provider status or API key configuration.';
+    let errorMsg: string;
+    if (qualityReason) {
+        errorMsg = 'All AI providers are currently unavailable (tried: ' + triedList +
+            '). Last error: ' + qualityReason +
+            '. The proxy will try other providers automatically.';
+    } else {
+        errorMsg = 'All AI providers are currently unavailable (tried: ' + triedList +
+            '). Last error: HTTP ' + (lastStatus || 'connection failure') +
+            '. Please check provider status or API key configuration.';
+    }
 
     const messageId = 'msg_fallback_' + Date.now().toString(36);
     const modelName = model || 'unknown';
@@ -42,12 +49,18 @@ export function buildFriendlyResponse(lastStatus: number | null | undefined, mod
         }),
     };
 }
-export function buildFriendlyStreamEvents(lastStatus: number | null | undefined, model: string | null | undefined, attemptedProviders: AttemptedProvider[] | null | undefined): string {
+export function buildFriendlyStreamEvents(lastStatus: number | null | undefined, model: string | null | undefined, attemptedProviders: AttemptedProvider[] | null | undefined, qualityReason?: string | null): string {
     const triedList = (attemptedProviders || [])
         .map(p => p.providerKey || 'unknown')
         .join(', ');
-    const errorMsg = 'All AI providers are currently unavailable (tried: ' + triedList +
-        '). Last error: HTTP ' + (lastStatus || 'connection failure') + '.';
+    let errorMsg: string;
+    if (qualityReason) {
+        errorMsg = 'All AI providers are currently unavailable (tried: ' + triedList +
+            '). Last error: ' + qualityReason + '.';
+    } else {
+        errorMsg = 'All AI providers are currently unavailable (tried: ' + triedList +
+            '). Last error: HTTP ' + (lastStatus || 'connection failure') + '.';
+    }
 
     const errorEvent = {
         error_code: 'E012',

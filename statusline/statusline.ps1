@@ -46,6 +46,17 @@ if (Test-Path $routesFile) {
   } catch {}
 }
 
+$spendGroup = ''
+$spendFile = "$env:USERPROFILE\.deepclaude\spend.json"
+if (Test-Path $spendFile) {
+  try {
+    $spendData = Get-Content $spendFile -Raw | ConvertFrom-Json
+    if ($spendData.total -and $spendData.total -gt 0) {
+      $spendGroup = "$bold$(fg 80 200 120)`$$($spendData.total.ToString('F4'))$reset"
+    }
+  } catch {}
+}
+
 $maxTokens = $d.context_window.max_input_tokens ?? $ctxMap[$modelLookup]
 $tokStr = if ($tokens) { if ($tokens -ge 1000) { "$([math]::Round($tokens/1000))k" } else { "$tokens" } } else { '' }
 $pct = $null
@@ -79,4 +90,4 @@ $modelGroup = $modelParts -join $narrow
 
 $ctxGroup = if ($ctxStr) { "$bold$ctxColor$ctxStr$reset" } else { '' }
 
-@($locationGroup, $modelGroup, $ctxGroup | Where-Object { $_ }) -join $wide
+@($locationGroup, $modelGroup, $ctxGroup, $spendGroup | Where-Object { $_ }) -join $wide

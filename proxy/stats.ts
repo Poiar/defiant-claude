@@ -1,5 +1,9 @@
 'use strict';
 
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
+
 // Provider stats tracking with non-fatal recording.
 // Every stat write is wrapped so a recording failure never crashes a request.
 
@@ -105,3 +109,49 @@ export function isProviderHealthy(providerKey: string): boolean {
     if (!s || s.requests < 5) return true;
     return (s.fails / s.requests) < 0.34;
 };
+
+// --- Spend tracking ---
+
+const spendFile = path.join(os.homedir(), '.deepclaude', 'spend.json');
+let lastSpendWrite = 0;
+const SPEND_WRITE_THROTTLE_MS = 1000;
+
+let runningTotal = 0;
+let sessionTotal = 0;
+const sessionStarted = new Date().toISOString();
+
+let pricingData: Record<string, { input: number; output: number }> = {};
+try { pricingData = require('./providers.json').pricing || {}; } catch (_) { /* continue without pricing */ }
+
+function lookupPrice(modelName: string): { input: number; output: number } | null {
+  if (pricingData[modelName]) return pricingData[modelName];
+  const stripped = modelName.replace(/^[a-z][a-z0-9_-]*:/, '');
+  if (stripped !== modelName && pricingData[stripped]) return pricingData[stripped];
+  return null;
+}
+
+export async function recordSpend(modelName: string, usage: { prompt_tokens: number; completion_tokens: number }): Promise<void> {
+  const price = lookupPrice(modelName);
+  if (!price) return;
+
+  const cost = (usage.prompt_tokens / 1_000_000) * price.input + (usage.completion_tokens / 1_000_000) * price.output;
+  runningTotal += cost;
+  sessionTotal += cost;
+
+  const now = Date.now();
+  if (now - lastSpendWrite < SPEND_WRITE_THROTTLE_MS) return;
+  lastSpendWrite = now;
+
+  try {
+    const spendDir = path.dirname(spendFile);
+    if (!fs.existsSync(spendDir)) {
+      fs.mkdirSync(spendDir, { recursive: true });
+    }
+    const data = {
+      total: parseFloat(runningTotal.toFixed(4)),
+      sessions: [{ started: sessionStarted, total: parseFloat(sessionTotal.toFixed(4)) }],
+      current_model: modelName,
+    };
+    fs.writeFileSync(spendFile, JSON.stringify(data) + '\n');
+  } catch (_) { /* non-fatal */ }
+}
