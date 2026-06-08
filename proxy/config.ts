@@ -7,7 +7,7 @@ import fs from 'fs';
 import { createLogger } from './log';
 import { validateUrl } from './ssrf';
 import { decrypt } from './crypto';
-import type { ProviderEntry, RoutingConfig } from './routing';
+import type { RoutingConfig } from './routing';
 
 const log = createLogger('config');
 
@@ -139,7 +139,7 @@ export function checkReload(state: ConfigState, parsed: ParsedArgs): boolean {
 // --- Validate routing config ---
 // Checks for common misconfigurations at startup.
 
-export function validateConfig(state: ConfigState, _parsed: ParsedArgs): string[] {
+export function validateConfig(state: ConfigState): string[] {
     const warnings: string[] = [];
 
     if (state.routing) {

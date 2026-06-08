@@ -13,7 +13,7 @@ interface FriendlyResponse {
 interface AttemptedProvider {
     providerKey?: string;
 }
-export function buildFriendlyResponse(lastStatus: number | null | undefined, _lastRawBody: string | null | undefined, model: string | null | undefined, attemptedProviders: AttemptedProvider[] | null | undefined): FriendlyResponse {
+export function buildFriendlyResponse(lastStatus: number | null | undefined, model: string | null | undefined, attemptedProviders: AttemptedProvider[] | null | undefined): FriendlyResponse {
     const triedList = (attemptedProviders || [])
         .map(p => p.providerKey || 'unknown')
         .join(', ') || 'all configured providers';
@@ -42,7 +42,7 @@ export function buildFriendlyResponse(lastStatus: number | null | undefined, _la
         }),
     };
 }
-export function buildFriendlyStreamEvents(lastStatus: number | null | undefined, _lastRawBody: string | null | undefined, model: string | null | undefined, attemptedProviders: AttemptedProvider[] | null | undefined): string {
+export function buildFriendlyStreamEvents(lastStatus: number | null | undefined, model: string | null | undefined, attemptedProviders: AttemptedProvider[] | null | undefined): string {
     const triedList = (attemptedProviders || [])
         .map(p => p.providerKey || 'unknown')
         .join(', ');

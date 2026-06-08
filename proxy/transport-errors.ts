@@ -26,6 +26,9 @@ const FAILURE_SIGNATURES: FailureSignature[] = [
     // Timeouts
     [/ETIMEDOUT|timed?[\s_-]?out/i, 'Upstream connection timed out', 504],
 
+    // Stream stalled (connection established, but no data received)
+    [/stream read timeout/i, 'Upstream stream stalled (no data received)', 502],
+
     // Aborts (client disconnect or intentional cancel)
     [/AbortError|aborted|cancelled/i, 'Request aborted', 499],
 

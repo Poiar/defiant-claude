@@ -1,7 +1,7 @@
 'use strict';
 
-import crypto from 'crypto';
 import { LruCache } from './lru-cache';
+import { sessionKey } from './session-key';
 
 // 30-minute TTL, bounded to 1000 entries
 const TTL_MS = 30 * 60 * 1000;
@@ -48,26 +48,7 @@ interface ReinjectResult {
     messages: Message[];
 }
 
-// Session key -- same algorithm as momentum.js
-export function sessionKey(reqBody: ReqBody | null | undefined): string | null {
-    if (!reqBody || !reqBody.messages) return null;
-    const firstUserMsg = reqBody.messages.find(m => m.role === 'user');
-    if (!firstUserMsg) return null;
-    const content = typeof firstUserMsg.content === 'string'
-        ? firstUserMsg.content
-        : Array.isArray(firstUserMsg.content)
-            ? (firstUserMsg.content as MessageBlock[]).map(b => b.text || '').join('')
-            : '';
-    const systemHint = reqBody.system
-        ? (typeof reqBody.system === 'string'
-            ? reqBody.system
-            : Array.isArray(reqBody.system)
-                ? (reqBody.system as Array<{ type: string; text?: string }>).map(b => b.text || '').join('')
-                : ''
-          ).slice(0, 100)
-        : '';
-    return crypto.createHash('sha256').update(content + '|' + systemHint).digest('hex').slice(0, 32);
-}
+export { sessionKey } from './session-key';
 
 // Find the LAST assistant message that has both tool_calls and reasoning_content.
 // Returns { sk, firstToolCallId, reasoningContent } or null.

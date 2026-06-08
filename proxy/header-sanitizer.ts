@@ -9,12 +9,12 @@ export const MAX_HEADERS = 50;
 export const MAX_VALUE_LEN = 1024;
 export const MAX_TOTAL_BYTES = 8192;
 
-export const SENSITIVE_HEADERS: ReadonlySet<string> = new Set([
+export const SENSITIVE_HEADERS = new Set([
     'authorization', 'x-api-key', 'cookie', 'set-cookie',
     'proxy-authorization', 'proxy-authenticate',
 ]);
 
-export const NOISE_HEADERS: ReadonlySet<string> = new Set([
+export const NOISE_HEADERS = new Set([
     'host', 'connection', 'x-forwarded-for', 'x-forwarded-proto',
     'x-forwarded-host', 'x-forwarded-port', 'x-real-ip',
     'transfer-encoding', 'te', 'trailer', 'upgrade',

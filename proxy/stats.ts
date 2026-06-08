@@ -12,7 +12,7 @@ interface ProviderStat {
     inputTokens: number;
     outputTokens: number;
 }
-export const providerStats: Record<string, ProviderStat> = {};
+const providerStats: Record<string, ProviderStat> = {};
 export const startTime: number = Date.now();
 
 // Read version from package.json at the project root, fallback to hardcoded value.
@@ -74,7 +74,7 @@ export function getHealthSnapshot(): { status: string; uptime: number; providers
     }
     return { status: 'ok', uptime: Date.now() - startTime, providers: healthStats };
 }
-// Build health endpoint response with concurrency, rate limiter, and version.
+// Build health endpoint response with concurrency, rate limiter, version, and process memory.
 export function getFullHealthSnapshot(concurrencyStatus: unknown, rateLimiterStatus: unknown): Record<string, unknown> {
     const base: Record<string, unknown> = getHealthSnapshot();
     base.version = packageVersion;
@@ -84,13 +84,24 @@ export function getFullHealthSnapshot(concurrencyStatus: unknown, rateLimiterSta
     if (rateLimiterStatus) {
         base.rateLimiter = rateLimiterStatus;
     }
+    try {
+        const mem = process.memoryUsage();
+        base.memory = {
+            heapUsed: Math.round((mem.heapUsed / 1024 / 1024) * 100) / 100,
+            heapTotal: Math.round((mem.heapTotal / 1024 / 1024) * 100) / 100,
+            rss: Math.round((mem.rss / 1024 / 1024) * 100) / 100,
+            external: Math.round((mem.external / 1024 / 1024) * 100) / 100,
+        };
+    } catch (_) {
+        // Non-fatal -- memory stats should never crash a health check.
+    }
     return base;
 }
 // Check whether a provider is healthy.
-// Requires at least 2 requests before judging. A provider is unhealthy
+// Requires at least 5 requests before judging. A provider is unhealthy
 // if more than a third of its requests have failed.
 export function isProviderHealthy(providerKey: string): boolean {
     const s = providerStats[providerKey];
-    if (!s || s.requests < 2) return true;
+    if (!s || s.requests < 5) return true;
     return (s.fails / s.requests) < 0.34;
 };
