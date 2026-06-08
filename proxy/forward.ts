@@ -17,6 +17,8 @@ import { truncateForLog } from './truncate';
 
 const log = createLogger('forward');
 
+const upstreamAgent = new http.Agent({ keepAlive: true, keepAliveMsecs: 30000, maxSockets: 25 });
+
 // Max buffer size per SSE event before we abort (prevents unbounded memory
 // from a misbehaving upstream).
 export const MAX_SSE_BUFFER = 1_048_576; // 1MB
@@ -139,7 +141,7 @@ export function tryForward(
 ): Promise<ForwardResult> {
     return new Promise((resolve) => {
         let streamUsage: { prompt_tokens: number; completion_tokens: number } | null = null;
-        const proxy = transport.request(options, (proxyRes: NodeJS.ReadableStream & { statusCode?: number; headers: Record<string, string | string[] | undefined> }) => {
+        const proxy = transport.request({ ...options, agent: options.agent ?? upstreamAgent }, (proxyRes: NodeJS.ReadableStream & { statusCode?: number; headers: Record<string, string | string[] | undefined> }) => {
             if (proxyRes.statusCode && proxyRes.statusCode >= 400) {
                 const errChunks: Buffer[] = [];
                 let errSize = 0;

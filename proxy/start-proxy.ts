@@ -39,9 +39,32 @@ const FALLBACKABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
 
 const log = createLogger('proxy');
 
-const keepAliveAgent = new https.Agent({ keepAlive: true, maxSockets: 50, keepAliveMsecs: 30000 });
-const parsed = parseArgs(process.argv);
-const state = loadConfig(parsed);
+// Check for --probe flag before normal startup
+const probeIdx = process.argv.indexOf('--probe');
+if (probeIdx >= 2) {
+    const nextArg = process.argv[probeIdx + 1];
+    let routesFile: string | null = null;
+    if (nextArg && !nextArg.startsWith('-')) {
+        routesFile = nextArg;
+    } else {
+        const routesIdx = process.argv.indexOf('--routes');
+        if (routesIdx >= 2 && process.argv[routesIdx + 1]) {
+            routesFile = process.argv[routesIdx + 1];
+        }
+    }
+    if (!routesFile) {
+        console.error('Usage: npx tsx start-proxy.ts --probe <routes.json>');
+        console.error('       npx tsx start-proxy.ts --probe --routes <routes.json>');
+        process.exit(1);
+    }
+    const { runProbe } = require('./probe');
+    runProbe(routesFile).catch((err: Error) => { console.error('Probe error:', err.message); process.exit(1); });
+} else {
+    // --- Normal server startup ---
+
+    const keepAliveAgent = new https.Agent({ keepAlive: true, maxSockets: 50, keepAliveMsecs: 30000 });
+    const parsed = parseArgs(process.argv);
+    const state = loadConfig(parsed);
 
 // Validate at startup (warn but don't block)
 const configWarnings = validateConfig(state);
@@ -610,3 +633,4 @@ process.on('uncaughtException', (err: Error) => {
         setTimeout(() => process.exit(1), 10000);
     } else process.exit(1);
 });
+}
