@@ -56,7 +56,7 @@ interface ForwardResult {
     status?: number;
     headers?: ForwardHeaders;
     body?: Buffer;
-    stream?: Transform;
+    stream?: NodeJS.ReadableStream;
     streamUsage?: { prompt_tokens: number; completion_tokens: number } | null;
     error?: string;
     rawBody?: string | null;
@@ -512,7 +512,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                             });
                             // Propagate client disconnect to upstream
                             res.on('close', () => {
-                                if (result.stream && !(result.stream as unknown as { destroyed: boolean }).destroyed) (result.stream as unknown as { destroy(): void }).destroy();
+                                if (result.stream && !(result.stream as NodeJS.ReadableStream & { destroyed: boolean }).destroyed) (result.stream as NodeJS.ReadableStream & { destroy(): void }).destroy();
                             });
                         }
                     }

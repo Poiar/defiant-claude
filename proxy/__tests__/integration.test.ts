@@ -6,6 +6,8 @@ import path from 'path';
 import os from 'os';
 import { spawn, ChildProcess } from 'child_process';
 
+const npxCmd = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+
 let proxyProcess: ChildProcess;
 let proxyPort: number;
 let routesFile: string;
@@ -55,7 +57,7 @@ beforeAll(async () => {
     }));
     fs.writeFileSync(overridesFile, JSON.stringify({}));
 
-    proxyProcess = spawn('npx', [
+    proxyProcess = spawn(npxCmd, [
         'tsx',
         'proxy/start-proxy.ts',
         '--routes', routesFile,
@@ -63,11 +65,12 @@ beforeAll(async () => {
     ], {
         cwd: path.resolve(__dirname, '../..'),
         stdio: ['ignore', 'pipe', 'pipe'],
+        ...(process.platform === 'win32' ? { shell: true } : {}),
     });
 
     const portStr = await new Promise<string>((resolve, reject) => {
         let out = '';
-        const timer = setTimeout(() => reject(new Error('Proxy did not start within 10s')), 10000);
+        const timer = setTimeout(() => reject(new Error('Proxy did not start within 25s')), 25000);
         proxyProcess.stdout!.on('data', (chunk: Buffer) => {
             out += chunk.toString();
             const m = out.match(/PORT:(\d+)/);
