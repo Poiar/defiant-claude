@@ -1401,7 +1401,7 @@ if ($Remote) {
     $env:CLAUDE_CONTEXT_COMPRESSION = 'true'
     $env:ANTHROPIC_MODEL = $resolved.slots['opus'].model -replace '\[1m\]', ''
 
-    if ($env:DEEPCLAUDE_WATCHDOG -eq 'true' -and $proxyInfo.Process) {
+    if ($env:DEEPCLAUDE_WATCHDOG -ne 'false' -and $proxyInfo.Process) {
         $watchdog = Start-Job -Name "DeepClaudeWatchdog" -ScriptBlock {
             param($Pid, $Port)
             for ($attempt = 1; $attempt -le 2; $attempt++) {
@@ -1513,7 +1513,7 @@ if ($opusCtx) {
 }
 Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
 
-if ($env:DEEPCLAUDE_WATCHDOG -eq 'true' -and $proxyInfo.Process) {
+if ($env:DEEPCLAUDE_WATCHDOG -ne 'false' -and $proxyInfo.Process) {
     $watchdog = Start-Job -Name "DeepClaudeWatchdog" -ScriptBlock {
         param($Pid, $Port)
         for ($attempt = 1; $attempt -le 2; $attempt++) {
