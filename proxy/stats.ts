@@ -115,8 +115,12 @@ const providerStats: Record<string, ProviderStat> = {};
 export const startTime: number = Date.now();
 
 // Read version from package.json at the project root, fallback to hardcoded value.
-let packageVersion: string = '3.1.3';
+let packageVersion: string = '1.0.0';
 try { packageVersion = require('../package.json').version; } catch (_) { /* use fallback version */ }
+
+// Git hash is set once at startup by start-proxy.ts. Default to 'unknown' when unavailable.
+let gitHash: string = 'unknown';
+export function setGitHash(hash: string): void { gitHash = hash; }
 
 let requestIdCounter: number = 0;
 export function nextRequestId(): number {
@@ -180,7 +184,7 @@ export function getHealthSnapshot(): { status: string; uptime: number; providers
 // circuit breaker state, spend totals, and recent requests.
 export function getFullHealthSnapshot(concurrencyStatus: unknown, rateLimiterStatus: unknown): Record<string, unknown> {
     const base: Record<string, unknown> = getHealthSnapshot();
-    base.version = packageVersion;
+    base.version = packageVersion + ' (' + gitHash + ')';
     if (concurrencyStatus) {
         base.concurrency = concurrencyStatus;
     }

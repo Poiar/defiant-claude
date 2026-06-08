@@ -142,6 +142,24 @@
       "streamUsageReporting": "openai_stream_options"
     }
   },
+  "aliases": {
+    "sonnet": "claude-sonnet-4-6",
+    "opus": "claude-opus-4-7",
+    "haiku": "claude-haiku-4-5-20251001",
+    "v4": "deepseek-v4-pro",
+    "v4-pro": "deepseek-v4-pro",
+    "v4-flash": "deepseek-v4-flash",
+    "flash": "deepseek-v4-flash",
+    "owl": "openrouter/owl-alpha",
+    "big-pickle": "big-pickle",
+    "kimi": "kimi-k2.6",
+    "mimo": "mimo-v2.5-pro",
+    "groq": "groq/llama-4-maverick",
+    "mistral": "mistral/mistral-large",
+    "minimax": "minimax/minimax-m1",
+    "glm": "zai/glm-4.5",
+    "doubao": "byteplus/doubao-1.5-pro"
+  },
   "contextLimits": {
     "deepseek-v4-pro": 1048576,
     "deepseek-v4-flash": 1048576,

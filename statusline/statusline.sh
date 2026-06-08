@@ -5,7 +5,27 @@ branch=$(git -C "$cwd" --no-optional-locks rev-parse --abbrev-ref HEAD 2>/dev/nu
 
 DEEPCLAUDE_DIR="${HOME}/.deepclaude"
 [[ -n "${USERPROFILE:-}" ]] && DEEPCLAUDE_DIR="${USERPROFILE}/.deepclaude"
-echo "$input" | OVERRIDES_FILE="$DEEPCLAUDE_DIR/slot-overrides.json" ROUTES_FILE="$DEEPCLAUDE_DIR/current-routes.json" GIT_BRANCH="$branch" node -e "
+
+# Circuit breaker health indicator
+CB_STATE=""
+PROXY_FILE="$DEEPCLAUDE_DIR/proxy.json"
+if [[ -f "$PROXY_FILE" ]]; then
+  PROXY_PORT=$(node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8'));process.stdout.write(String(d.port||''))" < "$PROXY_FILE" 2>/dev/null)
+  if [[ -n "$PROXY_PORT" ]] && command -v curl &>/dev/null; then
+    CB_STATE=$(curl -s --max-time 1 "http://127.0.0.1:$PROXY_PORT/health" 2>/dev/null | node -e "
+      const d = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+      let ws = 'CLOSED', hd = false;
+      for (const v of Object.values(d.providers || {})) {
+        if (v.requests > 0) hd = true;
+        if (v.circuitBreaker === 'OPEN') { ws = 'OPEN'; break; }
+        if (v.circuitBreaker === 'HALF_OPEN' && ws !== 'OPEN') ws = 'HALF_OPEN';
+      }
+      process.stdout.write(hd ? ws : '');
+    " 2>/dev/null)
+  fi
+fi
+
+echo "$input" | CB_STATE="$CB_STATE" OVERRIDES_FILE="$DEEPCLAUDE_DIR/slot-overrides.json" ROUTES_FILE="$DEEPCLAUDE_DIR/current-routes.json" GIT_BRANCH="$branch" node -e "
 const path = require('path');
 const fs   = require('fs');
 const d    = JSON.parse(require('fs').readFileSync(0, 'utf8'));
@@ -60,6 +80,15 @@ const ctxColor    = (pct != null && pct >= 80) ? fg(255,80,80) : (pct != null &&
 const narrow = '  ';
 const wide   = '     ';
 
+// Circuit breaker indicator
+const cbIndicator = (() => {
+  const s = process.env.CB_STATE;
+  if (s === 'OPEN') return bold + fg(255,80,80) + '✕' + reset;
+  if (s === 'HALF_OPEN') return bold + fg(255,180,50) + '◐' + reset;
+  if (s === 'CLOSED') return bold + fg(80,200,120) + '·' + reset;
+  return '';
+})();
+
 const locationGroup = [
   dir    ? bold + fg(100,180,255) + dir    + reset : '',
   branch ? bold + fg(255,80,180)  + branch + reset : '',
@@ -68,6 +97,7 @@ const locationGroup = [
 const modelGroup = [
   (slotLabel || model) ? bold + fg(200,100,255) + slotLabel + modelKey + reset : '',
   effort ? bold + effortColor + effort + reset : '',
+  cbIndicator,
 ].filter(Boolean).join(narrow);
 
 const ctxGroup = ctxStr ? bold + ctxColor + ctxStr + reset : '';

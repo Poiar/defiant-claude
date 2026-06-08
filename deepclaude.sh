@@ -14,6 +14,7 @@
 #   deepclaude -b ds+or         # DeepSeek main + OpenRouter subs
 #   deepclaude -b anthropic     # Normal Claude Code
 #
+# Model aliases: sonnet, opus, haiku, v4, flash (short names resolve to full model IDs)
 # Ad-hoc positional: providerKey:modelId for opus sonnet haiku subagent
 #   deepclaude ds:deepseek-v4-pro                                              # 1 spec -> all slots
 #   deepclaude ds:deepseek-v4-pro oc:big-pickle                                # 2 specs -> first half / second half
@@ -577,6 +578,7 @@ show_help() {
     echo "       deepclaude [-b backend] [--status] [--doctor] [--version]"
     echo ""
     echo "  Each positional arg is providerKey:modelId, mapping to opus/sonnet/haiku/subagent."
+    echo "  Model aliases: sonnet, opus, haiku, v4, flash, ... (short names resolve to full model IDs)"
     echo "  Fewer than 4 specs repeats the last one for remaining slots."
     echo ""
     echo "  Examples:"
@@ -626,7 +628,26 @@ show_version() {
     if [[ -f "$0" ]]; then
         mtime=$(date -r "$0" "+%Y-%m-%d %H:%M" 2>/dev/null || stat -c '%y' "$0" 2>/dev/null | cut -d. -f1 || echo "unknown")
     fi
-    echo "deepclaude v1.0.0 ($mtime)"
+
+    # Read version from package.json, fallback to hardcoded default.
+    local version="v1.0.0"
+    if [[ -f "${SCRIPT_DIR}/package.json" ]]; then
+        local pkg_ver
+        pkg_ver=$(grep -o '"version"[[:space:]]*:[[:space:]]*"[^"]*"' "${SCRIPT_DIR}/package.json" | cut -d'"' -f4 2>/dev/null)
+        if [[ -n "$pkg_ver" ]]; then
+            version="v${pkg_ver}"
+        fi
+    fi
+
+    # Get short git hash from the repo directory.
+    local git_hash="unknown"
+    local hash
+    hash=$(git -C "$SCRIPT_DIR" rev-parse --short HEAD 2>/dev/null)
+    if [[ -n "$hash" ]]; then
+        git_hash="$hash"
+    fi
+
+    echo "deepclaude $version ($git_hash) ($mtime)"
     echo "Proxy: ${SCRIPT_DIR}/proxy/start-proxy.js"
 }
 

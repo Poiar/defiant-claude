@@ -137,7 +137,7 @@ deepclaude ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free  # 3 specs 
 --dry-run [FILE] Show resolved routing table without starting the proxy
 --dashboard     Print health dashboard URL (http://127.0.0.1:PORT/dashboard)
 --open          Open dashboard in browser (use with --dashboard)
---version       Print version and proxy path
+--version       Print version with git hash and proxy path
 --lint          Self-lint (PSScriptAnalyzer on .ps1, shellcheck on .sh)
 --effort LEVEL        Set Claude Code effort level (default: max)
 --fix-av              Print Windows Defender exclusion commands
