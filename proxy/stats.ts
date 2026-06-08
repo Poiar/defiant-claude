@@ -7,6 +7,101 @@ import os from 'os';
 // Provider stats tracking with non-fatal recording.
 // Every stat write is wrapped so a recording failure never crashes a request.
 
+// Circuit breaker state machine with auto-probe support.
+// When a provider's failure rate exceeds the threshold, the breaker opens.
+// After a cooldown, the breaker transitions to HALF_OPEN and sends a probe
+// request. If the probe succeeds, the breaker closes; if it fails, the
+// cooldown doubles and the cycle repeats up to MAX_PROBES attempts.
+
+const DEFAULT_COOLDOWN_MS = 60_000;
+const MAX_COOLDOWN_MS = 300_000;
+const MAX_PROBES = 5;
+
+type BreakerState = 'CLOSED' | 'OPEN' | 'HALF_OPEN';
+
+interface CircuitBreakerEntry {
+    state: BreakerState;
+    openedAt: number;
+    cooldownMs: number;
+    probeCount: number;
+    consecutiveProbeFailures: number;
+}
+
+interface ProviderInfo {
+    url: string;
+    key: string | null | undefined;
+    isBearer: boolean;
+    format: string;
+    model: string;
+}
+
+const circuitBreakers: Record<string, CircuitBreakerEntry> = {};
+const providersInfo: Record<string, ProviderInfo> = {};
+
+export function openCircuitBreaker(providerKey: string): void {
+    const existing = circuitBreakers[providerKey];
+    if (existing && existing.state !== 'CLOSED') return;
+    circuitBreakers[providerKey] = {
+        state: 'OPEN',
+        openedAt: Date.now(),
+        cooldownMs: DEFAULT_COOLDOWN_MS,
+        probeCount: 0,
+        consecutiveProbeFailures: 0,
+    };
+}
+
+export function maybeStartProbe(providerKey: string): { url: string; key: string | null | undefined; isBearer: boolean; format: string; model: string } | null {
+    const entry = circuitBreakers[providerKey];
+    if (!entry || entry.state !== 'OPEN') return null;
+    if (entry.probeCount >= MAX_PROBES) return null;
+    if (Date.now() - entry.openedAt < entry.cooldownMs) return null;
+    entry.state = 'HALF_OPEN';
+    entry.probeCount++;
+    const info = providersInfo[providerKey];
+    if (!info) return null;
+    return { url: info.url, key: info.key, isBearer: info.isBearer, format: info.format, model: info.model };
+}
+
+export function recordProbeResult(providerKey: string, success: boolean): void {
+    const entry = circuitBreakers[providerKey];
+    if (!entry || entry.state !== 'HALF_OPEN') return;
+    if (success) {
+        entry.state = 'CLOSED';
+        entry.cooldownMs = DEFAULT_COOLDOWN_MS;
+        entry.probeCount = 0;
+        entry.consecutiveProbeFailures = 0;
+        entry.openedAt = 0;
+        delete circuitBreakers[providerKey];
+    } else {
+        entry.state = 'OPEN';
+        entry.openedAt = Date.now();
+        entry.cooldownMs = Math.min(entry.cooldownMs * 2, MAX_COOLDOWN_MS);
+        entry.consecutiveProbeFailures++;
+    }
+}
+
+export function getBreakerState(providerKey: string): BreakerState {
+    const entry = circuitBreakers[providerKey];
+    if (entry) return entry.state;
+    return 'CLOSED';
+}
+
+export function getBreakerEntry(providerKey: string): CircuitBreakerEntry | undefined {
+    return circuitBreakers[providerKey];
+}
+
+export function registerProviderInfo(providerKey: string, info: ProviderInfo): void {
+    providersInfo[providerKey] = info;
+}
+
+export function getProviderInfo(providerKey: string): ProviderInfo | undefined {
+    return providersInfo[providerKey];
+}
+
+export function getRegisteredProviderKeys(): string[] {
+    return Object.keys(providersInfo);
+}
+
 interface ProviderStat {
     requests: number;
     successes: number;
@@ -40,6 +135,9 @@ export function recordStat(providerKey: string | null | undefined, success: bool
         s.totalMs += ms;
         s.lastRequest = Date.now();
         if (success) s.successes++; else s.fails++;
+        if (!success && s.requests >= 5 && (s.fails / s.requests) >= 0.34) {
+            openCircuitBreaker(providerKey);
+        }
     } catch (_) {
         // Non-fatal -- recording should never crash the request.
     }
@@ -115,15 +213,24 @@ export function getFullHealthSnapshot(concurrencyStatus: unknown, rateLimiterSta
 }
 // Check whether a provider is healthy.
 // Requires at least 5 requests before judging. A provider is unhealthy
-// if more than a third of its requests have failed.
+// if more than a third of its requests have failed or the circuit breaker
+// is OPEN. HALF_OPEN is treated as healthy (probe traffic is the test).
 export function isProviderHealthy(providerKey: string): boolean {
+    const entry = circuitBreakers[providerKey];
+    if (entry) {
+        if (entry.state === 'OPEN') return false;
+        if (entry.state === 'HALF_OPEN') return true;
+    }
     const s = providerStats[providerKey];
     if (!s || s.requests < 5) return true;
     return (s.fails / s.requests) < 0.34;
 };
 
-// Derive circuit breaker state from recorded stats.
+// Derive circuit breaker state from recorded stats or active breaker entry.
+// Returns CLOSED, OPEN, or HALF_OPEN.
 export function getCircuitBreakerState(providerKey: string): string {
+    const entry = circuitBreakers[providerKey];
+    if (entry) return entry.state;
     const s = providerStats[providerKey];
     if (!s || s.requests < 5) return 'CLOSED';
     return (s.fails / s.requests) >= 0.34 ? 'OPEN' : 'CLOSED';
@@ -158,12 +265,18 @@ export function recordRecentRequest(entry: RecentRequestEntry): void {
 
 // --- Spend tracking ---
 
-const spendFile = path.join(os.homedir(), '.deepclaude', 'spend.json');
+let spendFile = path.join(os.homedir(), '.deepclaude', 'spend.json');
 let lastSpendWrite = 0;
 const SPEND_WRITE_THROTTLE_MS = 1000;
 
 let runningTotal = 0;
 let sessionTotal = 0;
+let dailyAccumulator = 0;
+let sessionCap = 0;
+let sessionDailyBudget = 0;
+let lastDailyRead = 0;
+let cachedDailySpend = 0;
+const BUDGET_CHECK_THROTTLE_MS = 1000;
 const sessionStarted = new Date().toISOString();
 
 let pricingData: Record<string, { input: number; output: number }> = {};
@@ -183,6 +296,7 @@ export async function recordSpend(modelName: string, usage: { prompt_tokens: num
   const cost = (usage.prompt_tokens / 1_000_000) * price.input + (usage.completion_tokens / 1_000_000) * price.output;
   runningTotal += cost;
   sessionTotal += cost;
+  dailyAccumulator += cost;
 
   const now = Date.now();
   if (now - lastSpendWrite < SPEND_WRITE_THROTTLE_MS) return;
@@ -193,11 +307,92 @@ export async function recordSpend(modelName: string, usage: { prompt_tokens: num
     if (!fs.existsSync(spendDir)) {
       fs.mkdirSync(spendDir, { recursive: true });
     }
+    const existing: Record<string, unknown> = {};
+    if (fs.existsSync(spendFile)) {
+      try {
+        const raw = fs.readFileSync(spendFile, 'utf-8');
+        const parsed = JSON.parse(raw);
+        if (parsed.total !== undefined) existing.total = parsed.total;
+        if (parsed.sessions) existing.sessions = parsed.sessions;
+        if (parsed.current_model) existing.current_model = parsed.current_model;
+        if (parsed.daily) existing.daily = parsed.daily;
+      } catch (_) { /* ignore corrupt file */ }
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    const daily: Record<string, number> = (existing.daily as Record<string, number>) || {};
+    daily[today] = (daily[today] || 0) + dailyAccumulator;
+    dailyAccumulator = 0;
     const data = {
       total: parseFloat(runningTotal.toFixed(4)),
+      daily,
       sessions: [{ started: sessionStarted, total: parseFloat(sessionTotal.toFixed(4)) }],
       current_model: modelName,
     };
     fs.writeFileSync(spendFile, JSON.stringify(data) + '\n');
   } catch (_) { /* non-fatal */ }
+}
+
+// --- Spend budget caps ---
+
+export function setSessionCap(dollars: number): void {
+  sessionCap = dollars;
+}
+
+export function setDailyBudget(dollars: number): void {
+  sessionDailyBudget = dollars;
+}
+
+export function getDailySpend(): number {
+  const now = Date.now();
+  if (now - lastDailyRead < BUDGET_CHECK_THROTTLE_MS) {
+    return cachedDailySpend;
+  }
+  lastDailyRead = now;
+  try {
+    if (!fs.existsSync(spendFile)) {
+      cachedDailySpend = 0;
+      return 0;
+    }
+    const raw = fs.readFileSync(spendFile, 'utf-8');
+    const data = JSON.parse(raw);
+    const today = new Date().toISOString().slice(0, 10);
+    const daily = data.daily as Record<string, number> | undefined;
+    cachedDailySpend = (daily?.[today] ?? 0) + dailyAccumulator;
+    return cachedDailySpend;
+  } catch (_) {
+    cachedDailySpend = 0;
+    return 0;
+  }
+}
+
+export function checkBudget(): string | null {
+  if (sessionCap > 0 && sessionTotal >= sessionCap) {
+    return 'Session cap of $' + sessionCap.toFixed(2) + ' exceeded ($' + sessionTotal.toFixed(2) + ' spent this session)';
+  }
+  if (sessionDailyBudget > 0) {
+    const dailySpend = getDailySpend();
+    if (dailySpend >= sessionDailyBudget) {
+      return 'Daily budget of $' + sessionDailyBudget.toFixed(2) + ' exceeded ($' + dailySpend.toFixed(2) + ' spent today)';
+    }
+  }
+  return null;
+}
+
+// Testing support
+export function setSpendFilePath(p: string): void {
+  spendFile = p;
+}
+
+export function _resetBudgetState(): void {
+  sessionCap = 0;
+  sessionDailyBudget = 0;
+  sessionTotal = 0;
+  runningTotal = 0;
+  dailyAccumulator = 0;
+  lastDailyRead = 0;
+  cachedDailySpend = 0;
+}
+
+export function _setSessionTotal(val: number): void {
+  sessionTotal = val;
 }

@@ -13,8 +13,10 @@ import { resolveTarget, ResolvedTarget } from './routing';
 import { classifyRequest, resolvePromptRoute } from './prompt-router';
 import { bodyHash, shouldUseCanary, recordCanaryResult, getOrCreateEntry, type CanaryEntry, type CanaryConfig } from './canary';
 import { tryForward, addFallbackHeaders, sseHeaders, type ForwardHeaders, type ForwardResult } from './forward';
+import { sendProbe } from './probe';
+import type { ProbeSlot } from './probe';
 import { convertServerTools, populateToolResults } from './server-tools';
-import { isProviderHealthy, recordSpend, recordStat, recordUsage, recordRecentRequest, getFullHealthSnapshot, nextRequestId } from './stats';
+import { isProviderHealthy, recordSpend, recordStat, recordUsage, recordRecentRequest, getFullHealthSnapshot, nextRequestId, checkBudget, setSessionCap, setDailyBudget, registerProviderInfo, maybeStartProbe, recordProbeResult, getRegisteredProviderKeys, getProviderInfo } from './stats';
 import { serveDashboard } from './dashboard';
 import { formatError, formatExhaustedError, scrubCredentials, isStreamingClient } from './error-codes';
 import { truncateForLog } from './truncate';
@@ -47,6 +49,27 @@ const probeIdx = process.argv.indexOf('--probe');
 const dryRunIdx = process.argv.indexOf('--dry-run');
 const whatIfIdx = process.argv.indexOf('--what-if');
 const dryIdx = dryRunIdx >= 0 ? dryRunIdx : whatIfIdx;
+
+// Parse spend budget caps (applies to normal server startup)
+const maxSpendIdx = process.argv.indexOf('--max-spend');
+let maxSpend: number | null = null;
+if (maxSpendIdx >= 2 && process.argv[maxSpendIdx + 1]) {
+  maxSpend = parseFloat(process.argv[maxSpendIdx + 1]);
+  if (isNaN(maxSpend) || maxSpend < 0) {
+    console.error('--max-spend must be a non-negative number. Usage: --max-spend <dollars>');
+    process.exit(1);
+  }
+}
+const dailyBudgetEnv = process.env.DEEPCLAUDE_DAILY_BUDGET || '';
+let dailyBudget: number | null = null;
+if (dailyBudgetEnv) {
+  dailyBudget = parseFloat(dailyBudgetEnv);
+  if (isNaN(dailyBudget) || dailyBudget < 0) {
+    console.error('DEEPCLAUDE_DAILY_BUDGET must be a non-negative number');
+    process.exit(1);
+  }
+}
+
 if (probeIdx >= 2) {
     const nextArg = process.argv[probeIdx + 1];
     let routesFile: string | null = null;
@@ -97,7 +120,11 @@ if (probeIdx >= 2) {
 
     const hasDashboard = process.argv.slice(2).indexOf('--dashboard') >= 0;
     const hasOpen = process.argv.slice(2).indexOf('--open') >= 0;
-    const filteredArgv = process.argv.filter(a => a !== '--dashboard' && a !== '--open');
+    const filteredArgv = process.argv.filter((a, i) => {
+	      if (a === '--dashboard' || a === '--open' || a === '--max-spend') return false;
+	      if (i > 0 && process.argv[i - 1] === '--max-spend') return false;
+	      return true;
+	    });
 
     const keepAliveAgent = new https.Agent({ keepAlive: true, maxSockets: 50, keepAliveMsecs: 30000 });
     const parsed = parseArgs(filteredArgv);
@@ -117,6 +144,16 @@ const concurrency = createSlotLimiter();
 const rateLimiter = createRateLimiter();
 const isDev = process.env.DEEPCLAUDE_DEV === '1' || process.env.NODE_ENV === 'development';
 
+// Apply spend budget caps from CLI/env
+if (maxSpend !== null) setSessionCap(maxSpend);
+if (dailyBudget !== null) setDailyBudget(dailyBudget);
+if (maxSpend !== null || dailyBudget !== null) {
+    log.info(null, 'Spend caps: ' +
+        (maxSpend !== null ? 'session=$' + maxSpend.toFixed(2) : '') +
+        (maxSpend !== null && dailyBudget !== null ? ', ' : '') +
+        (dailyBudget !== null ? 'daily=$' + dailyBudget.toFixed(2) : ''));
+}
+
 // Extract display names from provider registry for the dashboard
 let providerDisplayNames: Record<string, string> | undefined;
 if (providerRegistry && providerRegistry.providers) {
@@ -126,6 +163,22 @@ if (providerRegistry && providerRegistry.providers) {
         if (rec.displayName) {
             providerDisplayNames[key] = rec.displayName;
         }
+    }
+}
+
+// Register provider info for circuit breaker auto-probe recovery
+if (state.routing && state.routing.providers) {
+    for (const [key, provider] of Object.entries(state.routing.providers)) {
+        const rawKey = process.env[provider.keyEnv || ''] || provider.key;
+        const resolvedKey = resolveKey(rawKey);
+        const probeModel = (provider.format || 'anthropic') === 'openai' ? 'gpt-4o-mini' : 'claude-sonnet-4-20250514';
+        registerProviderInfo(key, {
+            url: provider.url,
+            key: resolvedKey,
+            isBearer: provider.auth === 'bearer',
+            format: provider.format || 'anthropic',
+            model: probeModel,
+        });
     }
 }
 
@@ -400,6 +453,25 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
             }
 
             const resolvedResult = resolved as { primary: ResolvedTarget; fallbacks: ResolvedTarget[] };
+
+            // Budget cap check -- stop forwarding if spend exceeds configured caps
+            const budgetReason = checkBudget();
+            if (budgetReason) {
+              if (!res.headersSent && !res.destroyed) {
+                const streamingClient = isStreamingClient(req.headers as Record<string, string | string[] | undefined>, parsedBody);
+                if (streamingClient) {
+                  const friendlyEvents = 'event: error\ndata: ' + JSON.stringify({ type: 'error', error: { type: 'overloaded_error', message: budgetReason } }) + '\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\ndata: [DONE]\n\n';
+                  res.writeHead(200, (sseHeaders({}) as Record<string, string | number>));
+                  res.write(friendlyEvents);
+                  res.end();
+                } else {
+                  res.writeHead(402, { 'content-type': 'application/json', 'x-budget-cap': 'true' });
+                  res.end(JSON.stringify({ type: 'error', error: { type: 'overloaded_error', message: budgetReason } }));
+                }
+              }
+              return;
+            }
+
             const chain: ResolvedTarget[] = [resolvedResult.primary, ...resolvedResult.fallbacks.filter(fb => isProviderHealthy(fb.providerKey))];
             if (chain.length > 3) {
                 log.warn(reqId, 'Fallback chain truncated from ' + chain.length + ' to 3 providers');
@@ -739,6 +811,33 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
         });
     });
 });
+
+// Auto-probe scheduler for circuit breaker recovery
+setInterval(() => {
+    const keys = getRegisteredProviderKeys();
+    for (const pk of keys) {
+        const info = getProviderInfo(pk);
+        if (!info) continue;
+        const probeTarget = maybeStartProbe(pk);
+        if (probeTarget) {
+            const slot: ProbeSlot = {
+                slot: '',
+                providerKey: pk,
+                model: probeTarget.model,
+                url: probeTarget.url,
+                key: probeTarget.key,
+                isBearer: probeTarget.isBearer,
+                format: probeTarget.format,
+            };
+            sendProbe(slot).then((result) => {
+                const isHealthy = result.success || result.authFailed;
+                recordProbeResult(pk, isHealthy);
+                const action = isHealthy ? 'succeeded -- closing breaker' : 'failed -- extending cooldown';
+                log.info(null, pk + ' circuit breaker HALF_OPEN probe ' + action);
+            });
+        }
+    }
+}, 15_000).unref();
 
 // --- Lifecycle ---
 

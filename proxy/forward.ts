@@ -28,6 +28,15 @@ export const MAX_SSE_BUFFER = 1_048_576; // 1MB
 // the proxy from hanging forever on silently-dropped connections.
 export const STREAM_READ_TIMEOUT_MS = 120_000;
 
+// First-byte timeout: if the upstream accepts the connection but never sends
+// a single byte within this window, treat it as a dead stream and fail over.
+export const FIRST_BYTE_TIMEOUT_MS = 15_000;
+
+// Per-chunk heartbeat: if no data arrives during active streaming within
+// this window the connection is considered silently dead.  The timer resets
+// on every data chunk (not just SSE events).
+export const STREAM_HEARTBEAT_MS = 30_000;
+
 // --- Types ---
 
 export interface ForwardHeaders {
@@ -45,6 +54,8 @@ export interface ForwardResult {
     transportError?: boolean;
     qualityFailure?: boolean;
     qualityReason?: string;
+    deadStream?: boolean;
+    deadStreamReason?: string;
 }
 interface PeekResult {
     ok: boolean;
@@ -143,7 +154,11 @@ export function tryForward(
 ): Promise<ForwardResult> {
     return new Promise((resolve) => {
         let streamUsage: { prompt_tokens: number; completion_tokens: number } | null = null;
+        let responseStarted = false;
+        let firstByteTimer: ReturnType<typeof setTimeout> | null = null;
         const proxy = transport.request({ ...options, agent: options.agent ?? upstreamAgent }, (proxyRes: NodeJS.ReadableStream & { statusCode?: number; headers: Record<string, string | string[] | undefined> }) => {
+            responseStarted = true;
+            if (firstByteTimer !== null) clearTimeout(firstByteTimer);
             if (proxyRes.statusCode && proxyRes.statusCode >= 400) {
                 const errChunks: Buffer[] = [];
                 let errSize = 0;
@@ -171,25 +186,33 @@ export function tryForward(
                         (proxy as NodeJS.WritableStream & { destroy(): void }).destroy();
                         return resolve({ success: false, error: 'Stream peek: ' + peek.reason });
                     }
-                    // Read timeout: if no data arrives during the active streaming
-                    // phase the upstream connection is considered dead.  The timer
-                    // resets on each chunk and is cleaned up on end/error.
-                    let streamTimeout: ReturnType<typeof setTimeout> | null = null;
-                    const cancelStreamTimeout = () => {
-                        if (streamTimeout) { clearTimeout(streamTimeout); streamTimeout = null; }
+                    // Heartbeat: if no chunk arrives within STREAM_HEARTBEAT_MS the
+                    // connection is silently dead.  Hard cap: total streaming duration
+                    // is bounded by STREAM_READ_TIMEOUT_MS.
+                    let streamHeartbeat: ReturnType<typeof setTimeout> | null = null;
+                    let streamDeadline: ReturnType<typeof setTimeout> | null = null;
+                    const cancelStreamTimeouts = () => {
+                        if (streamHeartbeat) { clearTimeout(streamHeartbeat); streamHeartbeat = null; }
+                        if (streamDeadline) { clearTimeout(streamDeadline); streamDeadline = null; }
                     };
-                    const resetStreamTimeout = () => {
-                        cancelStreamTimeout();
-                        streamTimeout = setTimeout(() => {
+                    const resetStreamHeartbeat = () => {
+                        if (streamHeartbeat) clearTimeout(streamHeartbeat);
+                        streamHeartbeat = setTimeout(() => {
                             (proxyRes as unknown as NodeJS.ReadableStream & { destroy(err?: Error): void }).destroy(
-                                new Error('Upstream stream read timeout after ' + STREAM_READ_TIMEOUT_MS / 1000 + 's')
+                                new Error('Upstream stream read timeout (heartbeat) after ' + STREAM_HEARTBEAT_MS / 1000 + 's')
                             );
-                        }, STREAM_READ_TIMEOUT_MS);
+                        }, STREAM_HEARTBEAT_MS);
                     };
-                    resetStreamTimeout();
-                    proxyRes.on('data', resetStreamTimeout);
-                    proxyRes.once('end', cancelStreamTimeout);
-                    proxyRes.once('error', cancelStreamTimeout);
+                    streamDeadline = setTimeout(() => {
+                        cancelStreamTimeouts();
+                        (proxyRes as unknown as NodeJS.ReadableStream & { destroy(err?: Error): void }).destroy(
+                            new Error('Upstream stream read timeout (deadline) after ' + STREAM_READ_TIMEOUT_MS / 1000 + 's')
+                        );
+                    }, STREAM_READ_TIMEOUT_MS);
+                    resetStreamHeartbeat();
+                    proxyRes.on('data', resetStreamHeartbeat);
+                    proxyRes.once('end', cancelStreamTimeouts);
+                    proxyRes.once('error', cancelStreamTimeouts);
 
                     const outHeaders = sseHeaders(buildSafeHeaders(proxyRes.headers as Record<string, string | string[] | undefined>));
                     if (!outHeaders['content-type']) {
@@ -381,14 +404,24 @@ export function tryForward(
         });
 
         (proxy as NodeJS.WritableStream & { on(event: string, cb: (...args: unknown[]) => void): NodeJS.WritableStream }).on('timeout', () => {
+            if (firstByteTimer !== null) clearTimeout(firstByteTimer);
             (proxy as NodeJS.WritableStream & { destroy(): void }).destroy();
             resolve({ success: false, error: 'Upstream timeout after 60s', transportError: true });
         });
 
         (proxy as NodeJS.WritableStream & { on(event: string, cb: (...args: unknown[]) => void): NodeJS.WritableStream }).on('error', (err: Error) => {
+            if (firstByteTimer !== null) clearTimeout(firstByteTimer);
             const label = describeTransportError(err);
             resolve({ success: false, error: label, transportError: true });
         });
+
+        // If the upstream accepts the connection but never sends a response
+        // within FIRST_BYTE_TIMEOUT_MS, treat it as a dead stream.
+        firstByteTimer = setTimeout(() => {
+            if (responseStarted) return;
+            (proxy as NodeJS.WritableStream & { destroy(): void }).destroy();
+            resolve({ success: false, error: 'No response within ' + FIRST_BYTE_TIMEOUT_MS / 1000 + 's', transportError: true, deadStream: true, deadStreamReason: 'first_byte_timeout' });
+        }, FIRST_BYTE_TIMEOUT_MS);
 
         proxy.write(forwardedBody);
         proxy.end();
