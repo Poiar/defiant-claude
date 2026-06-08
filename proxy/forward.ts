@@ -203,13 +203,13 @@ export function tryForward(
                         sseBuf = events.pop() || '';
                         for (const evt of events) {
                             if (evt.length > MAX_SSE_BUFFER) {
-                                log.error(reqId, truncateForLog('SSE event exceeded 1MB limit -- aborting stream'));
+                                log.error(reqId, 'SSE event exceeded 1MB limit -- aborting stream');
                                 (outStream as NodeJS.ReadableStream & { destroy(err?: Error): void }).destroy(new Error('SSE event too large'));
                                 return;
                             }
                         }
                         if (sseBuf.length > MAX_SSE_BUFFER) {
-                            log.error(reqId, truncateForLog('SSE event exceeded 1MB limit -- aborting stream'));
+                            log.error(reqId, 'SSE event exceeded 1MB limit -- aborting stream');
                             (outStream as NodeJS.ReadableStream & { destroy(err?: Error): void }).destroy(new Error('SSE event too large'));
                         }
                     }

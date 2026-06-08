@@ -67,8 +67,10 @@ describe('convertServerTools', () => {
     });
 
     test('handles null/undefined tools', () => {
-        const { tools } = convertServerTools(null);
-        expect(tools).toBeNull();
+        const { tools: t1 } = convertServerTools(null);
+        expect(t1).toEqual([]);
+        const { tools: t2 } = convertServerTools(undefined);
+        expect(t2).toEqual([]);
     });
 
     test('handles empty array', () => {
