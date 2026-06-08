@@ -8,11 +8,14 @@ import { translateRequest, createStreamTransformer } from './protocol-translate'
 import { injectThinkingBlocks } from './thinking-cache';
 import { reinjectReasoningContent } from './reasoning-cache';
 import { deduplicatePath } from './util';
-import { parseArgs, loadConfig, checkReload, validateConfig } from './config';
+import { parseArgs, loadConfig, checkReload, validateConfig, resolveKey } from './config';
 import { resolveTarget, ResolvedTarget } from './routing';
+import { classifyRequest, resolvePromptRoute } from './prompt-router';
+import { bodyHash, shouldUseCanary, recordCanaryResult, getOrCreateEntry, type CanaryEntry, type CanaryConfig } from './canary';
 import { tryForward, addFallbackHeaders, sseHeaders, type ForwardHeaders, type ForwardResult } from './forward';
 import { convertServerTools, populateToolResults } from './server-tools';
-import { isProviderHealthy, recordSpend, recordStat, recordUsage, getFullHealthSnapshot, nextRequestId } from './stats';
+import { isProviderHealthy, recordSpend, recordStat, recordUsage, recordRecentRequest, getFullHealthSnapshot, nextRequestId } from './stats';
+import { serveDashboard } from './dashboard';
 import { formatError, formatExhaustedError, scrubCredentials, isStreamingClient } from './error-codes';
 import { truncateForLog } from './truncate';
 import { createSlotLimiter } from './concurrency';
@@ -92,8 +95,12 @@ if (probeIdx >= 2) {
 } else {
     // --- Normal server startup ---
 
+    const hasDashboard = process.argv.slice(2).indexOf('--dashboard') >= 0;
+    const hasOpen = process.argv.slice(2).indexOf('--open') >= 0;
+    const filteredArgv = process.argv.filter(a => a !== '--dashboard' && a !== '--open');
+
     const keepAliveAgent = new https.Agent({ keepAlive: true, maxSockets: 50, keepAliveMsecs: 30000 });
-    const parsed = parseArgs(process.argv);
+    const parsed = parseArgs(filteredArgv);
     const state = loadConfig(parsed);
 
 // Validate at startup (warn but don't block)
@@ -109,6 +116,18 @@ try { providerRegistry = require('./providers.json'); } catch (_) { /* file not 
 const concurrency = createSlotLimiter();
 const rateLimiter = createRateLimiter();
 const isDev = process.env.DEEPCLAUDE_DEV === '1' || process.env.NODE_ENV === 'development';
+
+// Extract display names from provider registry for the dashboard
+let providerDisplayNames: Record<string, string> | undefined;
+if (providerRegistry && providerRegistry.providers) {
+    providerDisplayNames = {};
+    for (const [key, rawDef] of Object.entries(providerRegistry.providers)) {
+        const rec = rawDef as { displayName?: string };
+        if (rec.displayName) {
+            providerDisplayNames[key] = rec.displayName;
+        }
+    }
+}
 
 // --- Data-driven provider hooks ---
 // Look up extra headers from the provider registry instead of hardcoding
@@ -136,6 +155,9 @@ let activeConnections = 0;
 
 const server = http.createServer((req: http.IncomingMessage, res: http.ServerResponse) => {
     req.setTimeout(30000);  // Prevent slow-body trickle from starving concurrency slots
+
+    // --- Dashboard routes (always available when proxy is running) ---
+    if (serveDashboard(req, res, concurrency.status(), rateLimiter.status(), providerDisplayNames)) return;
 
     // --- Health check ---
     if (req.method === 'GET' && req.url === '/health') {
@@ -278,6 +300,21 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                 return;
             }
 
+            // Prompt-based smart routing: classify request and optionally override model
+            // to route cheap/simple queries to cheaper providers.
+            if (parsedBody && state.routing?.promptRouter?.enabled) {
+                const slotMatch = model && model.match(/^(sonnet|opus|haiku|subagent):/);
+                if (slotMatch) {
+                    const slot = slotMatch[1];
+                    const classification = classifyRequest(parsedBody);
+                    const routeOverride = resolvePromptRoute(slot, classification, state.routing.promptRouter, state.routing);
+                    if (routeOverride) {
+                        log.info(reqId, 'prompt-router: ' + slot + ' ' + classification.tier + ' -> ' + routeOverride.providerKey + ':' + routeOverride.rewriteModel);
+                        model = routeOverride.providerKey + ':' + routeOverride.rewriteModel;
+                    }
+                }
+            }
+
             const resolved = resolveTarget(model, state.routing, state.slotOverrides, parsed.singleUrl, parsed.singleKey);
 
             if (resolved.error) {
@@ -286,6 +323,56 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                 res.writeHead(502);
                 res.end(JSON.stringify(err));
                 return;
+            }
+
+            // --- Canary routing ---
+            // Extract the slot from model to check for a canary config.
+            // If active, the canary provider replaces the primary, keeping
+            // the original primary as the first fallback.
+            const slot = model ? (model.match(/^(sonnet|opus|haiku|subagent):/) || [null])[1] : null;
+            let canaryEntry: CanaryEntry | null = null;
+            if (slot && state.routing?.canary?.[slot] && state.routing?.providers) {
+                const cfg = state.routing.canary[slot];
+                const warmupPercent = cfg.warmupPercent ?? 10;
+                const config: CanaryConfig = {
+                    enabled: true,
+                    targetProvider: cfg.targetProvider,
+                    targetModel: cfg.targetModel,
+                    warmupPercent,
+                    promoteAfter: 20,
+                    promoteAfterActive: 50,
+                    rollbackErrorRate: 0.2,
+                };
+
+                const providerEntry = state.routing.providers[config.targetProvider];
+                if (providerEntry) {
+                    const rawKey = process.env[providerEntry.keyEnv || ''] || providerEntry.key;
+                    if (rawKey) {
+                        const resolvedKey = resolveKey(rawKey);
+                        if (!(rawKey.startsWith('$aes256gcm:') && resolvedKey === null)) {
+                            const entry = getOrCreateEntry(slot, config);
+                            const hash = bodyHash(rawBody.toString(), slot);
+
+                            if (shouldUseCanary(hash, entry.state, entry.config)) {
+                                const canaryTarget: ResolvedTarget = {
+                                    providerKey: config.targetProvider,
+                                    url: providerEntry.url,
+                                    key: resolvedKey,
+                                    isBearer: providerEntry.auth === 'bearer',
+                                    targetUrl: new URL(providerEntry.url),
+                                    rewriteModel: cfg.targetModel,
+                                    format: providerEntry.format || 'anthropic',
+                                };
+
+                                const originalPrimary = resolved.primary!;
+                                resolved.primary = canaryTarget;
+                                resolved.fallbacks = [originalPrimary, ...(resolved.fallbacks || [])];
+                            }
+
+                            canaryEntry = entry;
+                        }
+                    }
+                }
             }
 
             // Pre-process request body once (tool results, server tools)
@@ -503,6 +590,18 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
 
                 if (result.success) {
                     recordStat(target.providerKey, true, ms);
+                    recordRecentRequest({
+                        timestamp: Date.now(),
+                        model: model,
+                        provider: target.providerKey,
+                        status: result.status || 200,
+                        ms: ms,
+                        tokens: result.streamUsage ? { input: result.streamUsage.prompt_tokens || 0, output: result.streamUsage.completion_tokens || 0 } : null,
+                        fallback: isRetry,
+                    });
+                    if (canaryEntry && attempt === 0) {
+                        recordCanaryResult(true, canaryEntry.state, canaryEntry.config);
+                    }
                     if (result.streamUsage) {
                         recordUsage(target.providerKey, result.streamUsage.prompt_tokens || 0, result.streamUsage.completion_tokens || 0);
                         const upstreamModel = target.rewriteModel || model;
@@ -562,6 +661,18 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                 }
 
                 recordStat(target.providerKey, false, ms);
+                recordRecentRequest({
+                    timestamp: Date.now(),
+                    model: model,
+                    provider: target.providerKey,
+                    status: result.status || null,
+                    ms: ms,
+                    tokens: null,
+                    fallback: isRetry,
+                });
+                if (canaryEntry && attempt === 0) {
+                    recordCanaryResult(false, canaryEntry.state, canaryEntry.config);
+                }
                 lastStatus = result.status || null;
                 lastRawBody = result.rawBody || null;
 
@@ -634,6 +745,17 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
 server.listen(0, '127.0.0.1', () => {
     const port = (server.address() as { port: number }).port;
     process.stdout.write('PORT:' + String(port));
+    if (hasDashboard) {
+        const url = 'http://127.0.0.1:' + port + '/dashboard';
+        process.stdout.write('\nDASHBOARD:' + url);
+        if (hasOpen) {
+            const platform = process.platform;
+            const cmd = platform === 'win32' ? 'start' : platform === 'darwin' ? 'open' : 'xdg-open';
+            setTimeout(() => {
+                require('child_process').exec(cmd + ' "' + url + '"');
+            }, 500);
+        }
+    }
 });
 server.timeout = 0;
 

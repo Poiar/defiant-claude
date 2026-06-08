@@ -78,7 +78,8 @@ export function getHealthSnapshot(): { status: string; uptime: number; providers
     }
     return { status: 'ok', uptime: Date.now() - startTime, providers: healthStats };
 }
-// Build health endpoint response with concurrency, rate limiter, version, and process memory.
+// Build health endpoint response with concurrency, rate limiter, version, process memory,
+// circuit breaker state, spend totals, and recent requests.
 export function getFullHealthSnapshot(concurrencyStatus: unknown, rateLimiterStatus: unknown): Record<string, unknown> {
     const base: Record<string, unknown> = getHealthSnapshot();
     base.version = packageVersion;
@@ -88,6 +89,17 @@ export function getFullHealthSnapshot(concurrencyStatus: unknown, rateLimiterSta
     if (rateLimiterStatus) {
         base.rateLimiter = rateLimiterStatus;
     }
+    // Add circuit breaker state per provider
+    const providers = base.providers as Record<string, Record<string, unknown>>;
+    if (providers) {
+        for (const k of Object.keys(providers)) {
+            providers[k].circuitBreaker = getCircuitBreakerState(k);
+            providers[k].lastRequest = providerStats[k] ? providerStats[k].lastRequest : undefined;
+        }
+    }
+    // Spend and recent requests
+    base.spend = parseFloat(sessionTotal.toFixed(4));
+    base.recentRequests = recentRequests.slice().reverse();
     try {
         const mem = process.memoryUsage();
         base.memory = {
@@ -109,6 +121,40 @@ export function isProviderHealthy(providerKey: string): boolean {
     if (!s || s.requests < 5) return true;
     return (s.fails / s.requests) < 0.34;
 };
+
+// Derive circuit breaker state from recorded stats.
+export function getCircuitBreakerState(providerKey: string): string {
+    const s = providerStats[providerKey];
+    if (!s || s.requests < 5) return 'CLOSED';
+    return (s.fails / s.requests) >= 0.34 ? 'OPEN' : 'CLOSED';
+}
+
+// --- Recent request ring buffer ---
+
+interface RecentRequestEntry {
+    timestamp: number;
+    model: string | null;
+    provider: string;
+    status: number | null;
+    ms: number;
+    tokens: { input: number; output: number } | null;
+    fallback: boolean;
+}
+
+const MAX_RECENT_REQUESTS = 50;
+const recentRequests: RecentRequestEntry[] = [];
+
+// Append a request entry. Never throws.
+export function recordRecentRequest(entry: RecentRequestEntry): void {
+    try {
+        recentRequests.push(entry);
+        if (recentRequests.length > MAX_RECENT_REQUESTS) {
+            recentRequests.shift();
+        }
+    } catch (_) {
+        // Non-fatal -- recording should never crash the request.
+    }
+}
 
 // --- Spend tracking ---
 

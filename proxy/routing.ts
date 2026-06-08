@@ -10,6 +10,19 @@ import { resolveKey } from './config';
 
 // --- Types ---
 
+export type Tier = 'TRIVIAL' | 'CHAT' | 'CODE' | 'TOOL' | 'HEAVY';
+
+export interface TierRoute {
+    tier: Tier;
+    provider: string;
+    model: string;
+}
+
+export interface PromptRouterConfig {
+    enabled: boolean;
+    routes: Record<string, TierRoute[]>;
+}
+
 export interface ProviderEntry {
     url: string;
     key?: string;
@@ -23,6 +36,8 @@ export interface RoutingConfig {
     providers?: Record<string, ProviderEntry>;
     defaultProvider?: string;
     routes?: Record<string, string | { provider: string; rewrite?: string }>;
+    promptRouter?: PromptRouterConfig;
+    canary?: Record<string, { targetProvider: string; targetModel: string; warmupPercent?: number }>;
 }
 
 interface SlotOverrides {

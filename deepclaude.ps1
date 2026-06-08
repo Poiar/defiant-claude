@@ -36,6 +36,9 @@
     # Info / debugging
     deepclaude --status             # Show keys, providers, and active slot mapping
     deepclaude --stats              # Show proxy stats (requests, success rate, latency)
+    deepclaude --probe [file]       # Test each configured provider with a minimal prompt
+    deepclaude --dry-run [file]     # Show resolved routing table without starting proxy
+    deepclaude --dashboard          # Print health dashboard URL (use with --open)
     deepclaude --doctor             # System health check (prereqs, keys, proxy test)
     deepclaude --cost               # Pricing comparison
     deepclaude --benchmark          # Parallel latency test across all configs
@@ -67,6 +70,10 @@ param(
     [switch]$Doctor,
     [switch]$InstallStatusline,
     [switch]$Stats,
+    [string]$ProbeFile,
+    [switch]$DryRun,
+    [switch]$Dashboard,
+    [switch]$Open,
     [Parameter(ValueFromRemainingArguments)]
     [string[]]$ModelSpecs
 )
@@ -111,6 +118,14 @@ if ($Backend -match '^--(.+)$') {
     elseif ($flag -eq 'doctor')          { $Doctor = $true }
     elseif ($flag -eq 'install-statusline') { $InstallStatusline = $true }
     elseif ($flag -eq 'stats')           { $Stats = $true }
+    elseif ($flag -eq 'probe' -and $ModelSpecs -and $ModelSpecs.Count -gt 0) {
+        $ProbeFile = $ModelSpecs[0]
+        $ModelSpecs = if ($ModelSpecs.Count -gt 1) { $ModelSpecs[1..($ModelSpecs.Count-1)] } else { @() }
+    }
+    elseif ($flag -eq 'probe')           { $ProbeFile = '' }
+    elseif ($flag -eq 'dry-run' -or $flag -eq 'what-if') { $DryRun = $true }
+    elseif ($flag -eq 'dashboard')       { $Dashboard = $true }
+    elseif ($flag -eq 'open')            { $Open = $true }
     else {
         Write-Host "ERROR: Unknown flag '--$flag'. Use --help for available flags." -ForegroundColor Red
         exit 1
@@ -137,7 +152,7 @@ $AllSpecs = @()
 if ($Backend) { $AllSpecs += $Backend }
 if ($ModelSpecs) { $AllSpecs += $ModelSpecs }
 
-if (-not $AllSpecs -and -not $Status -and -not $Cost -and -not $Benchmark -and -not $Help -and -not $Lint -and -not $FixAv -and -not $Switch -and -not $SetSlot -and -not $Models -and -not $StopProxy -and -not $Version -and -not $Doctor -and -not $Stats) {
+if (-not $AllSpecs -and -not $Status -and -not $Cost -and -not $Benchmark -and -not $Help -and -not $Lint -and -not $FixAv -and -not $Switch -and -not $SetSlot -and -not $Models -and -not $StopProxy -and -not $Version -and -not $Doctor -and -not $Stats -and -not $PSBoundParameters.ContainsKey('ProbeFile') -and -not $DryRun) {
     $AllSpecs = @(if ($env:DEEPCLAUDE_DEFAULT_BACKEND) { $env:DEEPCLAUDE_DEFAULT_BACKEND } elseif ($env:CHEAPCLAUDE_DEFAULT_BACKEND) { $env:CHEAPCLAUDE_DEFAULT_BACKEND } else { "ds" })
 }
 
@@ -750,6 +765,55 @@ if ($Stats) {
     exit 0
 }
 
+# --- Probe ---
+if ($PSBoundParameters.ContainsKey('ProbeFile')) {
+    $myDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+    $tsxBin = Join-Path $myDir "node_modules\.bin\tsx.cmd"
+    $proxyScript = Join-Path $myDir "proxy\start-proxy.ts"
+
+    if ($ProbeFile) {
+        $routesFile = $ProbeFile
+    } else {
+        # Build routes from current config
+        if ($AllSpecs.Count -eq 1 -and $Configs.Contains($AllSpecs[0])) {
+            $r = Resolve-Config $AllSpecs[0]
+        } elseif ($AllSpecs.Count -gt 0) {
+            $r = Build-AdHocConfig $AllSpecs
+        } else {
+            $defaultCfg = if ($env:DEEPCLAUDE_DEFAULT_BACKEND) { $env:DEEPCLAUDE_DEFAULT_BACKEND } elseif ($env:CHEAPCLAUDE_DEFAULT_BACKEND) { $env:CHEAPCLAUDE_DEFAULT_BACKEND } else { "ds" }
+            $r = Resolve-Config $defaultCfg
+        }
+        Set-UsedProviderEnv $r
+        $routesJson = Build-RoutesJson $r -IncludeAllModels
+        $routesFile = Join-Path $DeepClaudeDir "probe-routes.json"
+        Write-AtomicFile $routesFile $routesJson
+    }
+    & $tsxBin $proxyScript --probe $routesFile
+    exit $LASTEXITCODE
+}
+
+# --- Dry Run ---
+if ($DryRun) {
+    $myDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+    $tsxBin = Join-Path $myDir "node_modules\.bin\tsx.cmd"
+    $proxyScript = Join-Path $myDir "proxy\start-proxy.ts"
+
+    if ($AllSpecs.Count -eq 1 -and $Configs.Contains($AllSpecs[0])) {
+        $r = Resolve-Config $AllSpecs[0]
+    } elseif ($AllSpecs.Count -gt 0) {
+        $r = Build-AdHocConfig $AllSpecs
+    } else {
+        $defaultCfg = if ($env:DEEPCLAUDE_DEFAULT_BACKEND) { $env:DEEPCLAUDE_DEFAULT_BACKEND } elseif ($env:CHEAPCLAUDE_DEFAULT_BACKEND) { $env:CHEAPCLAUDE_DEFAULT_BACKEND } else { "ds" }
+        $r = Resolve-Config $defaultCfg
+    }
+    Set-UsedProviderEnv $r
+    $routesJson = Build-RoutesJson $r -IncludeAllModels
+    $routesFile = Join-Path $DeepClaudeDir "dryrun-routes.json"
+    Write-AtomicFile $routesFile $routesJson
+    & $tsxBin $proxyScript --dry-run $routesFile
+    exit $LASTEXITCODE
+}
+
 # --- Cost ---
 if ($Cost) {
     Write-Host "`n  DeepSeek V4 Pro Pricing" -ForegroundColor Cyan
@@ -801,6 +865,10 @@ if ($Help) {
     Write-Host "  --version       Print version and proxy path"
     Write-Host "  --effort LEVEL  Set Claude Code effort level (default: max). Values: low, medium, high, max."
     Write-Host "  --fix-av        Print AV exclusion commands"
+    Write-Host "  --probe [FILE]  Test each configured provider with a minimal prompt"
+    Write-Host "  --dry-run [FILE] Show resolved routing table without starting proxy"
+    Write-Host "  --dashboard     Start proxy and print health dashboard URL"
+    Write-Host "  --open          Open dashboard in browser (use with --dashboard)"
     Write-Host "  --doctor        Run system health check (prereqs, keys, proxy test)"
     Write-Host "  --install-statusline  Install status bar showing model, effort, context (requires restart)"
     Write-Host ""
@@ -1378,6 +1446,13 @@ if ($Remote) {
     Write-Host "  Providers: $provNames" -ForegroundColor DarkGray
     Write-Host "  Launching remote control...`n" -ForegroundColor Cyan
 
+    if ($Dashboard) {
+        Write-Host "  Dashboard: http://127.0.0.1:${proxyPort}/dashboard" -ForegroundColor Cyan
+        if ($Open) {
+            Start-Process "http://127.0.0.1:${proxyPort}/dashboard"
+        }
+    }
+
     $overrides = Get-Content $SlotOverridesFile -Raw | ConvertFrom-Json
     $env:ANTHROPIC_BASE_URL = "http://127.0.0.1:$proxyPort"
     $env:ANTHROPIC_DEFAULT_OPUS_MODEL = "opus:" + ($overrides.opus ?? $overrides._defaults.opus ?? "$($resolved.slots['opus'].provider):$($resolved.slots['opus'].model)")
@@ -1490,6 +1565,13 @@ $opusM   = "opus:" + (Get-SlotModel 'opus')
 $sonnetM = "sonnet:" + (Get-SlotModel 'sonnet')
 $haikuM  = "haiku:" + (Get-SlotModel 'haiku')
 $subM    = "subagent:" + (Get-SlotModel 'subagent')
+
+if ($Dashboard) {
+    Write-Host "  Dashboard: http://127.0.0.1:$($proxyInfo.Port)/dashboard" -ForegroundColor Cyan
+    if ($Open) {
+        Start-Process "http://127.0.0.1:$($proxyInfo.Port)/dashboard"
+    }
+}
 
 $env:ANTHROPIC_BASE_URL = "http://127.0.0.1:$($proxyInfo.Port)"
 $env:CLAUDE_CONTEXT_COMPRESSION = 'true'
