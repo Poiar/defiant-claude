@@ -45,6 +45,8 @@
     deepclaude --benchmark          # Parallel latency test across all configs
     deepclaude -h                   # This help
     deepclaude --lint               # Self-lint with PSScriptAnalyzer
+    deepclaude --lint-config         # Validate providers.json configuration
+    deepclaude --log-all            # Log all requests (failures always logged)
     deepclaude --fix-av             # Print AV exclusion commands
 #>
 
@@ -61,6 +63,7 @@ param(
     [Alias("h")]
     [switch]$Help,
     [switch]$Lint,
+    [switch]$LintConfig,
     [switch]$FixAv,
     [switch]$Persist,
     [string]$Switch,
@@ -75,6 +78,7 @@ param(
     [switch]$DryRun,
     [switch]$Dashboard,
     [switch]$Open,
+    [switch]$LogAll,
     [Parameter(ValueFromRemainingArguments)]
     [string[]]$ModelSpecs
 )
@@ -114,6 +118,7 @@ if ($Backend -match '^--(.+)$') {
     elseif ($flag -eq 'benchmark')       { $Benchmark = $true }
     elseif ($flag -eq 'help')            { $Help = $true }
     elseif ($flag -eq 'lint')            { $Lint = $true }
+    elseif ($flag -eq 'lint-config')     { $LintConfig = $true }
     elseif ($flag -eq 'fix-av')          { $FixAv = $true }
     elseif ($flag -eq 'version')         { $Version = $true }
     elseif ($flag -eq 'doctor')          { $Doctor = $true }
@@ -127,6 +132,7 @@ if ($Backend -match '^--(.+)$') {
     elseif ($flag -eq 'dry-run' -or $flag -eq 'what-if') { $DryRun = $true }
     elseif ($flag -eq 'dashboard')       { $Dashboard = $true }
     elseif ($flag -eq 'open')            { $Open = $true }
+    elseif ($flag -eq 'log-all')         { $LogAll = $true }
     else {
         Write-Host "ERROR: Unknown flag '--$flag'. Use --help for available flags." -ForegroundColor Red
         exit 1
@@ -153,9 +159,12 @@ $AllSpecs = @()
 if ($Backend) { $AllSpecs += $Backend }
 if ($ModelSpecs) { $AllSpecs += $ModelSpecs }
 
-if (-not $AllSpecs -and -not $Status -and -not $Cost -and -not $Benchmark -and -not $Help -and -not $Lint -and -not $FixAv -and -not $Switch -and -not $SetSlot -and -not $Models -and -not $StopProxy -and -not $Version -and -not $Doctor -and -not $Stats -and -not $PSBoundParameters.ContainsKey('ProbeFile') -and -not $DryRun) {
+if (-not $AllSpecs -and -not $Status -and -not $Cost -and -not $Benchmark -and -not $Help -and -not $Lint -and -not $LintConfig -and -not $FixAv -and -not $Switch -and -not $SetSlot -and -not $Models -and -not $StopProxy -and -not $Version -and -not $Doctor -and -not $Stats -and -not $PSBoundParameters.ContainsKey('ProbeFile') -and -not $DryRun) {
     $AllSpecs = @(if ($env:DEEPCLAUDE_DEFAULT_BACKEND) { $env:DEEPCLAUDE_DEFAULT_BACKEND } elseif ($env:CHEAPCLAUDE_DEFAULT_BACKEND) { $env:CHEAPCLAUDE_DEFAULT_BACKEND } else { "ds" })
 }
+
+# Propagate --log-all to the proxy via environment variable
+if ($LogAll) { $env:DEEPCLAUDE_LOG_ALL_REQUESTS = 'true' }
 
 # --- API Keys ---
 $DeepSeekKey = if ($env:DEEPSEEK_API_KEY) { $env:DEEPSEEK_API_KEY } else {
@@ -864,6 +873,8 @@ if ($Help) {
     Write-Host "                     e.g. --set-slot sonnet   (no model = clear override)"
     Write-Host "  --stop-proxy    Kill the persistent proxy"
     Write-Host "  --lint          Self-lint with PSScriptAnalyzer"
+    Write-Host "  --lint-config   Validate providers.json configuration"
+    Write-Host "  --log-all       Log all requests to ~/.deepclaude/requests.log"
     Write-Host "  --version       Print version and proxy path"
     Write-Host "  --effort LEVEL  Set Claude Code effort level (default: max). Values: low, medium, high, max."
     Write-Host "  --fix-av        Print AV exclusion commands"
@@ -1134,6 +1145,28 @@ if ($Lint) {
         Write-Host "PSScriptAnalyzer not installed. Run: Install-Module -Name PSScriptAnalyzer -Force" -ForegroundColor Yellow
     }
     exit 0
+}
+
+# --- Lint Config ---
+if ($LintConfig) {
+    $myDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+    $tsxBin = Join-Path $myDir "node_modules\.bin\tsx.cmd"
+    $lintScript = Join-Path $myDir "proxy\config-lint.ts"
+    $nodePath = try { (Get-Command node -ErrorAction Stop).Source } catch { $null }
+    if (-not $nodePath) {
+        Write-Host "ERROR: Node.js is not installed or not in PATH." -ForegroundColor Red
+        exit 1
+    }
+    if (-not (Test-Path $tsxBin)) {
+        Write-Host "ERROR: Dependencies not installed. Run 'npm install' first." -ForegroundColor Red
+        exit 1
+    }
+    if (-not (Test-Path $lintScript)) {
+        Write-Host "ERROR: Config lint script not found at: $lintScript" -ForegroundColor Red
+        exit 1
+    }
+    & $tsxBin $lintScript
+    exit $LASTEXITCODE
 }
 
 # --- Fix AV ---

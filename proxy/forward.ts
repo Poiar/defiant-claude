@@ -14,6 +14,8 @@ import type { Message as ReasoningMessage } from './reasoning-cache';
 import { describe as describeTransportError } from './transport-errors';
 import { createLogger } from './log';
 import { truncateForLog } from './truncate';
+import { startStreamTimer, recordFirstToken, recordChunk, finalizeMetrics } from './stream-metrics';
+import type { StreamTimings, StreamMetrics } from './stream-metrics';
 
 const log = createLogger('forward');
 
@@ -56,6 +58,8 @@ export interface ForwardResult {
     qualityReason?: string;
     deadStream?: boolean;
     deadStreamReason?: string;
+    streamTimings?: StreamTimings;
+    streamMetrics?: StreamMetrics;
 }
 interface PeekResult {
     ok: boolean;
@@ -154,6 +158,7 @@ export function tryForward(
 ): Promise<ForwardResult> {
     return new Promise((resolve) => {
         let streamUsage: { prompt_tokens: number; completion_tokens: number } | null = null;
+        let timings: StreamTimings | null = null;
         let responseStarted = false;
         let firstByteTimer: ReturnType<typeof setTimeout> | null = null;
         const proxy = transport.request({ ...options, agent: options.agent ?? upstreamAgent }, (proxyRes: NodeJS.ReadableStream & { statusCode?: number; headers: Record<string, string | string[] | undefined> }) => {
@@ -228,6 +233,10 @@ export function tryForward(
                     // Extract token usage from raw upstream SSE data.
                     let rawUsageBuf = '';
                     proxyRes.on('data', (chunk: Buffer | string) => {
+                        if (timings) {
+                            recordFirstToken(timings);
+                            recordChunk(timings);
+                        }
                         rawUsageBuf += typeof chunk === 'string' ? chunk : chunk.toString();
                         if (rawUsageBuf.length > MAX_SSE_BUFFER) {
                             // Malformed upstream stream (missing SSE delimiters) — discard
@@ -277,7 +286,7 @@ export function tryForward(
                     }
                     );
 
-                    resolve({ success: true, status: proxyRes.statusCode, headers: outHeaders, stream: outStream, streamUsage });
+                    resolve({ success: true, status: proxyRes.statusCode, headers: outHeaders, stream: outStream, streamUsage, streamTimings: timings || undefined });
                 });
             } else {
                 (proxyRes as unknown as NodeJS.ReadableStream & { setTimeout(ms: number, cb: () => void): void }).setTimeout(30000, () => {
@@ -394,9 +403,9 @@ export function tryForward(
                             }
                         }
                         if (qualityReason) {
-                            resolve({ success: false, status: proxyRes.statusCode, headers: outHeaders, body: responseBody, streamUsage, error: qualityReason, qualityFailure: true, qualityReason });
+                            resolve({ success: false, status: proxyRes.statusCode, headers: outHeaders, body: responseBody, streamUsage, error: qualityReason, qualityFailure: true, qualityReason, streamMetrics: timings ? finalizeMetrics({ ...timings, firstTokenTime: Date.now(), lastChunkTime: Date.now() }, streamUsage?.completion_tokens || 0) : undefined });
                         } else {
-                            resolve({ success: true, status: proxyRes.statusCode, headers: outHeaders, body: responseBody, streamUsage });
+                            resolve({ success: true, status: proxyRes.statusCode, headers: outHeaders, body: responseBody, streamUsage, streamMetrics: timings ? finalizeMetrics({ ...timings, firstTokenTime: Date.now(), lastChunkTime: Date.now() }, streamUsage?.completion_tokens || 0) : undefined });
                         }
                     }
                 });
@@ -423,6 +432,7 @@ export function tryForward(
             resolve({ success: false, error: 'No response within ' + FIRST_BYTE_TIMEOUT_MS / 1000 + 's', transportError: true, deadStream: true, deadStreamReason: 'first_byte_timeout' });
         }, FIRST_BYTE_TIMEOUT_MS);
 
+        timings = startStreamTimer();
         proxy.write(forwardedBody);
         proxy.end();
     });
