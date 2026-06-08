@@ -132,6 +132,7 @@ deepclaude ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free  # 3 specs 
 --persist       Keep proxy alive after CC exits
 --switch CONFIG Switch a running persistent proxy to a different config
 --set-slot SLOT MODEL  Override a slot (opus/sonnet/haiku/subagent)
+--subagent-model MODEL  Set a dedicated subagent model (e.g., oc:big-pickle)
 --stop-proxy    Kill the persistent proxy
 --probe [FILE]  Test each provider with a minimal prompt (latency, tokens, auth)
 --dry-run [FILE] Show resolved routing table without starting the proxy

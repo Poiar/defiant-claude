@@ -12,6 +12,7 @@
     },
     "or": {
       "displayName": "OpenRouter",
+      "monthlyBudget": 2.00,
       "endpoint": "https://openrouter.ai/api",
       "keyEnv": "OPENROUTER_API_KEY",
       "authHeader": "bearer",

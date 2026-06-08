@@ -28,6 +28,7 @@ DEEPCLAUDE_DIR="${HOME}/.deepclaude"
 PROXY_STATE_FILE="${DEEPCLAUDE_DIR}/proxy.json"
 CURRENT_ROUTES_FILE="${DEEPCLAUDE_DIR}/current-routes.json"
 SLOT_OVERRIDES_FILE="${DEEPCLAUDE_DIR}/slot-overrides.json"
+SUBMODEL_FILE="${DEEPCLAUDE_DIR}/subagent-model.json"
 
 # --- API Keys ---
 DEEPSEEK_KEY="${DEEPSEEK_API_KEY:-}"
@@ -552,6 +553,23 @@ show_status() {
             echo "  Custom overrides: $custom"
         fi
     fi
+
+    # Show dedicated subagent model
+    if [[ -f "$SUBMODEL_FILE" ]]; then
+        local sub_prov sub_model sub_full
+        sub_prov=$(jq -r '.providerKey // empty' "$SUBMODEL_FILE" 2>/dev/null)
+        sub_model=$(jq -r '.modelId // empty' "$SUBMODEL_FILE" 2>/dev/null)
+        if [[ -n "$sub_prov" && -n "$sub_model" ]]; then
+            sub_full="${sub_prov}:${sub_model}"
+            local sub_pname="${PROVIDER_NAME[$sub_prov]:-}"
+            echo ""
+            if [[ -n "$sub_pname" ]]; then
+                echo "  Dedicated subagent model: $sub_full  ->  $sub_pname"
+            else
+                echo "  Dedicated subagent model: $sub_full"
+            fi
+        fi
+    fi
     echo ""
 }
 
@@ -598,6 +616,7 @@ show_help() {
     echo "  --lint                 Lint with shellcheck"
   echo "  --lint-config          Validate providers.json configuration"
   echo "  --log-all              Log all requests to ~/.deepclaude/requests.log"
+  echo "  --skip-startup-check   Skip the provider health check on proxy startup"
   echo "  --fix-av               Windows Defender exclusion reminder"
   echo "  --install-statusline   Auto-install statusline to ~/.claude/"
   echo "  --set-slot SLOT MODEL  Override a slot: opus/sonnet/haiku/subagent"
@@ -622,6 +641,10 @@ show_help() {
     echo "Note: --fix-av, --lint, and --install-statusline are platform-specific."
     echo "      --fix-av is Windows-only (PowerShell alternative to this script)."
     echo "      --lint runs shellcheck on this script (bash only)."
+    echo ""
+    echo "Model control:"
+    echo "  --set-slot SLOT MODEL     Override a slot (opus/sonnet/haiku/subagent)"
+    echo "  --subagent-model MODEL    Set dedicated subagent model (e.g. oc:big-pickle)"
     echo ""
 }
 
@@ -984,6 +1007,53 @@ handle_set_slot() {
     echo ""
 }
 
+handle_subagent_model() {
+    local model="${1:-}"
+
+    mkdir -p -m 700 "$DEEPCLAUDE_DIR"
+
+    if [[ -z "$model" ]]; then
+        if [[ -f "$SUBMODEL_FILE" ]]; then
+            rm -f "$SUBMODEL_FILE"
+            echo ""
+            echo "  Cleared dedicated subagent model."
+        else
+            echo ""
+            echo "  No dedicated subagent model is set."
+        fi
+        echo ""
+        exit 0
+    fi
+
+    if [[ ! "$model" =~ ^[a-z][a-z0-9_-]*:.+$ ]]; then
+        echo "ERROR: Subagent model must be in providerKey:modelId format (e.g. oc:big-pickle)" >&2
+        exit 1
+    fi
+    local prov_key="${model%%:*}"
+    local key
+    key=$(get_provider_key "$prov_key")
+    if [[ -z "${PROVIDER_URL[$prov_key]:-}" ]]; then
+        echo "ERROR: Unknown provider '$prov_key'. Known: ${!PROVIDER_URL[*]}" >&2
+        exit 1
+    fi
+    if [[ -z "$key" ]]; then
+        echo "ERROR: No API key set for provider '$prov_key'." >&2
+        exit 1
+    fi
+
+    local model_id="${model#*:}"
+    printf '{"providerKey":"%s","modelId":"%s"}\n' "$prov_key" "$model_id" > "$SUBMODEL_FILE"
+    echo ""
+    echo "  Set dedicated subagent model: $model"
+
+    if get_proxy_state &>/dev/null; then
+        echo "  Proxy is running -- change takes effect immediately."
+    else
+        echo "  No proxy running. Subagent model saved for next launch."
+    fi
+    echo ""
+}
+
 handle_switch() {
     local target="$1"
 
@@ -1057,6 +1127,7 @@ DASHBOARD=false
 OPEN_BROWSER=false
 PROBE_FILE=""
 DRY_RUN_FILE=""
+SUBAGENT_MODEL=""
 
 # Parse args
 while [[ $# -gt 0 ]]; do
@@ -1131,6 +1202,11 @@ while [[ $# -gt 0 ]]; do
             if [[ -n "${3:-}" ]]; then shift 3; else shift 2; fi
             [[ "$slot_name" == -* ]] && { echo "ERROR: --set-slot requires SLOT and MODEL"; exit 1; }
             ;;
+        --subagent-model)
+            SUBAGENT_MODEL="${2:-}"
+            ACTION="subagent-model"
+            if [[ -n "${2:-}" && "$2" != -* ]]; then shift 2; else shift; fi
+            ;;
         --switch)
             ACTION="switch"
             SWITCH_TARGET="$2"; shift 2
@@ -1147,6 +1223,9 @@ while [[ $# -gt 0 ]]; do
             ACTION="lint-config"; shift ;;
         --log-all)
             export DEEPCLAUDE_LOG_ALL_REQUESTS=true
+            shift ;;
+        --skip-startup-check)
+            export DEEPCLAUDE_SKIP_STARTUP_CHECK=true
             shift ;;
         --fix-av)
             echo "AV exclusion is Windows-only. Ensure $(dirname "$0") is excluded."; exit 0 ;;
@@ -1245,6 +1324,7 @@ case "$ACTION" in
         fi
         ;;
     set-slot)   handle_set_slot "$SLOT_NAME" "$SLOT_MODEL" ;;
+    subagent-model) handle_subagent_model "$SUBAGENT_MODEL" ;;
     switch)     handle_switch "$SWITCH_TARGET" ;;
     remote)
         if [[ "$BACKEND" == "anthropic" ]]; then

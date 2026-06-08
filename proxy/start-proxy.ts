@@ -30,6 +30,7 @@ import { sessionKey, getMomentum, record as recordMomentum } from './momentum';
 import { validateUrl } from './ssrf';
 import { finalizeMetrics } from './stream-metrics';
 import { logRequest, setLogAllRequests, type RequestLogEntry } from './request-log';
+import { runStartupChecks } from './startup-check';
 
 // Git hash captured at startup so every health check shows the exact commit.
 import { execSync } from 'child_process';
@@ -697,7 +698,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                     if (result.streamUsage) {
                         recordUsage(target.providerKey, result.streamUsage.prompt_tokens || 0, result.streamUsage.completion_tokens || 0);
                         const upstreamModel = target.rewriteModel || model;
-                        if (upstreamModel) recordSpend(upstreamModel, result.streamUsage).catch(() => {});
+                        if (upstreamModel) recordSpend(upstreamModel, result.streamUsage, target.providerKey).catch(() => {});
                     }
                     if (sk) recordMomentum(sk, target.providerKey, model || '');
 
@@ -769,7 +770,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                                 if (result.streamUsage) {
                                     recordUsage(target.providerKey, result.streamUsage.prompt_tokens || 0, result.streamUsage.completion_tokens || 0);
                                     const upstreamModel = target.rewriteModel || model;
-                                    if (upstreamModel) recordSpend(upstreamModel, result.streamUsage).catch(() => {});
+                                    if (upstreamModel) recordSpend(upstreamModel, result.streamUsage, target.providerKey).catch(() => {});
                                 }
                                 if (err) log.error(reqId, 'stream error: ' + scrubCredentials(err.message));
                             });
@@ -909,24 +910,40 @@ setInterval(() => {
     }
 }, 15_000).unref();
 
-// --- Lifecycle ---
-
-server.listen(0, '127.0.0.1', () => {
-    const port = (server.address() as { port: number }).port;
-    process.stdout.write('PORT:' + String(port));
-    if (hasDashboard) {
-        const url = 'http://127.0.0.1:' + port + '/dashboard';
-        process.stdout.write('\nDASHBOARD:' + url);
-        if (hasOpen) {
-            const platform = process.platform;
-            const cmd = platform === 'win32' ? 'start' : platform === 'darwin' ? 'open' : 'xdg-open';
-            setTimeout(() => {
-                require('child_process').exec(cmd + ' "' + url + '"');
-            }, 500);
-        }
+// --- Startup health check ---
+// Run provider preflight probes before accepting connections.
+// If all providers are down, exit early so the user can fix config before
+// Claude Code tries to use the proxy.
+runStartupChecks().then((startupCheckResult) => {
+    if (startupCheckResult.allDown) {
+        log.error(null, 'All providers are down. Exiting.');
+        process.exit(1);
     }
+    if (startupCheckResult.someDown) {
+        log.warn(null, 'Some providers are down. Continuing with degraded routing.');
+    }
+
+    // --- Lifecycle ---
+    server.listen(0, '127.0.0.1', () => {
+        const port = (server.address() as { port: number }).port;
+        process.stdout.write('PORT:' + String(port));
+        if (hasDashboard) {
+            const url = 'http://127.0.0.1:' + port + '/dashboard';
+            process.stdout.write('\nDASHBOARD:' + url);
+            if (hasOpen) {
+                const platform = process.platform;
+                const cmd = platform === 'win32' ? 'start' : platform === 'darwin' ? 'open' : 'xdg-open';
+                setTimeout(() => {
+                    require('child_process').exec(cmd + ' "' + url + '"');
+                }, 500);
+            }
+        }
+    });
+    server.timeout = 0;
+}).catch((err: Error) => {
+    log.error(null, 'Startup health check failed: ' + err.message);
+    process.exit(1);
 });
-server.timeout = 0;
 
 function gracefulShutdown(signal: string): void {
     log.info(null, signal + ' received -- draining ' + activeConnections + ' active connections...');

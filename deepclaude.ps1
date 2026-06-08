@@ -47,6 +47,9 @@
     deepclaude --lint               # Self-lint with PSScriptAnalyzer
     deepclaude --lint-config         # Validate providers.json configuration
     deepclaude --log-all            # Log all requests (failures always logged)
+    deepclaude --skip-startup-check # Skip the provider health check on proxy startup
+    deepclaude --subagent-model oc:big-pickle  # Set a dedicated subagent model
+    deepclaude --subagent-model     # Clear the dedicated subagent model
     deepclaude --fix-av             # Print AV exclusion commands
 #>
 
@@ -68,6 +71,7 @@ param(
     [switch]$Persist,
     [string]$Switch,
     [string]$SetSlot,
+    [string]$SubagentModel,
     [switch]$Models,
     [switch]$StopProxy,
     [switch]$Version,
@@ -79,6 +83,7 @@ param(
     [switch]$Dashboard,
     [switch]$Open,
     [switch]$LogAll,
+    [switch]$SkipStartupCheck,
     [Parameter(ValueFromRemainingArguments)]
     [string[]]$ModelSpecs
 )
@@ -105,6 +110,14 @@ if ($Backend -match '^--(.+)$') {
     elseif ($flag -eq 'set-slot' -and $ModelSpecs -and $ModelSpecs.Count -gt 0) {
         $SetSlot = $ModelSpecs[0]
         $ModelSpecs = if ($ModelSpecs.Count -gt 1) { $ModelSpecs[1..($ModelSpecs.Count-1)] } else { @() }
+    }
+    elseif ($flag -eq 'subagent-model') {
+        if ($ModelSpecs -and $ModelSpecs.Count -gt 0) {
+            $SubagentModel = $ModelSpecs[0]
+            $ModelSpecs = if ($ModelSpecs.Count -gt 1) { $ModelSpecs[1..($ModelSpecs.Count-1)] } else { @() }
+        } else {
+            $SubagentModel = ''
+        }
     }
     elseif ($flag -eq 'effort' -and $ModelSpecs -and $ModelSpecs.Count -gt 0) {
         $Effort = $ModelSpecs[0]
@@ -133,6 +146,7 @@ if ($Backend -match '^--(.+)$') {
     elseif ($flag -eq 'dashboard')       { $Dashboard = $true }
     elseif ($flag -eq 'open')            { $Open = $true }
     elseif ($flag -eq 'log-all')         { $LogAll = $true }
+    elseif ($flag -eq 'skip-startup-check') { $SkipStartupCheck = $true }
     else {
         Write-Host "ERROR: Unknown flag '--$flag'. Use --help for available flags." -ForegroundColor Red
         exit 1
@@ -145,6 +159,7 @@ $DeepClaudeDir = Join-Path $HOME ".deepclaude"
 $ProxyStateFile = Join-Path $DeepClaudeDir "proxy.json"
 $CurrentRoutesFile = Join-Path $DeepClaudeDir "current-routes.json"
 $SlotOverridesFile = Join-Path $DeepClaudeDir "slot-overrides.json"
+$SubagentModelFile = Join-Path $DeepClaudeDir "subagent-model.json"
 
 # Ensure state directory exists
 if (-not (Test-Path $DeepClaudeDir)) {
@@ -159,12 +174,13 @@ $AllSpecs = @()
 if ($Backend) { $AllSpecs += $Backend }
 if ($ModelSpecs) { $AllSpecs += $ModelSpecs }
 
-if (-not $AllSpecs -and -not $Status -and -not $Cost -and -not $Benchmark -and -not $Help -and -not $Lint -and -not $LintConfig -and -not $FixAv -and -not $Switch -and -not $SetSlot -and -not $Models -and -not $StopProxy -and -not $Version -and -not $Doctor -and -not $Stats -and -not $PSBoundParameters.ContainsKey('ProbeFile') -and -not $DryRun) {
+if (-not $AllSpecs -and -not $Status -and -not $Cost -and -not $Benchmark -and -not $Help -and -not $Lint -and -not $LintConfig -and -not $FixAv -and -not $Switch -and -not $SetSlot -and -not $SubagentModel -and -not $Models -and -not $StopProxy -and -not $Version -and -not $Doctor -and -not $Stats -and -not $PSBoundParameters.ContainsKey('ProbeFile') -and -not $DryRun) {
     $AllSpecs = @(if ($env:DEEPCLAUDE_DEFAULT_BACKEND) { $env:DEEPCLAUDE_DEFAULT_BACKEND } elseif ($env:CHEAPCLAUDE_DEFAULT_BACKEND) { $env:CHEAPCLAUDE_DEFAULT_BACKEND } else { "ds" })
 }
 
 # Propagate --log-all to the proxy via environment variable
 if ($LogAll) { $env:DEEPCLAUDE_LOG_ALL_REQUESTS = 'true' }
+if ($SkipStartupCheck) { $env:DEEPCLAUDE_SKIP_STARTUP_CHECK = 'true' }
 
 # --- API Keys ---
 $DeepSeekKey = if ($env:DEEPSEEK_API_KEY) { $env:DEEPSEEK_API_KEY } else {
@@ -875,6 +891,8 @@ if ($Help) {
     Write-Host "  --lint          Self-lint with PSScriptAnalyzer"
     Write-Host "  --lint-config   Validate providers.json configuration"
     Write-Host "  --log-all       Log all requests to ~/.deepclaude/requests.log"
+    Write-Host "  --skip-startup-check  Skip the provider health check on proxy startup"
+    Write-Host "  --subagent-model MODEL  Set a dedicated subagent model (e.g., oc:big-pickle)"
     Write-Host "  --version       Print version and proxy path"
     Write-Host "  --effort LEVEL  Set Claude Code effort level (default: max). Values: low, medium, high, max."
     Write-Host "  --fix-av        Print AV exclusion commands"
@@ -1072,6 +1090,24 @@ if ($Doctor) {
         }
     } else {
         Write-Host "    $warn  No slot-overrides.json (will be created on first launch)"
+    }
+
+    # Show dedicated subagent model
+    if (Test-Path $SubagentModelFile) {
+        try {
+            $subData = Get-Content $SubagentModelFile -Raw | ConvertFrom-Json
+            if ($subData.providerKey -and $subData.modelId) {
+                $subVal = "$($subData.providerKey):$($subData.modelId)"
+                $subProvName = if ($Providers.ContainsKey($subData.providerKey)) { $Providers[$subData.providerKey].name } else { $null }
+                if ($subProvName) {
+                    Write-Host "`n  Subagent model: $subVal  ->  $subProvName (dedicated)" -ForegroundColor Green
+                } else {
+                    Write-Host "`n  Subagent model: $subVal (dedicated)" -ForegroundColor Green
+                }
+            }
+        } catch { $null = $_ }
+    } else {
+        Write-Host "`n  Subagent model: config default" -ForegroundColor DarkGray
     }
 
     # 7. Proxy startup test
@@ -1332,6 +1368,45 @@ if ($SetSlot -or $PSBoundParameters.ContainsKey('SetSlot')) {
         Write-Host "  Proxy is running -- change takes effect immediately.`n" -ForegroundColor DarkGray
     } else {
         Write-Host "  No proxy running. Override saved for next launch.`n" -ForegroundColor DarkGray
+    }
+    exit 0
+}
+
+# --- Subagent Model ---
+if ($SubagentModel -or $PSBoundParameters.ContainsKey('SubagentModel')) {
+    if (-not $SubagentModel) {
+        if (Test-Path $SubagentModelFile) {
+            Remove-Item $SubagentModelFile -Force
+            Write-Host "`n  Cleared dedicated subagent model.`n" -ForegroundColor Green
+        } else {
+            Write-Host "`n  No dedicated subagent model is set.`n" -ForegroundColor Yellow
+        }
+        exit 0
+    }
+
+    if ($SubagentModel -notmatch '^[a-z][a-z0-9_-]*:.+$') {
+        Write-Host "ERROR: Subagent model must be in providerKey:modelId format (e.g. oc:big-pickle)" -ForegroundColor Red
+        exit 1
+    }
+    $subProvKey = $SubagentModel.Split(':')[0]
+    if (-not $Providers.ContainsKey($subProvKey)) {
+        Write-Host "ERROR: Unknown provider '$subProvKey'. Known: $($Providers.Keys -join ', ')" -ForegroundColor Red
+        exit 1
+    }
+    if (-not $Providers[$subProvKey].key) {
+        Write-Host "ERROR: No API key set for provider '$subProvKey'." -ForegroundColor Red
+        exit 1
+    }
+
+    $subData = @{ providerKey = $subProvKey; modelId = $SubagentModel.Substring($subProvKey.Length + 1) } | ConvertTo-Json
+    Write-AtomicFile $SubagentModelFile $subData
+    Write-Host "`n  Set dedicated subagent model: $SubagentModel`n" -ForegroundColor Green
+
+    $proxyState = Get-ProxyState
+    if ($proxyState) {
+        Write-Host "  Proxy is running -- change takes effect immediately.`n" -ForegroundColor DarkGray
+    } else {
+        Write-Host "  No proxy running. Subagent model saved for next launch.`n" -ForegroundColor DarkGray
     }
     exit 0
 }
