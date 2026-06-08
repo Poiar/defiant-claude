@@ -10,7 +10,7 @@ import { reinjectReasoningContent } from './reasoning-cache';
 import { deduplicatePath } from './util';
 import { parseArgs, loadConfig, checkReload, validateConfig } from './config';
 import { resolveTarget } from './routing';
-import { tryForward, addFallbackHeaders, sseHeaders } from './forward';
+import { tryForward, addFallbackHeaders, sseHeaders, type ForwardHeaders, type ForwardResult } from './forward';
 import { convertServerTools, populateToolResults } from './server-tools';
 import { isProviderHealthy, recordStat, recordUsage, getFullHealthSnapshot, nextRequestId } from './stats';
 import { formatError, formatExhaustedError, scrubCredentials, isStreamingClient } from './error-codes';
@@ -45,22 +45,6 @@ interface ResolvedTarget {
     targetUrl: URL;
     rewriteModel: string | null;
     format: string;
-}
-
-interface ForwardHeaders {
-    [key: string]: string | string[] | undefined;
-}
-
-interface ForwardResult {
-    success: boolean;
-    status?: number;
-    headers?: ForwardHeaders;
-    body?: Buffer;
-    stream?: NodeJS.ReadableStream;
-    streamUsage?: { prompt_tokens: number; completion_tokens: number } | null;
-    error?: string;
-    rawBody?: string | null;
-    transportError?: boolean;
 }
 
 // --- Bootstrap ---
@@ -189,6 +173,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
 
     req.on('end', () => {
         if (body === null) return; // body read was cancelled (size limit exceeded)
+        req.setTimeout(0);  // Clear slow-body guard — streaming phase may have long idle gaps
         activeConnections++;
         const rawBody = Buffer.concat(chunks);
         const reqId = nextRequestId();
@@ -264,13 +249,13 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                     let modified = false;
 
                     if (parsedBody.messages) {
-                        const populated = await populateToolResults(parsedBody.messages as never[]);
+                        const populated = await populateToolResults(parsedBody.messages as any[]);
                         if (populated) modified = true;
                     }
 
-                    const conv = convertServerTools(parsedBody.tools as never[]);
+                    const conv = convertServerTools(parsedBody.tools as any[]);
                     if (conv.hasWebSearch || conv.hasWebFetch) {
-                        parsedBody.tools = conv.tools as never[];
+                        parsedBody.tools = conv.tools as any[];
                         modified = true;
                     }
 
@@ -384,7 +369,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                     try {
                         const reqParsed = JSON.parse(forwardedBody.toString());
                         if (reqParsed.messages) {
-                            injectThinkingBlocks(reqParsed.messages as never[]);
+                            injectThinkingBlocks(reqParsed.messages as any[]);
                             forwardedBody = Buffer.from(JSON.stringify(reqParsed));
                         }
                     } catch (e) {
@@ -402,7 +387,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                                 return m;
                             });
                             // Re-inject reasoning_content stripped by SDKs
-                            reinjectReasoningContent(reqParsed.messages as never[]);
+                            reinjectReasoningContent(reqParsed.messages as any[]);
                             forwardedBody = Buffer.from(JSON.stringify(reqParsed));
                         }
                     } catch (e) {
@@ -445,7 +430,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                     res.once('close', onClose);
 
                     try {
-                        result = await tryForward(transport as never, options as never, forwardedBody.toString(), streamTransformer, target.format === 'openai', parsedBody, model, reqId);
+                        result = await tryForward(transport as any, options as any, forwardedBody.toString(), streamTransformer, target.format === 'openai', parsedBody, model, reqId);
                     } finally {
                         release();
                         res.removeListener('close', onClose);
@@ -496,13 +481,15 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                         } else if (result.stream) {
                             result.stream.on('error', (err: Error) => {
                                 log.error(reqId, 'Stream error for ' + model + ': ' + scrubCredentials(err.message));
-                                if (!res.headersSent && !res.destroyed) {
-                                    res.writeHead(502, { 'content-type': 'application/json' });
-                                    res.end(JSON.stringify(formatError(502, null, isDev)));
-                                } else if (!res.destroyed) {
-                                    res.write('event: error\ndata: ' + JSON.stringify(formatError(502, null, isDev)) + '\n\n');
-                                    res.end();
-                                }
+                                try {
+                                    if (!res.headersSent && !res.destroyed) {
+                                        res.writeHead(502, { 'content-type': 'application/json' });
+                                        res.end(JSON.stringify(formatError(502, null, isDev)));
+                                    } else if (!res.destroyed) {
+                                        res.write('event: error\ndata: ' + JSON.stringify(formatError(502, null, isDev)) + '\n\n');
+                                        res.end();
+                                    }
+                                } catch (_) { /* socket may already be destroyed */ }
                             });
                             pipeline(result.stream, res, (err: Error | null) => {
                                 if (result.streamUsage) {
@@ -512,7 +499,8 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                             });
                             // Propagate client disconnect to upstream
                             res.on('close', () => {
-                                if (result.stream && !(result.stream as NodeJS.ReadableStream & { destroyed: boolean }).destroyed) (result.stream as NodeJS.ReadableStream & { destroy(): void }).destroy();
+                                const s = result.stream as NodeJS.ReadableStream & { destroyed: boolean; destroy(): void };
+                                if (s && !s.destroyed) s.destroy();
                             });
                         }
                     }
@@ -565,7 +553,9 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
             }
         })().catch((err: Error) => {
             log.error(null, 'unhandled error in request handler: ' + truncateForLog(err.message || String(err)));
-            if (!res.headersSent && !res.destroyed) { res.writeHead(502); res.end(JSON.stringify(formatError(502, null, isDev))); }
+            try {
+                if (!res.headersSent && !res.destroyed) { res.writeHead(502); res.end(JSON.stringify(formatError(502, null, isDev))); }
+            } catch (_) { /* socket may already be destroyed */ }
         }).finally(() => {
             activeConnections--;
         });
