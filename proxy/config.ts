@@ -4,6 +4,7 @@
 // Reads routes.json and slot-overrides.json, polls for changes once per second.
 
 import fs from 'fs';
+import path from 'path';
 import { createLogger } from './log';
 import { validateUrl } from './ssrf';
 import { decrypt } from './crypto';
@@ -201,4 +202,33 @@ export function resolveKey(rawKey: string | null | undefined): string | null | u
         log.warn(null, 'Failed to decrypt API key: ' + (err as Error).message);
         return null;
     }
+}
+
+// --- Model alias resolution ---
+// Loads short-name aliases from providers.json and resolves them to full model IDs.
+// Aliases are case-insensitive; unknown inputs pass through unchanged.
+
+let aliasCache: Record<string, string> | null = null;
+
+export function loadAliases(): Record<string, string> {
+    if (aliasCache) return aliasCache;
+    try {
+        const data = readJson(path.join(__dirname, 'providers.json'));
+        aliasCache = (data.aliases as Record<string, string>) || {};
+    } catch (_) {
+        aliasCache = {};
+    }
+    return aliasCache;
+}
+
+/** Reset the alias cache (used in tests to reload from disk). */
+export function resetAliasCache(): void {
+    aliasCache = null;
+}
+
+export function resolveAlias(modelId: string): string {
+    if (!modelId) return modelId;
+    const aliases = loadAliases();
+    const lower = modelId.toLowerCase();
+    return (aliases[lower] as string) || modelId;
 }

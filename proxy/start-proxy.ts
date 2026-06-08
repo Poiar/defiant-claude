@@ -16,7 +16,7 @@ import { tryForward, addFallbackHeaders, sseHeaders, type ForwardHeaders, type F
 import { sendProbe } from './probe';
 import type { ProbeSlot } from './probe';
 import { convertServerTools, populateToolResults } from './server-tools';
-import { isProviderHealthy, recordSpend, recordStat, recordUsage, recordRecentRequest, getFullHealthSnapshot, nextRequestId, checkBudget, setSessionCap, setDailyBudget, registerProviderInfo, maybeStartProbe, recordProbeResult, getRegisteredProviderKeys, getProviderInfo } from './stats';
+import { isProviderHealthy, recordSpend, recordStat, recordUsage, recordRecentRequest, getFullHealthSnapshot, nextRequestId, checkBudget, setSessionCap, setDailyBudget, registerProviderInfo, maybeStartProbe, recordProbeResult, getRegisteredProviderKeys, getProviderInfo, setGitHash } from './stats';
 import { serveDashboard } from './dashboard';
 import { formatError, formatExhaustedError, scrubCredentials, isStreamingClient } from './error-codes';
 import { truncateForLog } from './truncate';
@@ -28,6 +28,13 @@ import { createRateLimiter } from './rate-limiter';
 import { sanitizeHeaders } from './header-sanitizer';
 import { sessionKey, getMomentum, record as recordMomentum } from './momentum';
 import { validateUrl } from './ssrf';
+
+// Git hash captured at startup so every health check shows the exact commit.
+import { execSync } from 'child_process';
+const GIT_HASH = (() => {
+  try { return execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim(); }
+  catch { return 'unknown'; }
+})();
 
 // Retry config for transient upstream transport errors.
 // Each provider in the fallback chain gets up to 3 retries with exponential
@@ -43,6 +50,9 @@ const FALLBACKABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
 // --- Bootstrap ---
 
 const log = createLogger('proxy');
+
+// Stamp the git hash onto the stats module for health endpoint reporting.
+setGitHash(GIT_HASH);
 
 // Check for --probe flag before normal startup
 const probeIdx = process.argv.indexOf('--probe');

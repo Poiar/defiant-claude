@@ -57,6 +57,37 @@ if (Test-Path $spendFile) {
   } catch {}
 }
 
+# Circuit breaker health indicator
+$cbIndicator = ''
+$proxyFile = "$env:USERPROFILE\.deepclaude\proxy.json"
+if (Test-Path $proxyFile) {
+  try {
+    $proxyCfg = Get-Content $proxyFile -Raw | ConvertFrom-Json
+    $port = $proxyCfg.port
+    if ($port -and $port -gt 0) {
+      $health = Invoke-RestMethod -Uri "http://127.0.0.1:$port/health" -TimeoutSec 1 -ErrorAction SilentlyContinue
+      if ($health -and $health.providers) {
+        $worstState = 'CLOSED'
+        $hasData = $false
+        foreach ($provider in $health.providers.PSObject.Properties) {
+          $reqs = $provider.Value.requests
+          $cb = $provider.Value.circuitBreaker
+          if ($reqs -gt 0) { $hasData = $true }
+          if ($cb -eq 'OPEN') { $worstState = 'OPEN'; break }
+          if ($cb -eq 'HALF_OPEN' -and $worstState -ne 'OPEN') { $worstState = 'HALF_OPEN' }
+        }
+        if ($hasData) {
+          $cbIndicator = switch ($worstState) {
+            'OPEN'     { "$bold$(fg 255 80 80)✕$reset" }
+            'HALF_OPEN' { "$bold$(fg 255 180 50)◐$reset" }
+            'CLOSED'    { "$bold$(fg 80 200 120)·$reset" }
+          }
+        }
+      }
+    }
+  } catch {}
+}
+
 $maxTokens = $d.context_window.max_input_tokens ?? $ctxMap[$modelLookup]
 $tokStr = if ($tokens) { if ($tokens -ge 1000) { "$([math]::Round($tokens/1000))k" } else { "$tokens" } } else { '' }
 $pct = $null
@@ -85,6 +116,9 @@ if ($slotLabel -or $model) {
 }
 if ($effort) {
   $modelParts += "$bold$effortColor$effort$reset"
+}
+if ($cbIndicator) {
+  $modelParts += $cbIndicator
 }
 $modelGroup = $modelParts -join $narrow
 

@@ -14,6 +14,7 @@
     deepclaude -b ds+or             # DeepSeek main + OpenRouter subs
     deepclaude -b anthropic         # Normal Claude Code
 
+    # Model aliases: sonnet, opus, haiku, v4, flash (short names resolve to full model IDs)
     # Ad-hoc positional: providerKey:modelId for opus sonnet haiku subagent
     deepclaude ds:deepseek-v4-pro                                              # 1 spec -> all slots
     deepclaude ds:deepseek-v4-pro oc:big-pickle                                # 2 specs -> first half / second half
@@ -839,6 +840,7 @@ if ($Help) {
     Write-Host "       deepclaude [-b backend] [--status] [--doctor] [--version]"
     Write-Host ""
     Write-Host "  Each positional arg is providerKey:modelId, mapping to opus/sonnet/haiku/subagent."
+    Write-Host "  Model aliases: sonnet, opus, haiku, v4, flash, ... (short names resolve to full model IDs)"
     Write-Host "  Fewer than 4 specs repeats the last one for remaining slots."
     Write-Host ""
     Write-Host "  Examples:"
@@ -886,7 +888,22 @@ if ($Version) {
     $myPath = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
     $scriptPath = Join-Path $myPath "deepclaude.ps1"
     $mtime = if (Test-Path $scriptPath) { (Get-Item $scriptPath).LastWriteTime.ToString("yyyy-MM-dd HH:mm") } else { "unknown" }
-    Write-Host "deepclaude v1.0.0 ($mtime)"
+
+    # Read version from package.json, fallback to hardcoded default.
+    $version = "v1.0.0"
+    $pkgPath = Join-Path $myPath "package.json"
+    if (Test-Path $pkgPath) {
+        try { $version = "v" + ((Get-Content $pkgPath -Raw | ConvertFrom-Json).version) } catch {}
+    }
+
+    # Get short git hash from the repo directory.
+    $gitHash = "unknown"
+    try {
+        $hash = git -C "$myPath" rev-parse --short HEAD 2>$null
+        if ($hash) { $gitHash = $hash.Trim() }
+    } catch {}
+
+    Write-Host "deepclaude $version ($gitHash) ($mtime)"
     Write-Host "Proxy: $(Join-Path $myPath 'proxy\start-proxy.js')"
     exit 0
 }

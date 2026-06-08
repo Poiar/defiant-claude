@@ -6,7 +6,7 @@
 
 import { URL } from 'url';
 import { isProviderHealthy } from './stats';
-import { resolveKey } from './config';
+import { resolveKey, resolveAlias } from './config';
 
 // --- Types ---
 
@@ -109,10 +109,12 @@ export function resolveTarget(
     const prefixMatch = resolvedModel && resolvedModel.match(/^([a-z][a-z0-9_-]*):(.+)$/);
     if (prefixMatch && routing.providers && routing.providers[prefixMatch[1]]) {
         providerKey = prefixMatch[1];
-        rewriteModel = prefixMatch[2];
+        rewriteModel = resolveAlias(prefixMatch[2]);
     } else {
+        // Resolve model alias before routes table lookup
+        const resolvedAlias = resolveAlias(resolvedModel || '');
         // Fall back to routes table lookup
-        const route = (resolvedModel && routing.routes && routing.routes[resolvedModel]) || null;
+        const route = (resolvedAlias && routing.routes && routing.routes[resolvedAlias]) || null;
 
         if (!route) {
             providerKey = routing.defaultProvider || null;
