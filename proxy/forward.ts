@@ -28,7 +28,7 @@ interface ForwardResult {
     status?: number;
     headers?: ForwardHeaders;
     body?: Buffer;
-    stream?: Transform;
+    stream?: NodeJS.ReadableStream;
     streamUsage?: { prompt_tokens: number; completion_tokens: number } | null;
     error?: string;
     rawBody?: string | null;
@@ -215,7 +215,7 @@ export function tryForward(
                     }
                     );
 
-                    resolve({ success: true, status: proxyRes.statusCode, headers: outHeaders, stream: outStream as Transform, streamUsage });
+                    resolve({ success: true, status: proxyRes.statusCode, headers: outHeaders, stream: outStream, streamUsage });
                 });
             } else {
                 (proxyRes as unknown as NodeJS.ReadableStream & { setTimeout(ms: number, cb: () => void): void }).setTimeout(30000, () => {
