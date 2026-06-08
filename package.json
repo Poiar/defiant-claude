@@ -55,6 +55,11 @@
       "js",
       "jsx",
       "json"
+    ],
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "/\\.claude/",
+      "/\\.git/"
     ]
   },
   "license": "MIT",

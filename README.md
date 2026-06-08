@@ -142,6 +142,7 @@ deepclaude ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free  # 3 specs 
 --effort LEVEL        Set Claude Code effort level (default: max)
 --fix-av              Print Windows Defender exclusion commands
 --install-statusline  Auto-install the statusline script and config
+--log-all             Log all requests to ~/.deepclaude/requests.log (by default only failures are logged)
 ```
 
 ## Providers and API keys

@@ -596,6 +596,8 @@ show_help() {
     echo "  --models        List all available models (for use with /model in CC)"
     echo "  --effort LEVEL   Claude Code effort level (default: max)"
     echo "  --lint                 Lint with shellcheck"
+  echo "  --lint-config          Validate providers.json configuration"
+  echo "  --log-all              Log all requests to ~/.deepclaude/requests.log"
   echo "  --fix-av               Windows Defender exclusion reminder"
   echo "  --install-statusline   Auto-install statusline to ~/.claude/"
   echo "  --set-slot SLOT MODEL  Override a slot: opus/sonnet/haiku/subagent"
@@ -1141,6 +1143,11 @@ while [[ $# -gt 0 ]]; do
                 echo "  shellcheck not installed. Install: brew install shellcheck (macOS) or apt install shellcheck (Linux)" >&2
             fi
             exit 0 ;;
+        --lint-config)
+            ACTION="lint-config"; shift ;;
+        --log-all)
+            export DEEPCLAUDE_LOG_ALL_REQUESTS=true
+            shift ;;
         --fix-av)
             echo "AV exclusion is Windows-only. Ensure $(dirname "$0") is excluded."; exit 0 ;;
         *)
@@ -1222,6 +1229,12 @@ case "$ACTION" in
         "$SCRIPT_DIR/node_modules/.bin/tsx" "$SCRIPT_DIR/proxy/start-proxy.ts" --dry-run "$dry_routes"
         exit $? ;;
     models)     show_models ;;
+    lint-config)
+        echo ""
+        echo "  Validating providers.json configuration..."
+        echo ""
+        "${SCRIPT_DIR}/node_modules/.bin/tsx" "${SCRIPT_DIR}/proxy/config-lint.ts"
+        exit $? ;;
     stop-proxy)
         if proxy_state=$(get_proxy_state); then
             read -r pid port <<< "$proxy_state"

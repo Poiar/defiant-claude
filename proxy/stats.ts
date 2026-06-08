@@ -3,6 +3,7 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import type { StreamMetrics } from './stream-metrics';
 
 // Provider stats tracking with non-fatal recording.
 // Every stat write is wrapped so a recording failure never crashes a request.
@@ -191,12 +192,20 @@ export function getFullHealthSnapshot(concurrencyStatus: unknown, rateLimiterSta
     if (rateLimiterStatus) {
         base.rateLimiter = rateLimiterStatus;
     }
-    // Add circuit breaker state per provider
+    // Add circuit breaker state and streaming metrics per provider
     const providers = base.providers as Record<string, Record<string, unknown>>;
     if (providers) {
         for (const k of Object.keys(providers)) {
             providers[k].circuitBreaker = getCircuitBreakerState(k);
             providers[k].lastRequest = providerStats[k] ? providerStats[k].lastRequest : undefined;
+            const acc = streamAccumulators[k];
+            if (acc) {
+                providers[k].avgTTFT = acc.ttftCount > 0 ? Math.round(acc.totalTTFT / acc.ttftCount) : 0;
+                providers[k].avgTPS = acc.tpsCount > 0 ? Math.round((acc.totalTPS / acc.tpsCount) * 100) / 100 : 0;
+            } else {
+                providers[k].avgTTFT = 0;
+                providers[k].avgTPS = 0;
+            }
         }
     }
     // Spend and recent requests
@@ -261,6 +270,37 @@ export function recordRecentRequest(entry: RecentRequestEntry): void {
         recentRequests.push(entry);
         if (recentRequests.length > MAX_RECENT_REQUESTS) {
             recentRequests.shift();
+        }
+    } catch (_) {
+        // Non-fatal -- recording should never crash the request.
+    }
+}
+
+// --- Streaming metric accumulators (per-provider) ---
+
+interface StreamMetricAccumulator {
+    totalTTFT: number;
+    ttftCount: number;
+    totalTPS: number;
+    tpsCount: number;
+}
+const streamAccumulators: Record<string, StreamMetricAccumulator> = {};
+
+// Record streaming performance metrics for a provider.  Never throws.
+export function recordStreamMetrics(providerKey: string, metrics: StreamMetrics): void {
+    if (!providerKey) return;
+    try {
+        if (!streamAccumulators[providerKey]) {
+            streamAccumulators[providerKey] = { totalTTFT: 0, ttftCount: 0, totalTPS: 0, tpsCount: 0 };
+        }
+        const acc = streamAccumulators[providerKey];
+        if (metrics.ttftMs > 0) {
+            acc.totalTTFT += metrics.ttftMs;
+            acc.ttftCount++;
+        }
+        if (metrics.tps > 0) {
+            acc.totalTPS += metrics.tps;
+            acc.tpsCount++;
         }
     } catch (_) {
         // Non-fatal -- recording should never crash the request.

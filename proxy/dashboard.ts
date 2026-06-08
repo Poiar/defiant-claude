@@ -195,6 +195,8 @@ export function buildDashboardHtml(providerDisplayNames?: Record<string, string>
 '+"<div class=\\"card-stat\\"><div class=\\"card-stat-label\\">Circuit Breaker</div><div class=\\"card-stat-value "+cbClass(cb)+"\\">"+cb+"</div></div>"' +
 '+"<div class=\\"card-stat\\"><div class=\\"card-stat-label\\">Success Rate</div><div class=\\"card-stat-value\\">"+p.successes+"/"+p.requests+" ("+sr+"%)</div></div>"' +
 '+"<div class=\\"card-stat\\"><div class=\\"card-stat-label\\">Avg Latency</div><div class=\\"card-stat-value\\">"+(p.avgMs||0)+"ms</div></div>"' +
+'+"<div class=\\"card-stat\\"><div class=\\"card-stat-label\\">Avg TTFT</div><div class=\\"card-stat-value\\">"+(p.avgTTFT||0)+"ms</div></div>"' +
+'+"<div class=\\"card-stat\\"><div class=\\"card-stat-label\\">Avg TPS</div><div class=\\"card-stat-value\\">"+(p.avgTPS||0)+"</div></div>"' +
 '+"<div class=\\"card-stat\\"><div class=\\"card-stat-label\\">Tokens (In/Out)</div><div class=\\"card-stat-value\\">"+(p.inputTokens||0)+" / "+(p.outputTokens||0)+"</div></div>"' +
 '+"<div class=\\"card-stat\\"><div class=\\"card-stat-label\\">Last Request</div><div class=\\"card-stat-value\\">"+timeAgo(p.lastRequest)+"</div></div>"' +
 '+"</div></div>"' +

@@ -16,7 +16,7 @@ import { tryForward, addFallbackHeaders, sseHeaders, type ForwardHeaders, type F
 import { sendProbe } from './probe';
 import type { ProbeSlot } from './probe';
 import { convertServerTools, populateToolResults } from './server-tools';
-import { isProviderHealthy, recordSpend, recordStat, recordUsage, recordRecentRequest, getFullHealthSnapshot, nextRequestId, checkBudget, setSessionCap, setDailyBudget, registerProviderInfo, maybeStartProbe, recordProbeResult, getRegisteredProviderKeys, getProviderInfo, setGitHash } from './stats';
+import { isProviderHealthy, recordSpend, recordStat, recordUsage, recordRecentRequest, recordStreamMetrics, getFullHealthSnapshot, nextRequestId, checkBudget, setSessionCap, setDailyBudget, registerProviderInfo, maybeStartProbe, recordProbeResult, getRegisteredProviderKeys, getProviderInfo, setGitHash } from './stats';
 import { serveDashboard } from './dashboard';
 import { formatError, formatExhaustedError, scrubCredentials, isStreamingClient } from './error-codes';
 import { truncateForLog } from './truncate';
@@ -28,6 +28,8 @@ import { createRateLimiter } from './rate-limiter';
 import { sanitizeHeaders } from './header-sanitizer';
 import { sessionKey, getMomentum, record as recordMomentum } from './momentum';
 import { validateUrl } from './ssrf';
+import { finalizeMetrics } from './stream-metrics';
+import { logRequest, setLogAllRequests, type RequestLogEntry } from './request-log';
 
 // Git hash captured at startup so every health check shows the exact commit.
 import { execSync } from 'child_process';
@@ -130,8 +132,9 @@ if (probeIdx >= 2) {
 
     const hasDashboard = process.argv.slice(2).indexOf('--dashboard') >= 0;
     const hasOpen = process.argv.slice(2).indexOf('--open') >= 0;
+    const hasLogAll = process.argv.slice(2).indexOf('--log-all') >= 0;
     const filteredArgv = process.argv.filter((a, i) => {
-	      if (a === '--dashboard' || a === '--open' || a === '--max-spend') return false;
+	      if (a === '--dashboard' || a === '--open' || a === '--max-spend' || a === '--log-all') return false;
 	      if (i > 0 && process.argv[i - 1] === '--max-spend') return false;
 	      return true;
 	    });
@@ -144,6 +147,11 @@ if (probeIdx >= 2) {
 const configWarnings = validateConfig(state);
 for (const w of configWarnings) {
     log.warn(null, w);
+}
+
+// Enable request logging based on CLI flag or env var (opt-in).
+if (hasLogAll || process.env.DEEPCLAUDE_LOG_ALL_REQUESTS === 'true') {
+    setLogAllRequests(true);
 }
 
 // Load provider registry for data-driven hooks (optional -- proxy works without it)
@@ -509,6 +517,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
             let lastQualityReason: string | null = null;
             let fallbackFromModel: string | null = null;
             const attemptedProviders: Array<{ providerKey: string }> = [];
+            let lastAttemptMs = 0;
 
             for (let attempt = 0; attempt < chain.length; attempt++) {
                 const target = chain[attempt];
@@ -669,6 +678,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                     }
                 }
                 const ms = Date.now() - t0;
+                lastAttemptMs = ms;
 
                 if (result.success) {
                     recordStat(target.providerKey, true, ms);
@@ -698,6 +708,30 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                         log.info(reqId, req.method + ' ' + (model || '-') + ' -> ' + label + ' ' + result.status + ' ' + ms + 'ms');
                     }
 
+                    // Record request log entry
+                    {
+                        const logEntry: RequestLogEntry = {
+                            timestamp: new Date().toISOString(),
+                            requestId: reqId,
+                            method: req.method || 'POST',
+                            url: (req.url || '').split('?')[0],
+                            model: model || '',
+                            providerKey: target.providerKey,
+                            slot: slot || '',
+                            status: result.status || 200,
+                            success: true,
+                            fallbackUsed: isRetry,
+                            fallbackChain: attemptedProviders.map(p => p.providerKey),
+                            latencyMs: ms,
+                            userAgent: (req.headers['user-agent'] as string) || undefined,
+                        };
+                        if (result.streamUsage) {
+                            logEntry.tokensIn = result.streamUsage.prompt_tokens;
+                            logEntry.tokensOut = result.streamUsage.completion_tokens;
+                        }
+                        logRequest(logEntry);
+                    }
+
                     // Add fallback response headers
                     let outHeaders = result.headers || {};
                     if (isRetry) {
@@ -711,6 +745,9 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                         res.writeHead(result.status || 200, outHeaders as Record<string, string | number>);
                         if (result.body) {
                             res.end(result.body);
+                            if (result.streamMetrics) {
+                                recordStreamMetrics(target.providerKey, result.streamMetrics);
+                            }
                         } else if (result.stream) {
                             result.stream.on('error', (err: Error) => {
                                 log.error(reqId, 'Stream error for ' + model + ': ' + scrubCredentials(err.message));
@@ -725,6 +762,10 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                                 } catch (_) { /* socket may already be destroyed */ }
                             });
                             pipeline(result.stream, res, (err: Error | null) => {
+                                if (result.streamTimings) {
+                                    const streamMetrics = finalizeMetrics(result.streamTimings, result.streamUsage?.completion_tokens || 0);
+                                    recordStreamMetrics(target.providerKey, streamMetrics);
+                                }
                                 if (result.streamUsage) {
                                     recordUsage(target.providerKey, result.streamUsage.prompt_tokens || 0, result.streamUsage.completion_tokens || 0);
                                     const upstreamModel = target.rewriteModel || model;
@@ -781,6 +822,25 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
             }
 
             // All attempts exhausted
+            {
+                const logEntry: RequestLogEntry = {
+                    timestamp: new Date().toISOString(),
+                    requestId: reqId,
+                    method: req.method || 'POST',
+                    url: (req.url || '').split('?')[0],
+                    model: model || '',
+                    providerKey: attemptedProviders.length > 0 ? attemptedProviders[attemptedProviders.length - 1].providerKey : '',
+                    slot: slot || '',
+                    status: lastStatus || 502,
+                    success: false,
+                    fallbackUsed: attemptedProviders.length > 1,
+                    fallbackChain: attemptedProviders.map(p => p.providerKey),
+                    latencyMs: lastAttemptMs,
+                    errorSummary: lastQualityReason || undefined,
+                    userAgent: (req.headers['user-agent'] as string) || undefined,
+                };
+                logRequest(logEntry);
+            }
             if (!res.headersSent && !res.destroyed) {
                 log.info(reqId, 'all providers exhausted after ' + attemptedProviders.length + ' attempt(s) -- safe request headers: ' + JSON.stringify(safeHeaders.headers) + ' (' + safeHeaders.dropped + ' dropped)');
                 const streamingClient = isStreamingClient(req.headers as Record<string, string | string[] | undefined>, parsedBody);
