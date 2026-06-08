@@ -9,7 +9,7 @@ import { injectThinkingBlocks } from './thinking-cache';
 import { reinjectReasoningContent } from './reasoning-cache';
 import { deduplicatePath } from './util';
 import { parseArgs, loadConfig, checkReload, validateConfig } from './config';
-import { resolveTarget } from './routing';
+import { resolveTarget, ResolvedTarget } from './routing';
 import { tryForward, addFallbackHeaders, sseHeaders, type ForwardHeaders, type ForwardResult } from './forward';
 import { convertServerTools, populateToolResults } from './server-tools';
 import { isProviderHealthy, recordStat, recordUsage, getFullHealthSnapshot, nextRequestId } from './stats';
@@ -34,18 +34,6 @@ const RETRY_BASE_DELAY_MS = 800;   // 800ms -> 1.6s
 // Auth errors (401/403) and client errors (400/404/413) won't be fixed
 // by a different backend -- fail fast rather than burning fallback attempts.
 const FALLBACKABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
-
-// --- Types ---
-
-interface ResolvedTarget {
-    providerKey: string;
-    url: string;
-    key: string | null | undefined;
-    isBearer: boolean;
-    targetUrl: URL;
-    rewriteModel: string | null;
-    format: string;
-}
 
 // --- Bootstrap ---
 
@@ -218,13 +206,15 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                         });
                     }
                 });
-                anthroReq.on('timeout', () => { anthroReq.destroy(); if (!res.headersSent && !res.destroyed) { res.writeHead(504); res.end(); } });
+                anthroReq.on('timeout', () => { anthroReq.destroy(); try { if (!res.headersSent && !res.destroyed) { res.writeHead(504); res.end(); } } catch (_) { /* socket may already be destroyed */ } });
                 anthroReq.on('error', (err: Error) => {
                     log.error(reqId, 'passthrough upstream error: ' + scrubCredentials(err.message));
-                    if (!res.headersSent && !res.destroyed) {
-                        res.writeHead(502);
-                        res.end(JSON.stringify(formatError(502, null, isDev)));
-                    }
+                    try {
+                        if (!res.headersSent && !res.destroyed) {
+                            res.writeHead(502);
+                            res.end(JSON.stringify(formatError(502, null, isDev)));
+                        }
+                    } catch (_) { /* socket may already be destroyed */ }
                 });
                 anthroReq.write(rawBody);
                 anthroReq.end();
@@ -418,10 +408,12 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                     try {
                         release = await slotPromise;
                     } catch {
-                        if (!res.headersSent && !res.destroyed) {
-                            res.writeHead(503, { 'content-type': 'application/json' });
-                            res.end(JSON.stringify(formatError(503)));
-                        }
+                        try {
+                            if (!res.headersSent && !res.destroyed) {
+                                res.writeHead(503, { 'content-type': 'application/json' });
+                                res.end(JSON.stringify(formatError(503)));
+                            }
+                        } catch (_) { /* socket may already be destroyed */ }
                         return; // abort entire request -- can't get a slot
                     } finally {
                         req.removeListener('close', cancelSlot);
@@ -537,18 +529,24 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
 
                 if (streamingClient) {
                     const friendlyEvents = buildFriendlyStreamEvents(lastStatus, lastRawBody, model, attemptedProviders);
-                    res.writeHead(200, sseHeaders({ 'x-fallback-exhausted': 'true' }) as Record<string, string | number>);
-                    res.write(friendlyEvents);
-                    res.end();
+                    try {
+                        res.writeHead(200, sseHeaders({ 'x-fallback-exhausted': 'true' }) as Record<string, string | number>);
+                        res.write(friendlyEvents);
+                        res.end();
+                    } catch (_) { /* socket may already be destroyed */ }
                 } else if (isChatClient) {
                     const friendlyResp = buildFriendlyResponse(lastStatus, lastRawBody, model, attemptedProviders);
-                    res.writeHead(friendlyResp.status, friendlyResp.headers);
-                    res.end(friendlyResp.body);
+                    try {
+                        res.writeHead(friendlyResp.status, friendlyResp.headers);
+                        res.end(friendlyResp.body);
+                    } catch (_) { /* socket may already be destroyed */ }
                 } else {
                     const exhaustedError = formatExhaustedError(lastStatus, lastRawBody, isDev);
                     const statusCode = (lastStatus && lastStatus >= 400 && lastStatus < 500) ? lastStatus : 502;
-                    res.writeHead(statusCode, { 'content-type': 'application/json', 'x-fallback-exhausted': 'true' });
-                    res.end(JSON.stringify(exhaustedError));
+                    try {
+                        res.writeHead(statusCode, { 'content-type': 'application/json', 'x-fallback-exhausted': 'true' });
+                        res.end(JSON.stringify(exhaustedError));
+                    } catch (_) { /* socket may already be destroyed */ }
                 }
             }
         })().catch((err: Error) => {

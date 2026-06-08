@@ -7,6 +7,7 @@ import fs from 'fs';
 import { createLogger } from './log';
 import { validateUrl } from './ssrf';
 import { decrypt } from './crypto';
+import type { ProviderEntry, RoutingConfig } from './routing';
 
 const log = createLogger('config');
 
@@ -17,19 +18,6 @@ interface ParsedArgs {
     overridesFile: string | null;
     singleUrl: string | null;
     singleKey: string | null;
-}
-interface ProviderEntry {
-    url: string;
-    auth?: string;
-    format?: string;
-    fallback?: string[];
-    key?: string;
-    keyEnv?: string;
-}
-interface RoutingConfig {
-    providers?: Record<string, ProviderEntry>;
-    defaultProvider?: string;
-    routes?: Record<string, string | { provider: string; rewrite?: string }>;
 }
 interface ConfigState {
     routing: RoutingConfig | null;

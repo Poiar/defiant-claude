@@ -448,16 +448,18 @@ export function createStreamTransformer(model: string): Transform {
         return output;
     }
 
-    return new Transform({
-        transform(chunk: Buffer | string, _encoding: string, callback: TransformCallback): void {
-            (this as unknown as Record<string, string>)._buf = ((this as unknown as Record<string, string>)._buf || '') + chunk.toString();
-            if ((this as unknown as Record<string, string>)._buf.length > 1_048_576) {
+    class StreamTransformer extends Transform {
+        private _buf = '';
+
+        _transform(chunk: Buffer | string, _encoding: string, callback: TransformCallback): void {
+            this._buf = (this._buf || '') + chunk.toString();
+            if (this._buf.length > 1_048_576) {
                 log.error(null, 'SSE buffer exceeded 1MB in stream transformer -- aborting');
                 this.destroy(new Error('SSE buffer too large'));
                 return;
             }
-            const parts = (this as unknown as Record<string, string>)._buf.split('\n\n');
-            (this as unknown as Record<string, string>)._buf = parts.pop() || '';
+            const parts = this._buf.split('\n\n');
+            this._buf = parts.pop() || '';
             let output = '';
             for (const part of parts) {
                 if (state.finished) break;
@@ -466,17 +468,20 @@ export function createStreamTransformer(model: string): Transform {
                 output += processEvent(trimmed);
             }
             callback(null, output);
-        },
-        flush(callback: TransformCallback): void {
+        }
+
+        _flush(callback: TransformCallback): void {
             let output = '';
-            if ((this as unknown as Record<string, string>)._buf && (this as unknown as Record<string, string>)._buf.trim()) {
-                if (!state.finished) output += processEvent((this as unknown as Record<string, string>)._buf.trim());
+            if (this._buf && this._buf.trim()) {
+                if (!state.finished) output += processEvent(this._buf.trim());
             }
             if (!state.finished) {
                 output += finishStream('end_turn');
             }
             callback(null, output);
-        },
-    });
+        }
+    }
+
+    return new StreamTransformer();
 }
 

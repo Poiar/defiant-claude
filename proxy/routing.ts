@@ -10,7 +10,7 @@ import { resolveKey } from './config';
 
 // --- Types ---
 
-interface ProviderEntry {
+export interface ProviderEntry {
     url: string;
     key?: string;
     keyEnv?: string;
@@ -19,7 +19,7 @@ interface ProviderEntry {
     fallback?: string[];
 }
 
-interface RoutingConfig {
+export interface RoutingConfig {
     providers?: Record<string, ProviderEntry>;
     defaultProvider?: string;
     routes?: Record<string, string | { provider: string; rewrite?: string }>;
@@ -29,7 +29,7 @@ interface SlotOverrides {
     [slot: string]: string;
 }
 
-interface ResolvedTarget {
+export interface ResolvedTarget {
     providerKey: string;
     url: string;
     key: string | null | undefined;
