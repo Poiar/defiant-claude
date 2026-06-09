@@ -206,6 +206,26 @@ export function tryForward(
                         (proxy as NodeJS.WritableStream & { destroy(): void }).destroy();
                         return resolve({ success: false, error: 'Stream peek: ' + peek.reason });
                     }
+                    // If the upstream ignored accept-encoding and returned gzip,
+                    // decompress before SSE parsing so the downstream transformer
+                    // and client receive clean text.
+                    const ce = proxyRes.headers['content-encoding'];
+                    const isGzip = typeof ce === 'string' && ce.includes('gzip');
+                    let sourceStream: NodeJS.ReadableStream = proxyRes;
+                    if (isGzip) {
+                        try {
+                            const gunzip = zlib.createGunzip();
+                            proxyRes.pipe(gunzip);
+                            proxyRes.on('error', (err: Error) => gunzip.destroy(err));
+                            gunzip.on('error', () => { /* errors handled via sourceStream listener below */ });
+                            sourceStream = gunzip;
+                            log.info(reqId, 'Decompressing gzip-encoded streaming response');
+                        } catch (err) {
+                            log.error(reqId, 'Failed to create gunzip: ' + truncateForLog((err as Error).message));
+                            // Fall through — SSE parsing will likely fail but that
+                            // is handled by existing error paths.
+                        }
+                    }
                     // Heartbeat: if no chunk arrives within STREAM_HEARTBEAT_MS the
                     // connection is silently dead.  Hard cap: total streaming duration
                     // is bounded by STREAM_READ_TIMEOUT_MS.
@@ -232,16 +252,16 @@ export function tryForward(
                         );
                     }, STREAM_READ_TIMEOUT_MS);
                     resetStreamHeartbeat();
-                    proxyRes.on('data', (chunk: Buffer | string) => {
+                    sourceStream.on('data', (chunk: Buffer | string) => {
                         streamBytes += typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.length;
                         resetStreamHeartbeat();
                     });
-                    proxyRes.once('end', () => {
+                    sourceStream.once('end', () => {
                         streamEndedNormally = true;
                         cancelStreamTimeouts();
                     });
-                    proxyRes.once('error', cancelStreamTimeouts);
-                    proxyRes.once('close', () => {
+                    sourceStream.once('error', cancelStreamTimeouts);
+                    sourceStream.once('close', () => {
                         if (streamEndedNormally) {
                             log.info(reqId, 'Stream completed normally, total bytes received: ' + streamBytes);
                         }
@@ -251,7 +271,7 @@ export function tryForward(
                     if (!outHeaders['content-type']) {
                         outHeaders['content-type'] = (proxyRes.headers['content-type'] as string) || 'text/event-stream';
                     }
-                    let outStream: NodeJS.ReadableStream = proxyRes;
+                    let outStream: NodeJS.ReadableStream = sourceStream;
                     if (streamTransformer) {
                         pipeline(outStream as NodeJS.ReadableStream, streamTransformer, (err: Error | null) => {
                             if (err) log.error(reqId, 'transformer pipeline error: ' + truncateForLog(err.message));
@@ -260,7 +280,7 @@ export function tryForward(
                     }
                     // Extract token usage from raw upstream SSE data.
                     let rawUsageBuf = '';
-                    proxyRes.on('data', (chunk: Buffer | string) => {
+                    sourceStream.on('data', (chunk: Buffer | string) => {
                         if (timings) {
                             recordFirstToken(timings);
                             recordChunk(timings);
