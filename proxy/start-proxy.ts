@@ -306,6 +306,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
             req.removeAllListeners('data');
             req.removeAllListeners('end');
             body = null;
+            return;
         }
         chunks.push(chunk);
     });
@@ -576,6 +577,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                 delete options.headers['proxy-authorization'];
                 delete options.headers['content-length'];
                 delete options.headers['transfer-encoding'];
+                delete options.headers['accept-encoding'];
 
                 if (target.isBearer) {
                     options.headers['authorization'] = 'Bearer ' + target.key;
