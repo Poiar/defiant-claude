@@ -13,7 +13,7 @@ DeepClaude runs a local HTTP routing proxy that intercepts Claude Code's Anthrop
 | `start-proxy.ts` | Entry point — HTTP server, request lifecycle, health endpoint |
 | `routing.ts` | Slot-based routing with prefix matching, fallback chain construction, circuit breaker |
 | `protocol-translate.ts` | Bidirectional Anthropic Messages ↔ OpenAI Chat Completions format translation |
-| `forward.ts` | Upstream HTTP forwarding with SSE streaming, fallback header injection, stream buffer guarding, usage token extraction |
+| `forward.ts` | Upstream HTTP forwarding with SSE streaming, gzip decompression (streaming + non-streaming), stream heartbeat/deadline with byte diagnostics, fallback header injection, stream buffer guarding, usage token extraction |
 | `thinking-cache.ts` | Anthropic-format thinking block extraction, caching, and injection across providers that strip them |
 | `reasoning-cache.ts` | OpenAI-format reasoning content cache with session-keyed LRU and re-injection |
 | `transport-errors.ts` | Network failure classification via ordered signature tuples with cause chain walking |
@@ -22,17 +22,20 @@ DeepClaude runs a local HTTP routing proxy that intercepts Claude Code's Anthrop
 | `lru-cache.ts` | TTL cache with LRU eviction using delete-then-set MRU promotion and lazy shared cleanup |
 | `server-tools.ts` | Anthropic server tool conversion (web_search, web_fetch, url_fetch, computer, bash, text_editor, memory, tool_search_tool), DuckDuckGo web search, SSRF-protected web fetch, tool result population |
 | `config.ts` | CLI argument parsing, JSON config loading with mtime-based hot reload, key resolution with AES-256-GCM decryption |
-| `stats.ts` | Provider health tracking, request statistics, token usage reporting |
+| `stats.ts` | Provider health tracking, circuit breaker with 429 exclusion and auto-probe recovery, request statistics, token/spend tracking with budget caps, stream metrics recording |
 | `util.ts` | Path deduplication for /v1-prefixed providers, safe header construction |
 | `crypto.ts` | AES-256-GCM encryption/decryption for provider API keys |
 | `encrypt-key.ts` | CLI tool for encrypting API keys |
 | `friendly-error.ts` | Conversational error responses for exhausted fallback chains |
 | `header-sanitizer.ts` | Request header sanitization before logging (drops auth, cookies, noise) |
-| `log.ts` | Structured logger with per-module namespacing and request IDs |
+| `log.ts` | Structured logger with per-module namespacing, request IDs, and env-gated debug level (`DEEPCLAUDE_DEBUG=true`) |
 | `momentum.ts` | Session-based provider stickiness (tracks last 5 provider decisions) |
 | `rate-limiter.ts` | Per-IP fixed-window rate limiter with LRU eviction |
 | `ssrf.ts` | URL validation against SSRF/DNS rebinding, blocks private/internal IPs and metadata endpoints |
 | `truncate.ts` | Log/error body length truncation with credential scrubbing |
+| `startup-check.ts` | Startup health probe — concurrent non-streaming + streaming checks per provider before accepting connections |
+| `stream-metrics.ts` | Per-stream timing (TTFB, tokens/sec) and aggregated provider metrics |
+| `request-log.ts` | Opt-in request logging to `~/.deepclaude/requests.log` (`--log-all` or `DEEPCLAUDE_LOG_ALL_REQUESTS=true`) |
 
 ### Data-driven provider registry
 
@@ -54,7 +57,7 @@ Two launcher scripts with identical behavior, each loading `providers.json` nati
 
 ### Test coverage
 
-301 tests across 18 suites covering all proxy modules — transport errors, concurrency, LRU cache, provider registry validation, error codes, routing, stats, forwarding, server tools, config, protocol translation, thinking cache, reasoning cache, header sanitization, truncation, crypto, friendly errors, and SSRF validation. Run with `npm test`.
+609 tests across 36 suites covering all proxy modules — transport errors, concurrency, LRU cache, provider registry validation, error codes, routing, stats, forwarding, server tools, config, protocol translation, thinking cache, reasoning cache, header sanitization, truncation, crypto, friendly errors, SSRF validation, dead stream detection, startup checks, and stream metrics. Run with `npm test`.
 
 ### Pre-commit
 
@@ -345,7 +348,7 @@ At minimum you need one provider's API key. See the [Providers table](#providers
 Install jq: `brew install jq` (macOS) or `sudo apt install jq` (Linux).
 
 **Proxy produces no response / Claude Code hangs**
-Run `deepclaude --doctor` to check system health. Check that your provider API key is valid and has credits.
+Run `deepclaude --doctor` to check system health. Check that your provider API key is valid and has credits. The proxy has built-in protection against silent stream drops: gzip decompression for misconfigured CDNs, heartbeat/deadline detection with byte diagnostics (logged to `~/.deepclaude/proxy.log`), and automatic fallback chain retry. Check the proxy log for stream timeout or transport error messages.
 
 ## Similar projects
 
