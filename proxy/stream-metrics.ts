@@ -100,10 +100,11 @@ export function finalizeMetrics(timings: StreamTimings, estimatedTokens: number)
 }
 
 // Computes tokens per second from total token count and wall-clock duration.
-// Returns 0 when totalTokens <= 0.  Uses a minimum duration of 100ms to
-// prevent inflated TPS on very short responses.
+// Returns 0 when totalTokens <= 0 or durationMs <= 0.  Uses a minimum
+// duration of 10ms to prevent division-by-zero on very short responses.
 export function computeTPS(totalTokens: number, durationMs: number): number {
   if (totalTokens <= 0) return 0;
-  const effectiveDuration = Math.max(durationMs, 100);
+  if (durationMs <= 0) return 0;
+  const effectiveDuration = Math.max(durationMs, 10);
   return Math.round((totalTokens / (effectiveDuration / 1000)) * 100) / 100;
 }

@@ -13,6 +13,7 @@ import { URL } from 'url';
 import { createLogger } from './log';
 import { scrubCredentials } from './error-codes';
 import { validateUrl } from './ssrf';
+import { LruCache } from './lru-cache';
 
 const log = createLogger('server-tools');
 
@@ -45,22 +46,25 @@ function releaseFetchSlot(): void {
 // --- Search query cache with TTL ---
 // Deduplicates identical queries within a short window.
 const SEARCH_CACHE_TTL_MS = 5000;
-const searchCache = new Map<string, { result: string; expiresAt: number }>();
+const searchCache = new LruCache<string>({ maxEntries: 100, ttlMs: SEARCH_CACHE_TTL_MS });
 function getCachedSearch(query: string): string | null {
-    const entry = searchCache.get(query);
-    if (entry && Date.now() < entry.expiresAt) return entry.result;
-    searchCache.delete(query);
-    return null;
+    return searchCache.get(query) ?? null;
 }
 function setCachedSearch(query: string, result: string): void {
-    // Evict stale entries periodically to prevent memory leaks
-    if (searchCache.size > 100) {
-        const now = Date.now();
-        for (const [key, val] of searchCache) {
-            if (now >= val.expiresAt) searchCache.delete(key);
-        }
+    searchCache.set(query, result);
+}
+
+/**
+ * Slice a string without splitting UTF-16 surrogate pairs.
+ * Prevents garbled output for emoji/CJK characters at the boundary.
+ */
+function safeSlice(str: string, maxLen: number): string {
+    if (str.length <= maxLen) return str;
+    // Don't split surrogate pairs
+    if (str.charCodeAt(maxLen - 1) >= 0xD800 && str.charCodeAt(maxLen - 1) <= 0xDBFF) {
+        return str.slice(0, maxLen - 1);
     }
-    searchCache.set(query, { result, expiresAt: Date.now() + SEARCH_CACHE_TTL_MS });
+    return str.slice(0, maxLen);
 }
 
 // --- Constants ---
@@ -334,7 +338,7 @@ async function webFetchImpl(url: string, _depth?: number, _visited?: Set<string>
                 if (data.length > 1_000_000) { res.destroy(); resolve(data.slice(0, 1_000_000) + '\n\n[Content truncated at 1MB]'); }
             });
             res.on('end', () => {
-                const text = data.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+                const text = safeSlice(data.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
                     .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
                     .replace(/<[^>]+>/g, ' ')
                     .replace(/&amp;/g, '&')
@@ -343,8 +347,7 @@ async function webFetchImpl(url: string, _depth?: number, _visited?: Set<string>
                     .replace(/&quot;/g, '"')
                     .replace(/&#39;/g, "'")
                     .replace(/\s+/g, ' ')
-                    .trim()
-                    .slice(0, 50000);
+                    .trim(), 50000);
                 // FIX 1: Scrub credentials from URL in return messages
                 resolve(text || `Fetched ${scrubCredentials(url)} but could not extract text content.`);
             });

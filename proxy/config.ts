@@ -8,6 +8,7 @@ import path from 'path';
 import { createLogger } from './log';
 import { validateUrl } from './ssrf';
 import { decrypt } from './crypto';
+import { reconcileCircuitBreakers, reconcileProviderStats, registerProviderInfo, reloadPricing } from './stats';
 import type { RoutingConfig } from './routing';
 
 const log = createLogger('config');
@@ -110,7 +111,7 @@ export function loadConfig(parsed: ParsedArgs): ConfigState {
 // Returns true if anything changed.
 
 let lastStatCheck = 0;
-export function checkReload(state: ConfigState, parsed: ParsedArgs): boolean {
+export async function checkReload(state: ConfigState, parsed: ParsedArgs): Promise<boolean> {
     const now = Date.now();
     if (now - lastStatCheck < 1000) return false;
     lastStatCheck = now;
@@ -125,6 +126,30 @@ export function checkReload(state: ConfigState, parsed: ParsedArgs): boolean {
                 state.routesMtime = stat.mtimeMs;
                 changed = true;
                 validateProviderUrls(state.routing);
+                // Reconcile circuit breakers: remove entries for providers
+                // that no longer exist in the reloaded config.
+                const providerKeys = new Set(Object.keys(state.routing.providers || {}));
+                reconcileCircuitBreakers(providerKeys);
+                reconcileProviderStats(providerKeys);
+                reloadPricing();
+                resetAliasCache();
+                // Register provider info for circuit breaker auto-probe recovery.
+                // This propagates new/updated providers from hot-reload to the
+                // stats module so the auto-probe scheduler can monitor them.
+                if (state.routing && state.routing.providers) {
+                    for (const [key, provider] of Object.entries(state.routing.providers)) {
+                        const rawKey = process.env[provider.keyEnv || ''] || provider.key;
+                        const resolvedKey = await resolveKey(rawKey);
+                        const probeModel = (provider.format || 'anthropic') === 'openai' ? 'gpt-4o-mini' : 'claude-sonnet-4-20250514';
+                        registerProviderInfo(key, {
+                            url: provider.url,
+                            key: resolvedKey,
+                            isBearer: provider.auth === 'bearer',
+                            format: provider.format || 'anthropic',
+                            model: probeModel,
+                        });
+                    }
+                }
             }
         } catch (e) {
             log.error(null, 'Failed to reload routes: ' + (e as Error).message);
@@ -194,7 +219,7 @@ export function validateConfig(state: ConfigState): string[] {
 // If a key value starts with $aes256gcm:, decrypt it using DEEPCLAUDE_ENCRYPTION_KEY.
 // Plaintext keys are returned as-is for backwards compatibility.
 
-export function resolveKey(rawKey: string | null | undefined): string | null {
+export async function resolveKey(rawKey: string | null | undefined): Promise<string | null> {
     if (!rawKey) return null;
     if (typeof rawKey !== 'string' || !rawKey.startsWith('$aes256gcm:')) {
         return rawKey;
@@ -205,7 +230,7 @@ export function resolveKey(rawKey: string | null | undefined): string | null {
         return null;
     }
     try {
-        return decrypt(rawKey, masterSecret);
+        return await decrypt(rawKey, masterSecret);
     } catch (err) {
         log.warn(null, 'Failed to decrypt API key: ' + (err as Error).message);
         return null;

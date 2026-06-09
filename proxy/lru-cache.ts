@@ -99,11 +99,6 @@ export class LruCache<T> {
         for (const [key, entry] of this._map) {
             if (entry.at < expiry) {
                 this._map.delete(key);
-            } else {
-                // Since Map iteration is insertion-ordered and we re-insert
-                // on get (moving entries to the end), once we hit a non-expired
-                // entry we can stop -- all remaining entries are newer.
-                break;
             }
         }
     }

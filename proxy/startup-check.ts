@@ -58,6 +58,7 @@ export interface StartUpCheckSummary {
     allHealthy: boolean;
     someDown: boolean;
     allDown: boolean;
+    probesSkipped?: boolean;
     results: CheckResult[];
     healthyCount: number;
     degradedCount: number;
@@ -340,6 +341,7 @@ export async function runStartupChecks(): Promise<StartUpCheckSummary> {
             allHealthy: true,
             someDown: false,
             allDown: false,
+            probesSkipped: true,
             results: [],
             healthyCount: 0,
             degradedCount: 0,
@@ -360,6 +362,7 @@ export async function runStartupChecks(): Promise<StartUpCheckSummary> {
             allHealthy: true,
             someDown: false,
             allDown: false,
+            probesSkipped: true,
             results: [],
             healthyCount: 0,
             degradedCount: 0,
@@ -375,6 +378,7 @@ export async function runStartupChecks(): Promise<StartUpCheckSummary> {
             allHealthy: true,
             someDown: false,
             allDown: false,
+            probesSkipped: true,
             results: [],
             healthyCount: 0,
             degradedCount: 0,

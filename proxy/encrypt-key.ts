@@ -47,7 +47,7 @@ async function main(): Promise<void> {
     }
 
     try {
-        const encrypted = encrypt(key, masterSecret);
+        const encrypted = await encrypt(key, masterSecret);
         console.log(encrypted);
     } catch (err) {
         console.error('Encryption failed: ' + (err as Error).message);

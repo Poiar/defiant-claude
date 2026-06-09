@@ -25,7 +25,7 @@ const KEY_CACHE_MAX = 100;
 // memory growth.
 const keyCache = new Map<string, Buffer>();
 
-export function deriveKey(masterSecret: string, salt: Buffer): Buffer {
+export async function deriveKey(masterSecret: string, salt: Buffer): Promise<Buffer> {
     // Build fingerprint from SHA-256(masterSecret + salt), first 16 hex chars
     const fp = crypto.createHash('sha256')
         .update(masterSecret)
@@ -36,11 +36,19 @@ export function deriveKey(masterSecret: string, salt: Buffer): Buffer {
     const cached = keyCache.get(fp);
     if (cached) return cached;
 
-    const key = crypto.scryptSync(masterSecret, salt, SCRYPT_DKLEN, {
-        N: SCRYPT_N,
-        r: SCRYPT_R,
-        p: SCRYPT_P,
-        maxmem: 256 * 1024 * 1024, // N=131072 needs ~128MB; default is 32MB
+    // Use async scrypt (callback-based) to avoid blocking the event loop for
+    // 100-200ms per call. N=131072 is CPU-intensive; synchronous scrypt would
+    // freeze the process during config hot-reload with multiple providers.
+    const key = await new Promise<Buffer>((resolve, reject) => {
+        crypto.scrypt(masterSecret, salt, SCRYPT_DKLEN, {
+            N: SCRYPT_N,
+            r: SCRYPT_R,
+            p: SCRYPT_P,
+            maxmem: 256 * 1024 * 1024, // N=131072 needs ~128MB; default is 32MB
+        }, (err, derivedKey) => {
+            if (err) reject(err);
+            else resolve(derivedKey);
+        });
     });
 
     // Evict oldest entry once at capacity to bound memory usage.
@@ -53,10 +61,10 @@ export function deriveKey(masterSecret: string, salt: Buffer): Buffer {
     return key;
 }
 
-export function encrypt(plaintext: string, masterSecret: string): string {
+export async function encrypt(plaintext: string, masterSecret: string): Promise<string> {
     const salt = crypto.randomBytes(SALT_BYTES);
     const iv = crypto.randomBytes(IV_BYTES);
-    const key = deriveKey(masterSecret, salt);
+    const key = await deriveKey(masterSecret, salt);
 
     const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
     const ciphertext = Buffer.concat([
@@ -73,7 +81,7 @@ export function encrypt(plaintext: string, masterSecret: string): string {
     ].join(':');
 }
 
-export function decrypt(ciphertext: string, masterSecret: string): string {
+export async function decrypt(ciphertext: string, masterSecret: string): Promise<string> {
     if (!ciphertext.startsWith(PREFIX)) {
         throw new Error('Not an encrypted value');
     }
@@ -91,7 +99,7 @@ export function decrypt(ciphertext: string, masterSecret: string): string {
     const authTag = Buffer.from(authTagB64, 'base64');
     const encrypted = Buffer.from(ciphertextB64, 'base64');
 
-    const key = deriveKey(masterSecret, salt);
+    const key = await deriveKey(masterSecret, salt);
     const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
     decipher.setAuthTag(authTag);
 

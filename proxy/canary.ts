@@ -33,6 +33,20 @@ export interface CanaryEntry {
 // Module-level state: per-slot canary entries
 const entries = new Map<string, CanaryEntry>();
 
+// Sweep stale entries every hour (24h TTL).  Uses unref so it doesn't keep
+// the process alive when it would otherwise exit.
+const SWEEP_INTERVAL_MS = 3_600_000;  // 1 hour
+const ENTRY_TTL_MS = 86_400_000;      // 24 hours
+const sweepTimer = setInterval(() => {
+  const cutoff = Date.now() - ENTRY_TTL_MS;
+  for (const [slot, entry] of entries) {
+    if (entry.state.lastUpdated < cutoff) {
+      entries.delete(slot);
+    }
+  }
+}, SWEEP_INTERVAL_MS);
+sweepTimer.unref();
+
 export function getOrCreateEntry(slot: string, config: CanaryConfig): CanaryEntry {
   let entry = entries.get(slot);
   if (!entry) {

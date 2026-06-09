@@ -205,8 +205,8 @@ export function sendProbe(target: ProbeSlot): Promise<ProbeResult> {
                             }
                         }
                     } catch {
-                        result.success = true;
-                        result.error = 'response parse warning';
+                        result.success = false;
+                        result.error = 'response format mismatch: expected JSON with usage data, but could not parse response';
                     }
                     resolve(result);
                 });
@@ -245,7 +245,7 @@ function resolveSlotProvider(config: RoutingConfig, modelName: string, slotValue
     return { providerKey, actualModel };
 }
 
-function addSlot(config: RoutingConfig, seen: Set<string>, slots: ProbeSlot[], slot: string, providerKey: string, actualModel: string): void {
+async function addSlot(config: RoutingConfig, seen: Set<string>, slots: ProbeSlot[], slot: string, providerKey: string, actualModel: string): Promise<void> {
     const pairKey = providerKey + ':' + actualModel;
     if (seen.has(pairKey)) return;
     seen.add(pairKey);
@@ -254,7 +254,7 @@ function addSlot(config: RoutingConfig, seen: Set<string>, slots: ProbeSlot[], s
     const rawKey = provider.keyEnv
         ? (process.env[provider.keyEnv] || provider.key || null)
         : (provider.key || null);
-    const resolvedKey = resolveKey(rawKey);
+    const resolvedKey = await resolveKey(rawKey);
 
     slots.push({
         slot,
@@ -267,7 +267,7 @@ function addSlot(config: RoutingConfig, seen: Set<string>, slots: ProbeSlot[], s
     });
 }
 
-function collectSlots(config: RoutingConfig): ProbeSlot[] {
+async function collectSlots(config: RoutingConfig): Promise<ProbeSlot[]> {
     const slots: ProbeSlot[] = [];
     const seen = new Set<string>();
     if (!config.providers) return slots;
@@ -277,7 +277,7 @@ function collectSlots(config: RoutingConfig): ProbeSlot[] {
         for (const [slotName, slotValue] of Object.entries(maybeSlots)) {
             const resolved = resolveSlotProvider(config, slotName, slotValue);
             if (resolved) {
-                addSlot(config, seen, slots, slotName, resolved.providerKey, resolved.actualModel);
+                await addSlot(config, seen, slots, slotName, resolved.providerKey, resolved.actualModel);
             }
         }
     }
@@ -297,7 +297,7 @@ function collectSlots(config: RoutingConfig): ProbeSlot[] {
 
             if (!providerKey || !config.providers[providerKey]) continue;
             const actualModel = rewriteModel || modelName;
-            addSlot(config, seen, slots, modelName, providerKey, actualModel);
+            await addSlot(config, seen, slots, modelName, providerKey, actualModel);
         }
     }
 
@@ -306,7 +306,7 @@ function collectSlots(config: RoutingConfig): ProbeSlot[] {
 
 export async function runProbe(routesFile: string): Promise<void> {
     const config = JSON.parse(fs.readFileSync(routesFile, 'utf-8')) as RoutingConfig;
-    const slots = collectSlots(config);
+    const slots = await collectSlots(config);
 
     if (slots.length === 0) {
         console.error('No probe targets found in ' + routesFile);

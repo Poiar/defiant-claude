@@ -157,6 +157,7 @@ interface DnsCacheEntry {
 }
 const dnsCache = new Map<string, DnsCacheEntry>()
 const DNS_CACHE_TTL_MS = 60 * 60 * 1000 // 1 hour
+const MAX_DNS_CACHE = 1000
 
 function getCachedDns(hostname: string): string[] | null {
   const entry = dnsCache.get(hostname)
@@ -167,6 +168,11 @@ function getCachedDns(hostname: string): string[] | null {
 }
 function setCachedDns(hostname: string, addresses: string[]): void {
   dnsCache.set(hostname, { addresses, timestamp: Date.now() })
+  // Evict oldest entry if cache exceeds the max size (simple FIFO eviction).
+  if (dnsCache.size > MAX_DNS_CACHE) {
+    const first = dnsCache.keys().next().value
+    if (first) dnsCache.delete(first)
+  }
 }
 // --- Public API ---
 
@@ -203,9 +209,10 @@ export async function validateUrl(urlStr: string, options?: ValidateUrlOptions):
       // Use last-known-good addresses (still validated against blocked ranges below)
       addresses = cached
     } else {
-      // No cache available — fail open (allow through) to avoid self-DOS
-      // when the user's DNS is temporarily unavailable
-      return { valid: true, reason: 'DNS resolution failed (allowed): ' + (dnsErr as Error).message }
+      // No cache available — fail closed. If DNS is genuinely down for a
+      // provider, the proxy should not route to it. This prevents DNS rebinding
+      // attacks that exploit transient resolution failures.
+      return { valid: false, reason: 'DNS resolution failed for ' + parsed.hostname + ': ' + (dnsErr as Error).message }
     }
   }
   // 3. Check each resolved IP
