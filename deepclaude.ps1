@@ -1537,6 +1537,10 @@ if (-not $IsAnthropic -and $AllSpecs.Count -gt 0) {
 # Set Claude Code effort level for all launch paths
 $env:CLAUDE_CODE_EFFORT_LEVEL = $Effort
 
+# Unique session ID for peer messaging — each terminal gets its own.
+# Written once at launch so child processes (Claude Code) inherit it.
+$env:DEEPCLAUDE_SESSION_ID = [Guid]::NewGuid().ToString()
+
 # --- Remote ---
 if ($Remote) {
     if ($IsAnthropic) {
