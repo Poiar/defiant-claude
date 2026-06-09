@@ -29,7 +29,9 @@ export const MAX_SSE_BUFFER = 1_048_576; // 1MB
 // Read timeout for upstream SSE streams during the active streaming phase.
 // If no data arrives within this window the stream is destroyed, preventing
 // the proxy from hanging forever on silently-dropped connections.
-export const STREAM_READ_TIMEOUT_MS = 120_000;
+// Set to 300s (5 min) to accommodate reasoning models (DeepSeek R1, o1 etc.)
+// that may think for several minutes on complex problems.
+export const STREAM_READ_TIMEOUT_MS = 300_000;
 
 // First-byte timeout: if the upstream accepts the connection but never sends
 // a single byte within this window, treat it as a dead stream and fail over.
@@ -93,7 +95,7 @@ export function sseHeaders(extra?: ForwardHeaders): ForwardHeaders {
 // This prevents committing to a provider that returns 200 but never sends data.
 
 export function peekFirstChunk(proxyRes: NodeJS.ReadableStream, timeoutMs?: number): Promise<PeekResult> {
-    timeoutMs = timeoutMs || 15000;
+    timeoutMs = timeoutMs || FIRST_BYTE_TIMEOUT_MS;
 
     return new Promise((resolve) => {
         const contentType = (proxyRes as unknown as { headers: Record<string, string | string[] | undefined> }).headers['content-type'] || '';

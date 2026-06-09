@@ -46,16 +46,29 @@ function formatLine(
     return `[${ts()}] [${level}] [${name}]${rid != null ? ' [#' + rid + ']' : ''} ${msg}`;
 }
 
+// --- Debug gating ----------------------------------------------------------
+
+const DEBUG_ENABLED: boolean =
+    process.env.DEEPCLAUDE_DEBUG === 'true' ||
+    process.env.DEEPCLAUDE_LOG_LEVEL === 'debug';
+
 // --- Public interface ------------------------------------------------------
 
 interface Logger {
+    debug(rid: string | number | null | undefined, msg: string): void;
     info(rid: string | number | null | undefined, msg: string): void;
     warn(rid: string | number | null | undefined, msg: string): void;
     error(rid: string | number | null | undefined, msg: string): void;
 }
 
 export function createLogger(name: string): Logger {
-    return {
+    const impl: Logger = {
+        debug(rid: string | number | null | undefined, msg: string): void {
+            if (!DEBUG_ENABLED) return;
+            const line = formatLine('DEBUG', name, rid, msg);
+            console.error(line);
+            writeFile(line);
+        },
         info(rid: string | number | null | undefined, msg: string): void {
             const line = formatLine('INFO', name, rid, msg);
             console.error(line);
@@ -72,5 +85,6 @@ export function createLogger(name: string): Logger {
             writeFile(line);
         },
     };
+    return impl;
 }
 
