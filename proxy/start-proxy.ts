@@ -317,6 +317,28 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
         activeConnections++;
         const rawBody = Buffer.concat(chunks);
         const reqId = nextRequestId();
+
+        // --- Request deadline ---
+        // Last-resort safety net covering the entire request lifecycle (body
+        // parsed -> response sent).  Streaming requests also have the per-stream
+        // STREAM_READ_TIMEOUT_MS (300s) inside tryForward, and upstream http
+        // connections have a 60s timeout, but neither bounds the fallback chain
+        // loop or other async bookkeeping.  This ensures we don't hold a concurrency
+        // slot (and the caller's connection) indefinitely.
+        const REQUEST_DEADLINE_MS = 120_000;
+        const requestDeadline = setTimeout(() => {
+            log.warn(reqId, 'request deadline exceeded (' + REQUEST_DEADLINE_MS + 'ms) -- sending 504');
+            try {
+                if (!res.headersSent && !res.destroyed) {
+                    res.writeHead(504, { 'content-type': 'application/json' });
+                    res.end(JSON.stringify(formatError(504)));
+                }
+            } catch (_) { /* socket may already be destroyed */ }
+        }, REQUEST_DEADLINE_MS);
+        // Clear the deadline when the response completes for any reason.
+        res.once('finish', () => clearTimeout(requestDeadline));
+        res.once('close', () => clearTimeout(requestDeadline));
+
         (async () => {
             let model: string | null = null;
             let parsedBody: Record<string, unknown> | null = null;

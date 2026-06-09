@@ -20,6 +20,18 @@ const PROBE_BODY_OPENAI = JSON.stringify({
     messages: [{ role: 'user', content: 'hi' }],
     max_tokens: 1,
 });
+const PROBE_BODY_ANTHROPIC_STREAM = JSON.stringify({
+    model: 'claude-sonnet-4-20250514',
+    messages: [{ role: 'user', content: 'hi' }],
+    max_tokens: 1,
+    stream: true,
+});
+const PROBE_BODY_OPENAI_STREAM = JSON.stringify({
+    model: 'gpt-4o-mini',
+    messages: [{ role: 'user', content: 'hi' }],
+    max_tokens: 1,
+    stream: true,
+});
 
 // --- Types ---
 
@@ -176,6 +188,140 @@ function sendProbe(
     });
 }
 
+// --- Streaming probe ---
+
+/**
+ * Send a streaming health probe to a provider endpoint.
+ * Uses `stream: true` in the request body and checks that the response
+ * contains at least one valid SSE event (a line starting with `data:` or `event:`).
+ * This catches CDN-level compression issues that non-streaming probes miss.
+ */
+function sendProbeStream(
+    providerKey: string,
+    displayName: string,
+    endpoint: string,
+    apiKey: string | null | undefined,
+    authHeader: string | undefined,
+    format: string,
+    extraHeaders?: Record<string, string>,
+): Promise<CheckResult> {
+    const result: CheckResult = {
+        providerKey,
+        displayName,
+        success: false,
+        latencyMs: 0,
+        degraded: false,
+    };
+
+    if (!apiKey) {
+        result.errorSummary = 'NO KEY';
+        return Promise.resolve(result);
+    }
+
+    const t0 = Date.now();
+    const isOpenAI = format === 'openai';
+    const body = isOpenAI ? PROBE_BODY_OPENAI_STREAM : PROBE_BODY_ANTHROPIC_STREAM;
+    const url = buildProbeUrl(endpoint, format);
+    const transport = url.protocol === 'https:' ? https : http;
+
+    const headers: Record<string, string> = {
+        'content-type': 'application/json',
+        'content-length': String(Buffer.byteLength(body)),
+        'accept': 'text/event-stream',
+    };
+
+    const authHeaderLower = (authHeader || '').toLowerCase();
+    if (authHeaderLower === 'bearer') {
+        headers['authorization'] = 'Bearer ' + apiKey;
+    } else {
+        headers['x-api-key'] = apiKey;
+    }
+
+    if (!isOpenAI) {
+        headers['anthropic-version'] = '2023-06-01';
+    }
+
+    if (extraHeaders) {
+        Object.assign(headers, extraHeaders);
+    }
+
+    return new Promise((resolve) => {
+        const req = transport.request(
+            {
+                hostname: url.hostname,
+                port: url.port || (url.protocol === 'https:' ? 443 : 80),
+                path: url.pathname + url.search,
+                method: 'POST',
+                headers,
+                timeout: STARTUP_CHECK_TIMEOUT,
+            },
+            (res) => {
+                // Handle non-2xx status codes
+                if (!res.statusCode || res.statusCode >= 400) {
+                    const ms = Date.now() - t0;
+                    result.latencyMs = ms;
+                    if (res.statusCode === 401 || res.statusCode === 403) {
+                        result.errorSummary = 'AUTH FAIL';
+                    } else if (res.statusCode === 429) {
+                        result.errorSummary = 'RATE LIMITED';
+                    } else {
+                        result.errorSummary = 'HTTP ' + res.statusCode;
+                    }
+                    res.resume();
+                    resolve(result);
+                    return;
+                }
+
+                // Check each incoming chunk for valid SSE framing
+                res.on('data', (chunk: Buffer) => {
+                    if (result.success) return;
+                    const text = chunk.toString('utf-8');
+                    // A valid SSE response contains lines starting with "data:" or "event:"
+                    if (/^(?:data:|event:)/m.test(text)) {
+                        const ms = Date.now() - t0;
+                        result.latencyMs = ms;
+                        result.success = true;
+                        result.degraded = ms > 1000;
+                        // Stop consuming the response — we only needed the first event
+                        res.destroy();
+                        resolve(result);
+                    }
+                });
+
+                res.on('end', () => {
+                    if (!result.success) {
+                        result.latencyMs = Date.now() - t0;
+                        result.errorSummary = 'no SSE received';
+                        resolve(result);
+                    }
+                });
+
+                res.on('error', (err: Error) => {
+                    result.latencyMs = Date.now() - t0;
+                    result.errorSummary = err.message;
+                    resolve(result);
+                });
+            },
+        );
+
+        req.on('timeout', () => {
+            req.destroy();
+            result.latencyMs = Date.now() - t0;
+            result.errorSummary = 'timeout';
+            resolve(result);
+        });
+
+        req.on('error', (err: Error) => {
+            result.latencyMs = Date.now() - t0;
+            result.errorSummary = err.message;
+            resolve(result);
+        });
+
+        req.write(body);
+        req.end();
+    });
+}
+
 // --- Main entry point ---
 
 /**
@@ -238,32 +384,53 @@ export async function runStartupChecks(): Promise<StartUpCheckSummary> {
 
     log.info(null, 'startup health check (' + STARTUP_CHECK_TIMEOUT + 'ms timeout, ' + providerKeys.length + ' providers)');
 
-    // Launch probes in parallel
-    const probes = providerKeys.map((key) => {
+    // Launch both non-streaming and streaming probes in parallel per provider.
+    // The streaming probe catches CDN-level compression issues and runs concurrently
+    // so it does not double the startup time.
+    const probePromises = providerKeys.map((key) => {
         const def = providersData[key];
         const apiKey = def.keyEnv ? process.env[def.keyEnv] : undefined;
-        return sendProbe(
-            key,
-            def.displayName || key,
-            def.endpoint,
-            apiKey,
-            def.authHeader || 'x-api-key',
-            def.wireFormat || 'anthropic',
-            def.extraHeaders,
-        );
+        const pName = def.displayName || key;
+        const pAuth = def.authHeader || 'x-api-key';
+        const pFmt = def.wireFormat || 'anthropic';
+        return Promise.all([
+            sendProbe(key, pName, def.endpoint, apiKey, pAuth, pFmt, def.extraHeaders),
+            sendProbeStream(key, pName, def.endpoint, apiKey, pAuth, pFmt, def.extraHeaders),
+        ]);
     });
 
-    const settled = await Promise.allSettled(probes);
+    const settled = await Promise.allSettled(probePromises);
     const results: CheckResult[] = settled.map((s) => {
-        if (s.status === 'fulfilled') return s.value;
-        return {
-            providerKey: 'unknown',
-            displayName: 'unknown',
-            success: false,
-            latencyMs: 0,
-            errorSummary: 'probe crashed',
-            degraded: false,
+        if (s.status === 'rejected') {
+            return {
+                providerKey: 'unknown',
+                displayName: 'unknown',
+                success: false,
+                latencyMs: 0,
+                errorSummary: 'probe crashed',
+                degraded: false,
+            };
+        }
+        const [nonStream, stream] = s.value;
+        const result: CheckResult = {
+            providerKey: nonStream.providerKey,
+            displayName: nonStream.displayName,
+            success: nonStream.success && stream.success,
+            latencyMs: Math.max(nonStream.latencyMs, stream.latencyMs),
+            degraded: nonStream.degraded || stream.degraded,
         };
+        if (!result.success) {
+            if (!nonStream.success && !stream.success) {
+                const nsErr = nonStream.errorSummary || 'probe fail';
+                const stErr = stream.errorSummary || 'fail';
+                result.errorSummary = nsErr === stErr ? nsErr : nsErr + ' / stream: ' + stErr;
+            } else if (!nonStream.success) {
+                result.errorSummary = (nonStream.errorSummary || 'probe fail') + ' (stream OK)';
+            } else {
+                result.errorSummary = (stream.errorSummary || 'stream fail') + ' (probe OK)';
+            }
+        }
+        return result;
     });
 
     // Print per-provider results
@@ -273,7 +440,7 @@ export async function runStartupChecks(): Promise<StartUpCheckSummary> {
         } else if (r.success) {
             const label = r.degraded ? 'SLOW' : 'OK';
             const msStr = r.latencyMs >= 1000 ? (r.latencyMs / 1000).toFixed(1) + 's' : r.latencyMs + 'ms';
-            log.info(null, '  ' + r.providerKey.padEnd(4) + (r.displayName.padEnd(30)) + label + '  ' + msStr);
+            log.info(null, '  ' + r.providerKey.padEnd(4) + (r.displayName.padEnd(30)) + label + ' (stream verified)  ' + msStr);
         } else {
             log.info(null, '  ' + r.providerKey.padEnd(4) + (r.displayName.padEnd(30)) + 'FAIL  ' + (r.errorSummary || 'error'));
         }

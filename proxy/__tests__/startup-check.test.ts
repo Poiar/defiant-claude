@@ -13,6 +13,8 @@ let mockStatusCode = 200;
 let mockTimeout = false;
 // eslint-disable-next-line @typescript-eslint/naming-convention
 let mockPathBasedFailure: string | null = null;
+// eslint-disable-next-line @typescript-eslint/naming-convention
+let mockSseResponseBody = 'data: {"ok":true}\n\n';
 
 // --- HTTP/HTTPS mock factories ---
 // These jest.mock calls are hoisted above imports. They reference the shared
@@ -56,14 +58,19 @@ jest.mock('https', () => {
                 }
             }
 
+            const opts = _options as Record<string, string>;
+            const acceptHeader = ((opts as any).headers?.accept as string) || '';
+            const isStream = acceptHeader === 'text/event-stream';
+            const body = isStream ? mockSseResponseBody : mockResponseBody;
+
             const mockRes = new Readable({
                 read() {
-                    this.push(Buffer.from(mockResponseBody));
+                    this.push(Buffer.from(body));
                     this.push(null);
                 },
             });
             (mockRes as Record<string, unknown>).statusCode = mockStatusCode;
-            (mockRes as Record<string, unknown>).headers = { 'content-type': 'application/json' };
+            (mockRes as Record<string, unknown>).headers = { 'content-type': isStream ? 'text/event-stream' : 'application/json' };
             setImmediate(() => { callback(mockRes); });
             const mockReq = new EventEmitter();
             mockReq.write = jest.fn();
@@ -112,14 +119,19 @@ jest.mock('http', () => {
                 }
             }
 
+            const opts = _options as Record<string, string>;
+            const acceptHeader = ((opts as any).headers?.accept as string) || '';
+            const isStream = acceptHeader === 'text/event-stream';
+            const body = isStream ? mockSseResponseBody : mockResponseBody;
+
             const mockRes = new Readable({
                 read() {
-                    this.push(Buffer.from(mockResponseBody));
+                    this.push(Buffer.from(body));
                     this.push(null);
                 },
             });
             (mockRes as Record<string, unknown>).statusCode = mockStatusCode;
-            (mockRes as Record<string, unknown>).headers = { 'content-type': 'application/json' };
+            (mockRes as Record<string, unknown>).headers = { 'content-type': isStream ? 'text/event-stream' : 'application/json' };
             setImmediate(() => { callback(mockRes); });
             const mockReq = new EventEmitter();
             mockReq.write = jest.fn();
@@ -191,6 +203,7 @@ describe('runStartupChecks', () => {
     beforeEach(() => {
         // Reset shared mock state
         mockResponseBody = '{}';
+        mockSseResponseBody = 'data: {"ok":true}\n\n';
         mockStatusCode = 200;
         mockTimeout = false;
         mockPathBasedFailure = null;
