@@ -49,8 +49,8 @@ function formatLine(
 // --- Debug gating ----------------------------------------------------------
 
 const DEBUG_ENABLED: boolean =
-    process.env.DEEPCLAUDE_DEBUG === 'true' ||
-    process.env.DEEPCLAUDE_LOG_LEVEL === 'debug';
+    ['true', '1', 'yes'].includes((process.env.DEEPCLAUDE_DEBUG || '').toLowerCase()) ||
+    ['true', '1', 'yes', 'debug'].includes((process.env.DEEPCLAUDE_LOG_LEVEL || '').toLowerCase());
 
 // --- Public interface ------------------------------------------------------
 

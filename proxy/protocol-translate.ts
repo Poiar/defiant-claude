@@ -108,6 +108,12 @@ function mapFinishReason(reason: string | null | undefined): string {
 function stringifyContent(content: string | ContentBlock[] | null | undefined): string {
     if (typeof content === 'string') return content;
     if (Array.isArray(content)) {
+        // When content contains non-text blocks (tool_use, image), serialize
+        // the full structure as JSON so downstream models receive complete data.
+        const hasNonText = content.some(b => b.type !== 'text');
+        if (hasNonText) {
+            return JSON.stringify(content);
+        }
         const parts: string[] = [];
         for (const b of content) {
             if (b.type === 'text') {
@@ -192,9 +198,12 @@ function convertMessage(msg: AnthropicMessage): OpenAIMessage | OpenAIMessage[] 
         const toolResults = contentBlocks.filter(b => b.type === 'tool_result');
         const textBlocks = contentBlocks.filter(b => b.type === 'text' && b.text);
         if (toolResults.length > 0) {
-            const result: OpenAIMessage[] = toolResults.map(block => ({
+            // Filter out tool results without a valid tool_use_id to avoid
+            // OpenAI API 400 errors from an empty tool_call_id string.
+            const validToolResults = toolResults.filter(block => block.tool_use_id);
+            const result: OpenAIMessage[] = validToolResults.map(block => ({
                 role: 'tool',
-                tool_call_id: block.tool_use_id || '',
+                tool_call_id: block.tool_use_id,
                 content: stringifyContent(block.content) || '',
             }));
             if (textBlocks.length > 0) {
@@ -270,7 +279,17 @@ export function translateResponse(openaiBody: OpenAIResponseBody, model: string)
 
     const content: ContentBlock[] = [];
     if (message && message.content != null) {
-        content.push({ type: 'text', text: message.content as string });
+        let contentText: string;
+        if (typeof message.content === 'string') {
+            contentText = message.content;
+        } else if (Array.isArray(message.content)) {
+            contentText = message.content.map((b: any) => b.text || '').join('\n');
+        } else if (message.content != null) {
+            contentText = String(message.content);
+        } else {
+            contentText = '';
+        }
+        content.push({ type: 'text', text: contentText });
     }
     if (message && message.tool_calls) {
         for (const tc of message.tool_calls) {
@@ -475,7 +494,9 @@ export function createStreamTransformer(model: string): Transform {
             if (this._buf && this._buf.trim()) {
                 if (!state.finished) output += processEvent(this._buf.trim());
             }
-            if (!state.finished) {
+            // Only emit finishStream if the stream successfully started;
+            // otherwise the output would be an incomplete message.
+            if (!state.finished && state.started) {
                 output += finishStream('end_turn');
             }
             callback(null, output);

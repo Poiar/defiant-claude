@@ -44,6 +44,22 @@ export function createRateLimiter(opts?: RateLimiterOptions): RateLimiter {
 
     const entries = new Map<string, RateLimiterEntry>(); // ip -> { count, windowStart }
 
+    // Periodic cleanup of entries with expired windows (60s interval).
+    // Only registered when the runtime provides setInterval (not in Jest etc.).
+    if (typeof setInterval !== 'undefined') {
+        const cleanupInterval = setInterval(() => {
+            const now = Date.now();
+            for (const [ip, entry] of entries) {
+                if (now - entry.windowStart >= windowMs) {
+                    entries.delete(ip);
+                }
+            }
+        }, 60_000);
+        if (cleanupInterval && typeof cleanupInterval.unref === 'function') {
+            cleanupInterval.unref();
+        }
+    }
+
     function check(ip: string): RateLimitResult {
         const now = Date.now();
         let entry = entries.get(ip);

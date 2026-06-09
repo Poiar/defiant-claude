@@ -16,6 +16,8 @@ interface ValidateUrlOptions {
 interface ValidateUrlResult {
   valid: boolean;
   reason?: string;
+  /** Resolved IP addresses that were validated (present on success). */
+  addresses?: string[];
 }
 interface NormalizedIPv6 {
   ip: string;
@@ -100,7 +102,16 @@ function normalizeIPv6(addr: string): NormalizedIPv6 {
     a = embedded[1] + ':' + v4Hex.slice(0, 4) + ':' + v4Hex.slice(4)
     return { ip: expandIPv6(a), mappedV4: null }
   }
-  return { ip: expandIPv6(a), mappedV4: null }
+  // Check for IPv4-mapped IPv6 in hex notation (::ffff:xxxx:xxxx bypasses dotted-quad regex above)
+  const expanded = expandIPv6(a)
+  // ::ffff:0:0/96 prefix = 80 zero bits + 16 bits of 0xffff = 24 hex chars
+  if (expanded.startsWith('00000000000000000000ffff')) {
+    const v4hex = expanded.slice(24) // last 32 bits (8 hex chars)
+    const v4int = parseInt(v4hex, 16)
+    const v4str = [(v4int >>> 24) & 0xff, (v4int >>> 16) & 0xff, (v4int >>> 8) & 0xff, v4int & 0xff].join('.')
+    return { ip: expanded, mappedV4: v4str }
+  }
+  return { ip: expanded, mappedV4: null }
 }
 // Expand an IPv6 address to full 8-group hex notation (no colons).
 function expandIPv6(addr: string): string {
@@ -138,6 +149,25 @@ function isPrivateV6(expanded: string): boolean {
   }
   return false
 }
+// --- DNS cache (FIX 5: avoid failing open on transient DNS failures) ---
+
+interface DnsCacheEntry {
+  addresses: string[];
+  timestamp: number;
+}
+const dnsCache = new Map<string, DnsCacheEntry>()
+const DNS_CACHE_TTL_MS = 60 * 60 * 1000 // 1 hour
+
+function getCachedDns(hostname: string): string[] | null {
+  const entry = dnsCache.get(hostname)
+  if (entry && (Date.now() - entry.timestamp) < DNS_CACHE_TTL_MS) {
+    return entry.addresses
+  }
+  return null
+}
+function setCachedDns(hostname: string, addresses: string[]): void {
+  dnsCache.set(hostname, { addresses, timestamp: Date.now() })
+}
 // --- Public API ---
 
 /**
@@ -164,10 +194,19 @@ export async function validateUrl(urlStr: string, options?: ValidateUrlOptions):
   try {
     const records = await dns.promises.resolve4(parsed.hostname)
     addresses = records
+    // Cache successful resolution for fail-open defense
+    setCachedDns(parsed.hostname, records)
   } catch (dnsErr) {
-    // DNS resolution failure — can't verify the address, but blocking all
-    // requests when DNS is unavailable is a self-DOS. Allow through.
-    return { valid: true, reason: 'DNS resolution failed (allowed): ' + (dnsErr as Error).message }
+    // DNS resolution failure — check cache before failing open
+    const cached = getCachedDns(parsed.hostname)
+    if (cached) {
+      // Use last-known-good addresses (still validated against blocked ranges below)
+      addresses = cached
+    } else {
+      // No cache available — fail open (allow through) to avoid self-DOS
+      // when the user's DNS is temporarily unavailable
+      return { valid: true, reason: 'DNS resolution failed (allowed): ' + (dnsErr as Error).message }
+    }
   }
   // 3. Check each resolved IP
   for (const ip of addresses) {
@@ -209,5 +248,5 @@ export async function validateUrl(urlStr: string, options?: ValidateUrlOptions):
       return { valid: false, reason: 'Blocked private IPv6: ' + ip }
     }
   }
-  return { valid: true }
+  return { valid: true, addresses: [...addresses, ...v6Addresses] }
 }

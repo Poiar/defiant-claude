@@ -128,6 +128,16 @@ const CREDENTIAL_PATTERNS: CredentialPattern[] = [
     [/\b(Authorization|Proxy-Authorization):\s*(Basic|ApiKey|Token)\s+\S+/gi, '$1: $2 [redacted]'],
     // URL-encoded secrets in query strings (secret=, token=, api_key=, apikey=, api-key=)
     [/\b(secret|token|api_key|apikey|api-key)=[^&\s"',;]{8,}/gi, '$1=[redacted]'],
+    // GitHub tokens (ghp_, ghs_, gho_)
+    [/\bgh[pso]_[a-zA-Z0-9_]{36,}\b/g, '[redacted]'],
+    // GitHub PAT (github_pat_)
+    [/\bgithub_pat_[a-zA-Z0-9_]{82,}\b/g, '[redacted]'],
+    // AWS access keys (AKIA prefix)
+    [/\bAKIA[0-9A-Z]{16}\b/g, '[redacted]'],
+    // JWT tokens
+    [/\beyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\b/g, '[redacted]'],
+    // Password fields in JSON
+    [/"(password|passwd|pass|pwd)"\s*:\s*"[^"]{3,}"/gi, '"$1": "[redacted]"'],
 ];
 
 export function scrubCredentials(msg: unknown): string {

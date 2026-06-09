@@ -22,13 +22,13 @@ interface MomentumResult {
     confidence: number;
 }
 
-const cache = new LruCache({ ttlMs: TTL_MS, maxEntries: MAX_ENTRIES });
+const cache = new LruCache<MomentumEntry>({ ttlMs: TTL_MS, maxEntries: MAX_ENTRIES });
 
 export { sessionKey } from './session-key';
 
 export function record(sk: string | null, providerKey: string, model: string): void {
     if (!sk) return;
-    let entry = cache.get(sk) as MomentumEntry | undefined;
+    let entry = cache.get(sk);
     if (!entry) {
         entry = { decisions: [] };
     }
@@ -41,7 +41,7 @@ export function record(sk: string | null, providerKey: string, model: string): v
 
 export function getMomentum(sk: string | null): MomentumResult | null {
     if (!sk) return null;
-    const entry = cache.get(sk) as MomentumEntry | undefined;
+    const entry = cache.get(sk);
     if (!entry || entry.decisions.length === 0) return null;
 
     const counts: Record<string, number> = {};

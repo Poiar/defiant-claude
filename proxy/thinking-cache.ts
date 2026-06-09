@@ -8,7 +8,7 @@ import { sessionKey } from './session-key';
 const TTL_MS = 30 * 60 * 1000;
 const MAX_ENTRIES = 1000;
 
-const cache = new LruCache({ ttlMs: TTL_MS, maxEntries: MAX_ENTRIES });
+const cache = new LruCache<CachedEntry>({ ttlMs: TTL_MS, maxEntries: MAX_ENTRIES });
 
 // --- Types ---
 
@@ -71,7 +71,7 @@ export function store(sessionKeyParam: string | null, firstToolUseId: string | n
 }
 
 function retrieve(sessionKeyParam: string | null, firstToolUseId: string | null, currentMsgCount: number = -1, fp: string = ''): StoredBlock[] | null {
-    const entry = cache.get(`${sessionKeyParam}:${fp}:${firstToolUseId}`) as CachedEntry | undefined;
+    const entry = cache.get(`${sessionKeyParam}:${fp}:${firstToolUseId}`);
     if (!entry) return null;
     if (entry.messageCount > 0 && currentMsgCount >= 0 && entry.messageCount !== currentMsgCount) return null;
     return entry.blocks;

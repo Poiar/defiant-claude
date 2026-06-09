@@ -30,6 +30,7 @@ export interface ProviderEntry {
     key?: string;
     keyEnv?: string;
     auth?: string;
+    authHeader?: string;
     format?: string;
     fallback?: string[];
 }
@@ -62,7 +63,11 @@ interface ResolveResult {
     error?: string;
 }
 
+// Cache for subagent model with mtime+size invalidation to avoid sync file I/O on every request.
+let subagentModelCache: { model: { providerKey: string; modelId: string }; mtime: number; size: number } | null = null;
+
 // Read the dedicated subagent model from ~/.deepclaude/subagent-model.json.
+// Uses stat mtime+size cache to avoid synchonous file I/O on every subagent request.
 // Returns null when the file does not exist, is invalid, or an I/O error occurs.
 // Used by resolveTarget to override the subagent slot when no slot override is set.
 export function resolveSubagentModel(): { providerKey: string; modelId: string } | null {
@@ -70,10 +75,15 @@ export function resolveSubagentModel(): { providerKey: string; modelId: string }
     if (!homeDir) return null;
     const filePath = path.join(homeDir, '.deepclaude', 'subagent-model.json');
     try {
+        const stat = fs.statSync(filePath);
+        if (subagentModelCache && subagentModelCache.mtime === stat.mtimeMs && subagentModelCache.size === stat.size) {
+            return subagentModelCache.model;
+        }
         const raw = fs.readFileSync(filePath, 'utf-8');
         const parsed = JSON.parse(raw);
         if (parsed && typeof parsed.providerKey === 'string' && typeof parsed.modelId === 'string') {
-            return { providerKey: parsed.providerKey, modelId: parsed.modelId };
+            subagentModelCache = { model: { providerKey: parsed.providerKey, modelId: parsed.modelId }, mtime: stat.mtimeMs, size: stat.size };
+            return subagentModelCache.model;
         }
         return null;
     } catch {
@@ -192,7 +202,7 @@ export function resolveTarget(
         providerKey,
         url: provider.url,
         key: resolvedKey,
-        isBearer: provider.auth === 'bearer',
+        isBearer: (provider.auth || provider.authHeader) === 'bearer',
         targetUrl: targetUrl,
         rewriteModel: rewriteModel,
         format: provider.format || 'anthropic',
@@ -242,7 +252,7 @@ export function resolveTarget(
                 providerKey: fbKey,
                 url: fb.url,
                 key: fbResolvedKey,
-                isBearer: fb.auth === 'bearer',
+                isBearer: (fb.auth || fb.authHeader) === 'bearer',
                 targetUrl: fbUrl,
                 rewriteModel: fbRewrite,
                 format: fb.format || 'anthropic',

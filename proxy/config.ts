@@ -63,6 +63,22 @@ export function tryReadJson(path: string): Record<string, unknown> | null {
         return null;
     }
 }
+// --- SSRF validation helper ---
+
+function validateProviderUrls(routing: RoutingConfig): void {
+    for (const [key, provider] of Object.entries(routing.providers || {})) {
+        if (provider.url) {
+            validateUrl(provider.url).then((result: { valid: boolean; reason?: string }) => {
+                if (!result.valid) {
+                    log.warn(null, 'Provider "' + key + '" URL fails SSRF check: ' + (result.reason || 'unknown'));
+                }
+            }).catch((err: Error) => {
+                log.warn(null, 'Provider "' + key + '" SSRF validation error: ' + err.message);
+            });
+        }
+    }
+}
+
 // --- Load initial state ---
 
 export function loadConfig(parsed: ParsedArgs): ConfigState {
@@ -84,18 +100,8 @@ export function loadConfig(parsed: ParsedArgs): ConfigState {
         }
     }
     // Fire-and-forget SSRF validation for provider endpoint URLs
-    if (routing && routing.providers) {
-        for (const [key, provider] of Object.entries(routing.providers)) {
-            if (provider.url) {
-                validateUrl(provider.url).then((result: { valid: boolean; reason?: string }) => {
-                    if (!result.valid) {
-                        log.warn(null, 'Provider "' + key + '" URL fails SSRF check: ' + (result.reason || 'unknown'));
-                    }
-                }).catch((err: Error) => {
-                    log.warn(null, 'Provider "' + key + '" SSRF validation error: ' + err.message);
-                });
-            }
-        }
+    if (routing) {
+        validateProviderUrls(routing);
     }
     return { routing, routesMtime, slotOverrides, overridesMtime };
 }
@@ -118,6 +124,7 @@ export function checkReload(state: ConfigState, parsed: ParsedArgs): boolean {
                 state.routing = readJson(parsed.routesFile) as RoutingConfig;
                 state.routesMtime = stat.mtimeMs;
                 changed = true;
+                validateProviderUrls(state.routing);
             }
         } catch (e) {
             log.error(null, 'Failed to reload routes: ' + (e as Error).message);
@@ -187,8 +194,9 @@ export function validateConfig(state: ConfigState): string[] {
 // If a key value starts with $aes256gcm:, decrypt it using DEEPCLAUDE_ENCRYPTION_KEY.
 // Plaintext keys are returned as-is for backwards compatibility.
 
-export function resolveKey(rawKey: string | null | undefined): string | null | undefined {
-    if (!rawKey || typeof rawKey !== 'string' || !rawKey.startsWith('$aes256gcm:')) {
+export function resolveKey(rawKey: string | null | undefined): string | null {
+    if (!rawKey) return null;
+    if (typeof rawKey !== 'string' || !rawKey.startsWith('$aes256gcm:')) {
         return rawKey;
     }
     const masterSecret = process.env.DEEPCLAUDE_ENCRYPTION_KEY;

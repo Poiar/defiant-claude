@@ -5,7 +5,10 @@
 
 import crypto from 'node:crypto';
 
-const SCRYPT_N = 16384;
+// N=131072 is OWASP-recommended for interactive key derivation.
+// Each deriveKey call costs ~100-200ms CPU; the keyCache avoids repeating this
+// for the same (masterSecret, salt) within a single process lifetime.
+const SCRYPT_N = 131072;
 const SCRYPT_R = 8;
 const SCRYPT_P = 1;
 const SCRYPT_DKLEN = 32;
@@ -13,10 +16,13 @@ const SALT_BYTES = 16;
 const IV_BYTES = 12;
 const PREFIX = '$aes256gcm:';
 
+const KEY_CACHE_MAX = 100;
+
 // Cache for derived keys. Maps a fingerprint of (masterSecret, salt) to the
 // derived 32-byte key buffer. The fingerprint is the first 16 hex chars of
 // SHA-256(masterSecret + salt), avoiding storing the raw master secret in
-// the map key string.
+// the map key string. Bounded to KEY_CACHE_MAX entries to prevent unbounded
+// memory growth.
 const keyCache = new Map<string, Buffer>();
 
 export function deriveKey(masterSecret: string, salt: Buffer): Buffer {
@@ -34,7 +40,14 @@ export function deriveKey(masterSecret: string, salt: Buffer): Buffer {
         N: SCRYPT_N,
         r: SCRYPT_R,
         p: SCRYPT_P,
+        maxmem: 256 * 1024 * 1024, // N=131072 needs ~128MB; default is 32MB
     });
+
+    // Evict oldest entry once at capacity to bound memory usage.
+    if (keyCache.size >= KEY_CACHE_MAX) {
+        const first = keyCache.keys().next().value;
+        if (first) keyCache.delete(first);
+    }
 
     keyCache.set(fp, key);
     return key;

@@ -7,7 +7,7 @@ import { sessionKey } from './session-key';
 const TTL_MS = 30 * 60 * 1000;
 const MAX_ENTRIES = 1000;
 
-const cache = new LruCache({ ttlMs: TTL_MS, maxEntries: MAX_ENTRIES });
+const cache = new LruCache<string>({ ttlMs: TTL_MS, maxEntries: MAX_ENTRIES });
 
 // --- Types ---
 
@@ -81,7 +81,7 @@ export function store(sk: string | null | undefined, firstToolCallId: string | n
 // Retrieve cached reasoning content.
 export function get(sk: string | null | undefined, firstToolCallId: string | null | undefined): string | undefined {
     if (!sk || !firstToolCallId) return undefined;
-    return cache.get(`${sk}:${firstToolCallId}`) as string | undefined;
+    return cache.get(`${sk}:${firstToolCallId}`);
 }
 
 // Scan assistant messages with tool_calls and re-inject reasoning_content

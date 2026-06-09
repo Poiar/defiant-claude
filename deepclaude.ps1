@@ -121,6 +121,10 @@ if ($Backend -match '^--(.+)$') {
     }
     elseif ($flag -eq 'effort' -and $ModelSpecs -and $ModelSpecs.Count -gt 0) {
         $Effort = $ModelSpecs[0]
+        if ($Effort -notin @('low', 'medium', 'high', 'max')) {
+            Write-Host "ERROR: Invalid effort level '$Effort'. Valid values: low, medium, high, max" -ForegroundColor Red
+            exit 1
+        }
         $ModelSpecs = if ($ModelSpecs.Count -gt 1) { $ModelSpecs[1..($ModelSpecs.Count-1)] } else { @() }
     }
     elseif ($flag -eq 'models')          { $Models = $true }
@@ -152,6 +156,12 @@ if ($Backend -match '^--(.+)$') {
         exit 1
     }
     $Backend = $null
+}
+
+# Validate --effort value (also accepts -effort from flag normalization above)
+if ($Effort -notin @('low', 'medium', 'high', 'max')) {
+    Write-Host "ERROR: Invalid effort level '$Effort'. Valid values: low, medium, high, max" -ForegroundColor Red
+    exit 1
 }
 
 # State directory for persistent proxy
@@ -842,17 +852,25 @@ if ($DryRun) {
 
 # --- Cost ---
 if ($Cost) {
-    Write-Host "`n  DeepSeek V4 Pro Pricing" -ForegroundColor Cyan
-    Write-Host "  =======================" -ForegroundColor DarkGray
+    Write-Host "`n  Model Pricing (per million tokens)" -ForegroundColor Cyan
+    Write-Host "  ===================================" -ForegroundColor DarkGray
     Write-Host ""
-    Write-Host "  Provider        Input/M    Output/M   Cache Hit/M" -ForegroundColor Yellow
-    Write-Host "  ----------      --------   --------   -----------"
-    Write-Host "  DeepSeek        `$0.44      `$0.87      `$0.004" -ForegroundColor Green
-    Write-Host "  OpenRouter      `$0.44      `$0.87      (provider)"
-    Write-Host "  Fireworks       `$1.74      `$3.48      (provider)"
-    Write-Host "  Anthropic       `$3.00      `$15.00     `$0.30"
+    Write-Host "  Model                                      Input/M    Output/M" -ForegroundColor Yellow
+    Write-Host "  ---------------                            --------   --------"
+    $costData = $Registry.pricing
+    if ($costData) {
+        foreach ($prop in $costData.PSObject.Properties) {
+            $model = $prop.Name
+            $p = $prop.Value
+            $inp = if ($p.input -eq 0) { "free" } else { "`$$($p.input.ToString('F2'))" }
+            $out = if ($p.output -eq 0) { "free" } else { "`$$($p.output.ToString('F2'))" }
+            Write-Host ("  {0,-37} {1,-10} {2}" -f $model, $inp, $out) -ForegroundColor Green
+        }
+    } else {
+        Write-Host "  (pricing data not available in providers.json)" -ForegroundColor Yellow
+    }
     Write-Host ""
-    Write-Host "  Monthly estimate (heavy use): `$30-80 vs `$200 Anthropic" -ForegroundColor Green
+    Write-Host "  Data sourced from proxy/providers.json pricing section. Cache-hit pricing varies by provider." -ForegroundColor DarkGray
     Write-Host ""
     exit 0
 }
@@ -1609,10 +1627,11 @@ if ($Remote) {
     $env:CLAUDE_CONTEXT_COMPRESSION = 'true'
     $env:ANTHROPIC_MODEL = & $Append1M ($resolved.slots['opus'].model -replace '\[1m\]', '')
 
-    if ($env:DEEPCLAUDE_WATCHDOG -ne 'false' -and $proxyInfo.Process) {
+    if ($env:DEEPCLAUDE_WATCHDOG -eq 'true' -and $proxyInfo.Process) {
         $watchdog = Start-Job -Name "DeepClaudeWatchdog" -ScriptBlock {
-            param($Pid, $Port, $StateFile)
+            param($Pid, $Port, $StateFile, $MaxRestarts)
             $pollMs = 5000
+            $restartCount = 0
             while ($true) {
                 Start-Sleep -Milliseconds $pollMs
                 $procAlive = Get-Process -Id $Pid -ErrorAction SilentlyContinue
@@ -1622,7 +1641,13 @@ if ($Remote) {
                         Write-Host "Proxy (PID $Pid) exited and state file is gone. Watchdog exiting." -ForegroundColor DarkGray
                         return
                     }
-                    Write-Host "Proxy (PID $Pid) is no longer running. Restarting..." -ForegroundColor Yellow
+                    $restartCount++
+                    if ($restartCount -gt $MaxRestarts) {
+                        Write-Host "ERROR: Proxy restarted $MaxRestarts times. Watchdog giving up." -ForegroundColor Red
+                        return
+                    }
+                    Write-Host "Proxy (PID $Pid) is no longer running. Restarting (attempt $restartCount of $MaxRestarts)..." -ForegroundColor Yellow
+                    Start-Sleep -Seconds 2
                     try {
                         $newProxy = Start-RoutingProxy -RoutesFile $using:CurrentRoutesFile -Persist
                         if ($newProxy -and $newProxy.Process) {
@@ -1636,7 +1661,7 @@ if ($Remote) {
                     }
                 }
             }
-        } -ArgumentList $proxyInfo.Process.Id, $proxyInfo.Port, $ProxyStateFile
+        } -ArgumentList $proxyInfo.Process.Id, $proxyInfo.Port, $ProxyStateFile, 5
     }
 
     try {
@@ -1751,10 +1776,11 @@ if ($opusCtx) {
 }
 Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
 
-if ($env:DEEPCLAUDE_WATCHDOG -ne 'false' -and $proxyInfo.Process) {
+if ($env:DEEPCLAUDE_WATCHDOG -eq 'true' -and $proxyInfo.Process) {
     $watchdog = Start-Job -Name "DeepClaudeWatchdog" -ScriptBlock {
-        param($Pid, $Port, $StateFile)
+        param($Pid, $Port, $StateFile, $MaxRestarts)
         $pollMs = 5000
+        $restartCount = 0
         while ($true) {
             Start-Sleep -Milliseconds $pollMs
             $procAlive = Get-Process -Id $Pid -ErrorAction SilentlyContinue
@@ -1764,7 +1790,13 @@ if ($env:DEEPCLAUDE_WATCHDOG -ne 'false' -and $proxyInfo.Process) {
                     Write-Host "Proxy (PID $Pid) exited and state file is gone. Watchdog exiting." -ForegroundColor DarkGray
                     return
                 }
-                Write-Host "Proxy (PID $Pid) is no longer running. Restarting..." -ForegroundColor Yellow
+                $restartCount++
+                if ($restartCount -gt $MaxRestarts) {
+                    Write-Host "ERROR: Proxy restarted $MaxRestarts times. Watchdog giving up." -ForegroundColor Red
+                    return
+                }
+                Write-Host "Proxy (PID $Pid) is no longer running. Restarting (attempt $restartCount of $MaxRestarts)..." -ForegroundColor Yellow
+                Start-Sleep -Seconds 2
                 try {
                     $newProxy = Start-RoutingProxy -RoutesFile $using:CurrentRoutesFile -Persist:$using:Persist
                     if ($newProxy -and $newProxy.Process) {
@@ -1778,7 +1810,7 @@ if ($env:DEEPCLAUDE_WATCHDOG -ne 'false' -and $proxyInfo.Process) {
                 }
             }
         }
-    } -ArgumentList $proxyInfo.Process.Id, $proxyInfo.Port, $ProxyStateFile
+    } -ArgumentList $proxyInfo.Process.Id, $proxyInfo.Port, $ProxyStateFile, 5
 }
 
 try {

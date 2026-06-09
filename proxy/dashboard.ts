@@ -1,7 +1,34 @@
 'use strict';
 
+import crypto from 'node:crypto';
 import http from 'http';
 import { getFullHealthSnapshot } from './stats';
+
+// Optional dashboard authentication via shared secret.
+// If DEEPCLAUDE_DASHBOARD_KEY is set, the X-Dashboard-Key header must
+// match it using a timing-safe comparison to prevent side-channel attacks.
+// Without the env var, all local requests are allowed.
+function checkDashboardAuth(req: http.IncomingMessage, res: http.ServerResponse): boolean {
+    const key = process.env.DEEPCLAUDE_DASHBOARD_KEY;
+    if (!key) return true; // not configured, allow all
+    const provided = req.headers['x-dashboard-key'];
+
+    // Length check before timing-safe compare prevents variable-time
+    // comparison on variable-length inputs.
+    if (typeof provided !== 'string' || provided.length !== key.length) {
+        res.writeHead(401, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Unauthorized' }));
+        return false;
+    }
+
+    const match = crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(key));
+    if (!match) {
+        res.writeHead(401, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Unauthorized' }));
+        return false;
+    }
+    return true;
+}
 
 // Serve dashboard routes: /dashboard (HTML page) and /health/stream (SSE).
 // Returns true if the request was handled, false to continue normal routing.
@@ -17,12 +44,14 @@ export function serveDashboard(
     const url = req.url || '';
 
     if (url === '/dashboard') {
+        if (!checkDashboardAuth(req, res)) return true;
         res.writeHead(200, { 'content-type': 'text/html' });
         res.end(buildDashboardHtml(providerDisplayNames));
         return true;
     }
 
     if (url === '/health/stream') {
+        if (!checkDashboardAuth(req, res)) return true;
         res.writeHead(200, {
             'content-type': 'text/event-stream',
             'cache-control': 'no-cache',

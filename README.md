@@ -356,6 +356,15 @@ Then run the printed commands in an **admin** PowerShell window. You'll need to 
 
 ## Troubleshooting
 
+**npm install fails**
+Ensure Node.js 18+ is installed. Delete node_modules and package-lock.json, then retry.
+
+**tsx not found**
+Run `npm install` from the project root. The proxy uses tsx to run TypeScript directly.
+
+**TypeScript compilation errors**
+Run `npm test` to check for type errors.
+
 **Proxy fails to start on Windows (port not responding)**
 Windows Defender may be blocking the proxy. Run `deepclaude --fix-av` and execute the printed commands in an admin PowerShell window.
 
