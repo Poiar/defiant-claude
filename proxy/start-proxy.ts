@@ -329,11 +329,13 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
         };
         const setRequestDeadline = (timeoutMs: number, label: string) => {
             requestDeadline = setTimeout(() => {
-                log.warn(reqId, 'request deadline exceeded (' + timeoutMs + 'ms, slot=' + label + ') -- sending 504');
+                log.warn(reqId, 'request deadline exceeded (' + timeoutMs + 'ms, slot=' + label + ') -- destroying connection');
                 try {
                     if (!res.headersSent && !res.destroyed) {
                         res.writeHead(504, { 'content-type': 'application/json' });
                         res.end(JSON.stringify(formatError(504)));
+                    } else if (!res.destroyed) {
+                        res.destroy();
                     }
                 } catch (_) { /* socket may already be destroyed */ }
             }, timeoutMs);
@@ -384,7 +386,40 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                     }
                     if (!res.headersSent && !res.destroyed) {
                         res.writeHead(anthroRes.statusCode || 200, safeResHeaders as Record<string, string | number>);
+
+                        // Stream deadline: the 120s request deadline above becomes a
+                        // no-op once headers are sent, so add stream-level timeouts to
+                        // prevent the pipeline from hanging forever if upstream sends
+                        // headers+partial body then stalls.
+                        const PASSTHROUGH_HEARTBEAT_MS = 60_000;
+                        const PASSTHROUGH_DEADLINE_MS = 120_000;
+                        let passthroughBytes = 0;
+                        let streamHeartbeat: ReturnType<typeof setTimeout> | null = null;
+                        let streamDeadline: ReturnType<typeof setTimeout> | null = null;
+                        const cancelStreamTimeouts = () => {
+                            if (streamHeartbeat) { clearTimeout(streamHeartbeat); streamHeartbeat = null; }
+                            if (streamDeadline) { clearTimeout(streamDeadline); streamDeadline = null; }
+                        };
+                        const resetStreamHeartbeat = () => {
+                            if (streamHeartbeat) clearTimeout(streamHeartbeat);
+                            streamHeartbeat = setTimeout(() => {
+                                anthroRes.destroy(new Error('Passthrough stream heartbeat timeout after ' + PASSTHROUGH_HEARTBEAT_MS / 1000 + 's, received ' + passthroughBytes + ' bytes'));
+                            }, PASSTHROUGH_HEARTBEAT_MS);
+                        };
+                        streamDeadline = setTimeout(() => {
+                            cancelStreamTimeouts();
+                            anthroRes.destroy(new Error('Passthrough stream deadline after ' + PASSTHROUGH_DEADLINE_MS / 1000 + 's, received ' + passthroughBytes + ' bytes'));
+                        }, PASSTHROUGH_DEADLINE_MS);
+                        resetStreamHeartbeat();
+                        anthroRes.on('data', (chunk: Buffer) => {
+                            passthroughBytes += chunk.length;
+                            resetStreamHeartbeat();
+                        });
+                        anthroRes.once('end', cancelStreamTimeouts);
+                        anthroRes.once('error', cancelStreamTimeouts);
+
                         pipeline(anthroRes, res, (err: Error | null) => {
+                            cancelStreamTimeouts();
                             if (err) log.error(reqId, 'pipeline error: ' + scrubCredentials(err.message));
                         });
                     }
