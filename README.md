@@ -36,6 +36,13 @@ DeepClaude runs a local HTTP routing proxy that intercepts Claude Code's Anthrop
 | `startup-check.ts` | Startup health probe — concurrent non-streaming + streaming checks per provider before accepting connections |
 | `stream-metrics.ts` | Per-stream timing (TTFB, tokens/sec) and aggregated provider metrics |
 | `request-log.ts` | Opt-in request logging to `~/.deepclaude/requests.log` (`--log-all` or `DEEPCLAUDE_LOG_ALL_REQUESTS=true`) |
+| `session-key.ts` | SHA-256 session key derivation from conversation content, shared by thinking/reasoning caches and momentum |
+| `prompt-router.ts` | Request prompt complexity classification (TRIVIAL/CHAT/CODE/TOOL/HEAVY) for cost-based routing |
+| `canary.ts` | Canary routing state machine (COLD → WARMING → ACTIVE) with configurable rollout percentages and rollback |
+| `probe.ts` | Single-provider health probe with auth failure detection and latency measurement |
+| `dashboard.ts` | Health dashboard HTML page with live SSE metrics stream |
+| `config-lint.ts` | `providers.json` structural validation (used by `--lint-config`) |
+| `dry-run.ts` | Resolved routing table display without starting the proxy (used by `--dry-run`) |
 
 ### Data-driven provider registry
 
@@ -45,7 +52,9 @@ Both the proxy and the launcher scripts (`deepclaude.ps1`, `deepclaude.sh`) read
 providers.json
 ├── providers     →  endpoint, auth, wire format, fallbacks, setup URLs
 ├── contextLimits →  per-model token windows
-└── configs       →  named preset configs (slot → provider:model)
+├── configs       →  named preset configs (slot → provider:model)
+├── aliases       →  short model aliases (e.g. "v4" → "deepseek-v4-pro")
+└── pricing       →  per-model input/output token pricing ($/MTok)
 ```
 
 ### Launcher scripts
@@ -147,6 +156,10 @@ deepclaude ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free  # 3 specs 
 --fix-av              Print Windows Defender exclusion commands
 --install-statusline  Auto-install the statusline script and config
 --log-all             Log all requests to ~/.deepclaude/requests.log (by default only failures are logged)
+--stats               Show proxy request stats and provider health
+--lint-config         Validate providers.json configuration
+--skip-startup-check  Skip provider health checks on proxy startup
+--what-if             Alias for --dry-run
 ```
 
 ## Providers and API keys
@@ -251,7 +264,7 @@ Per-model context limits are configured automatically:
 | `siliconflow/deepseek-v4-pro` | 1M |
 | `novita/deepseek-v4-pro` | 1M |
 
-Models at 1M tokens get `CLAUDE_CODE_AUTO_COMPACT_WINDOW` set. Models between 128K–1M get `CLAUDE_CODE_MAX_CONTEXT_TOKENS` with compaction disabled.
+Models at 1M tokens get `CLAUDE_CODE_AUTO_COMPACT_WINDOW` set (clamped to 1,000,000 — Claude Code's internal max). Models between 128K–1M get `CLAUDE_CODE_MAX_CONTEXT_TOKENS` with compaction disabled. A `[1m]` suffix is appended to 1M-context model IDs (e.g. `deepseek-v4-pro[1m]`) — this is stripped by the proxy's router and used internally by Claude Code for dynamic context-window detection.
 
 ## Persistent proxy workflow
 
@@ -319,9 +332,17 @@ Tip: `deepclaude --install-statusline` automates the manual setup above.
 
 | Variable | Purpose |
 |---|---|
-| `DEEPCLAUDE_DEFAULT_BACKEND` | Default config (falls back to `ds`; legacy `CHEAPCLAUDE_DEFAULT_BACKEND` also accepted) |
+| `DEEPCLAUDE_DEFAULT_BACKEND` | Default config name (falls back to `ds`; legacy `CHEAPCLAUDE_DEFAULT_BACKEND` also accepted) |
+| `DEEPCLAUDE_ENCRYPTION_KEY` | Master key for AES-256-GCM API key decryption (used with `--encrypt-key`) |
+| `DEEPCLAUDE_DAILY_BUDGET` | Daily spending cap in dollars (proxy rejects requests when exceeded) |
+| `DEEPCLAUDE_DEV` | Development mode — more verbose error details in responses (`1` or `true`) |
+| `DEEPCLAUDE_DEBUG` | Enable debug-level log output (`true` to enable) |
+| `DEEPCLAUDE_LOG_LEVEL` | Set log level (`debug` for verbose output; defaults to `info`) |
+| `DEEPCLAUDE_LOG_ALL_REQUESTS` | Log all requests to `~/.deepclaude/requests.log` (`true` to enable) |
+| `DEEPCLAUDE_SKIP_STARTUP_CHECK` | Skip provider health checks on proxy startup (`true` to skip) |
+| `DEEPCLAUDE_WATCHDOG` | Enable/disable the proxy watchdog process (`false` to disable) |
 
-All provider env vars are pushed into the process so the proxy (child process) inherits them.
+All provider API key env vars (see [Providers table](#providers-and-api-keys)) are pushed into the process so the proxy (child process) inherits them.
 
 ## Windows Defender
 
