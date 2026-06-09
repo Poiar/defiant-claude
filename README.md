@@ -1,6 +1,6 @@
 # deepclaude
 
-Provider-agnostic Claude Code wrapper. Route each model slot (Opus, Sonnet, Haiku, subagent) to a different provider. Mix DeepSeek, OpenRouter, Fireworks, OpenCode, Kimi, Mimo, Umans, Groq, Mistral, MiniMax, Z.ai, BytePlus, SiliconFlow, Novita, and Anthropic in one session.
+Provider-agnostic Claude Code wrapper. Route each model slot (Opus, Sonnet, Haiku, subagent) to a different provider. Mix DeepSeek, OpenRouter, Fireworks, OpenCode, Alibaba, Kimi, Mimo, Umans, Groq, Mistral, MiniMax, Z.ai, BytePlus, SiliconFlow, Novita, and Anthropic in one session.
 
 ## Architecture
 
@@ -13,7 +13,7 @@ DeepClaude runs a local HTTP routing proxy that intercepts Claude Code's Anthrop
 | `start-proxy.ts` | Entry point — HTTP server, request lifecycle, health endpoint |
 | `routing.ts` | Slot-based routing with prefix matching, fallback chain construction, circuit breaker |
 | `protocol-translate.ts` | Bidirectional Anthropic Messages ↔ OpenAI Chat Completions format translation |
-| `forward.ts` | Upstream HTTP forwarding with SSE streaming, gzip decompression (streaming + non-streaming), stream heartbeat/deadline with byte diagnostics, fallback header injection, stream buffer guarding, usage token extraction |
+| `forward.ts` | Upstream HTTP forwarding with SSE streaming, gzip decompression, stream heartbeat/deadline timers with byte diagnostics, total-byte cap (500MB), fallback header injection, SSE buffer guarding, usage token extraction, peekFirstChunk with fast-stream race protection |
 | `thinking-cache.ts` | Anthropic-format thinking block extraction, caching, and injection across providers that strip them |
 | `reasoning-cache.ts` | OpenAI-format reasoning content cache with session-keyed LRU and re-injection |
 | `transport-errors.ts` | Network failure classification via ordered signature tuples with cause chain walking |
@@ -22,9 +22,9 @@ DeepClaude runs a local HTTP routing proxy that intercepts Claude Code's Anthrop
 | `lru-cache.ts` | TTL cache with LRU eviction using delete-then-set MRU promotion and lazy shared cleanup |
 | `server-tools.ts` | Anthropic server tool conversion (web_search, web_fetch, url_fetch, computer, bash, text_editor, memory, tool_search_tool), DuckDuckGo web search, SSRF-protected web fetch, tool result population |
 | `config.ts` | CLI argument parsing, JSON config loading with mtime-based hot reload, key resolution with AES-256-GCM decryption |
-| `stats.ts` | Provider health tracking, circuit breaker with 429 exclusion and auto-probe recovery, request statistics, token/spend tracking with budget caps, stream metrics recording |
+| `stats.ts` | Provider health tracking, circuit breaker with 429 exclusion, auto-probe recovery with cooldown backoff, request statistics, token/spend tracking with atomic writes and restart persistence, event loop lag monitoring, provider stats reconciliation on config reload |
 | `util.ts` | Path deduplication for /v1-prefixed providers, safe header construction |
-| `crypto.ts` | AES-256-GCM encryption/decryption for provider API keys |
+| `crypto.ts` | AES-256-GCM encryption/decryption for provider API keys with async scrypt (N=131072) key derivation and fingerprint-based key caching |
 | `encrypt-key.ts` | CLI tool for encrypting API keys |
 | `friendly-error.ts` | Conversational error responses for exhausted fallback chains |
 | `header-sanitizer.ts` | Request header sanitization before logging (drops auth, cookies, noise) |
@@ -50,9 +50,10 @@ Both the proxy and the launcher scripts (`deepclaude.ps1`, `deepclaude.sh`) read
 
 ```
 providers.json
-├── providers     →  endpoint, auth, wire format, fallbacks, setup URLs
+├── _comment      →  schema version / description (ignored by code)
+├── providers     →  endpoint, auth, wire format, fallbacks, setup URLs, streamUsageReporting, extraHeaders
 ├── contextLimits →  per-model token windows
-├── configs       →  named preset configs (slot → provider:model)
+├── configs       →  named preset configs (slot → provider:model), monthlyBudget
 ├── aliases       →  short model aliases (e.g. "v4" → "deepseek-v4-pro")
 └── pricing       →  per-model input/output token pricing ($/MTok)
 ```
@@ -284,8 +285,12 @@ deepclaude --stop-proxy            # Kill the proxy when done
 
 State files live in `~/.deepclaude/`:
 - `proxy.json` — PID, port, routes file
+- `proxy.pid` — PID lock file (prevents dual-instance state corruption)
 - `current-routes.json` — active routing table (reloaded on every request)
 - `slot-overrides.json` — per-slot model overrides
+- `spend.json` — daily and total spend tracking (atomic write via .tmp + rename)
+- `subagent-model.json` — dedicated subagent model setting
+- `requests.log` — opt-in request logs (JSONL, timestamped rotation, 5 backups)
 
 ## Remote control (`--remote`)
 
@@ -336,11 +341,18 @@ Tip: `deepclaude --install-statusline` automates the manual setup above.
 | `DEEPCLAUDE_ENCRYPTION_KEY` | Master key for AES-256-GCM API key decryption (used with `--encrypt-key`) |
 | `DEEPCLAUDE_DAILY_BUDGET` | Daily spending cap in dollars (proxy rejects requests when exceeded) |
 | `DEEPCLAUDE_DEV` | Development mode — more verbose error details in responses (`1` or `true`) |
-| `DEEPCLAUDE_DEBUG` | Enable debug-level log output (`true` to enable) |
+| `DEEPCLAUDE_DEBUG` | Enable debug-level log output (`true`, `1`, or `yes`, case-insensitive) |
 | `DEEPCLAUDE_LOG_LEVEL` | Set log level (`debug` for verbose output; defaults to `info`) |
 | `DEEPCLAUDE_LOG_ALL_REQUESTS` | Log all requests to `~/.deepclaude/requests.log` (`true` to enable) |
 | `DEEPCLAUDE_SKIP_STARTUP_CHECK` | Skip provider health checks on proxy startup (`true` to skip) |
-| `DEEPCLAUDE_WATCHDOG` | Enable/disable the proxy watchdog process (`false` to disable) |
+| `DEEPCLAUDE_WATCHDOG` | Enable the proxy watchdog process (`true` to enable; off by default) |
+| `DEEPCLAUDE_MAX_CONCURRENT` | Max concurrent upstream requests for main slots (default: `25`) |
+| `DEEPCLAUDE_SUBAGENT_MAX_CONCURRENT` | Max concurrent upstream requests for subagent slots (default: `8`) |
+| `DEEPCLAUDE_STREAM_HEARTBEAT_MS` | Stream silence timeout in ms before heartbeat triggers (default: `180000`) |
+| `DEEPCLAUDE_SUBAGENT_STREAM_HEARTBEAT_MS` | Subagent stream heartbeat timeout in ms (default: `90000`) |
+| `DEEPCLAUDE_DASHBOARD_KEY` | Shared secret for `/dashboard` and `/health/stream` endpoints (unset = no auth) |
+| `DEEPCLAUDE_SESSION_ID` | Per-session UUID for peer messaging identity (auto-generated, inherited by child processes) |
+| `DEEPCLAUDE_NO_PID_LOCK` | Skip PID file locking at startup (`1` to skip; used by integration tests) |
 
 All provider API key env vars (see [Providers table](#providers-and-api-keys)) are pushed into the process so the proxy (child process) inherits them.
 

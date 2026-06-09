@@ -681,6 +681,43 @@ function Stop-RoutingProxy {
     }
 }
 
+function Start-Watchdog {
+    param($ProxyProcess, $ProxyPort, $StateFile, $MaxRestarts, [switch]$Persist)
+    return Start-Job -Name "DeepClaudeWatchdog" -ScriptBlock {
+        param($Pid, $Port, $StateFile, $MaxRestarts, $Persist)
+        $pollMs = 5000
+        $restartCount = 0
+        while ($true) {
+            Start-Sleep -Milliseconds $pollMs
+            $procAlive = Get-Process -Id $Pid -ErrorAction SilentlyContinue
+            if (-not $procAlive) {
+                if (-not (Test-Path $StateFile)) {
+                    Write-Host "Proxy (PID $Pid) exited and state file is gone. Watchdog exiting." -ForegroundColor DarkGray
+                    return
+                }
+                $restartCount++
+                if ($restartCount -gt $MaxRestarts) {
+                    Write-Host "ERROR: Proxy restarted $MaxRestarts times. Watchdog giving up." -ForegroundColor Red
+                    return
+                }
+                Write-Host "Proxy (PID $Pid) is no longer running. Restarting (attempt $restartCount of $MaxRestarts)..." -ForegroundColor Yellow
+                Start-Sleep -Seconds 2
+                try {
+                    $newProxy = Start-RoutingProxy -RoutesFile $using:CurrentRoutesFile -Persist:$Persist
+                    if ($newProxy -and $newProxy.Process) {
+                        Save-ProxyState -ProcessId $newProxy.Process.Id -Port $newProxy.Port -RoutesFile $using:CurrentRoutesFile
+                        $Pid = $newProxy.Process.Id
+                        Write-Host "Proxy restarted on port $($newProxy.Port) (new PID $($newProxy.Process.Id))." -ForegroundColor Green
+                    }
+                } catch {
+                    Write-Host "  Failed to restart proxy: $_" -ForegroundColor Red
+                    Start-Sleep -Seconds 10
+                }
+            }
+        }
+    } -ArgumentList $ProxyProcess.Id, $ProxyPort, $StateFile, $MaxRestarts, $Persist.IsPresent
+}
+
 function Get-KeyDisplay($k) {
     if (-not $k) { return "MISSING" }
     return "set (****" + $k.Substring($k.Length - [Math]::Min(4, $k.Length)) + ")"
@@ -1627,43 +1664,6 @@ if ($Remote) {
     $env:CLAUDE_CONTEXT_COMPRESSION = 'true'
     $env:ANTHROPIC_MODEL = & $Append1M ($resolved.slots['opus'].model -replace '\[1m\]', '')
 
-    if ($env:DEEPCLAUDE_WATCHDOG -eq 'true' -and $proxyInfo.Process) {
-        $watchdog = Start-Job -Name "DeepClaudeWatchdog" -ScriptBlock {
-            param($Pid, $Port, $StateFile, $MaxRestarts)
-            $pollMs = 5000
-            $restartCount = 0
-            while ($true) {
-                Start-Sleep -Milliseconds $pollMs
-                $procAlive = Get-Process -Id $Pid -ErrorAction SilentlyContinue
-                if (-not $procAlive) {
-                    # If the state file is gone, the proxy was intentionally shut down (e.g. --stop-proxy)
-                    if (-not (Test-Path $StateFile)) {
-                        Write-Host "Proxy (PID $Pid) exited and state file is gone. Watchdog exiting." -ForegroundColor DarkGray
-                        return
-                    }
-                    $restartCount++
-                    if ($restartCount -gt $MaxRestarts) {
-                        Write-Host "ERROR: Proxy restarted $MaxRestarts times. Watchdog giving up." -ForegroundColor Red
-                        return
-                    }
-                    Write-Host "Proxy (PID $Pid) is no longer running. Restarting (attempt $restartCount of $MaxRestarts)..." -ForegroundColor Yellow
-                    Start-Sleep -Seconds 2
-                    try {
-                        $newProxy = Start-RoutingProxy -RoutesFile $using:CurrentRoutesFile -Persist
-                        if ($newProxy -and $newProxy.Process) {
-                            Save-ProxyState -ProcessId $newProxy.Process.Id -Port $newProxy.Port -RoutesFile $using:CurrentRoutesFile
-                            $Pid = $newProxy.Process.Id
-                            Write-Host "Proxy restarted on port $($newProxy.Port) (new PID $($newProxy.Process.Id))." -ForegroundColor Green
-                        }
-                    } catch {
-                        Write-Host "  Failed to restart proxy: $_" -ForegroundColor Red
-                        Start-Sleep -Seconds 10
-                    }
-                }
-            }
-        } -ArgumentList $proxyInfo.Process.Id, $proxyInfo.Port, $ProxyStateFile, 5
-    }
-
     try {
         & claude --effort $Effort --dangerously-skip-permissions remote-control @ModelSpecs
     } catch {
@@ -1777,40 +1777,7 @@ if ($opusCtx) {
 Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
 
 if ($env:DEEPCLAUDE_WATCHDOG -eq 'true' -and $proxyInfo.Process) {
-    $watchdog = Start-Job -Name "DeepClaudeWatchdog" -ScriptBlock {
-        param($Pid, $Port, $StateFile, $MaxRestarts)
-        $pollMs = 5000
-        $restartCount = 0
-        while ($true) {
-            Start-Sleep -Milliseconds $pollMs
-            $procAlive = Get-Process -Id $Pid -ErrorAction SilentlyContinue
-            if (-not $procAlive) {
-                # If the state file is gone, the proxy was intentionally shut down (e.g. --stop-proxy)
-                if (-not (Test-Path $StateFile)) {
-                    Write-Host "Proxy (PID $Pid) exited and state file is gone. Watchdog exiting." -ForegroundColor DarkGray
-                    return
-                }
-                $restartCount++
-                if ($restartCount -gt $MaxRestarts) {
-                    Write-Host "ERROR: Proxy restarted $MaxRestarts times. Watchdog giving up." -ForegroundColor Red
-                    return
-                }
-                Write-Host "Proxy (PID $Pid) is no longer running. Restarting (attempt $restartCount of $MaxRestarts)..." -ForegroundColor Yellow
-                Start-Sleep -Seconds 2
-                try {
-                    $newProxy = Start-RoutingProxy -RoutesFile $using:CurrentRoutesFile -Persist:$using:Persist
-                    if ($newProxy -and $newProxy.Process) {
-                        Save-ProxyState -ProcessId $newProxy.Process.Id -Port $newProxy.Port -RoutesFile $using:CurrentRoutesFile
-                        $Pid = $newProxy.Process.Id
-                        Write-Host "Proxy restarted on port $($newProxy.Port) (new PID $($newProxy.Process.Id))." -ForegroundColor Green
-                    }
-                } catch {
-                    Write-Host "  Failed to restart proxy: $_" -ForegroundColor Red
-                    Start-Sleep -Seconds 10
-                }
-            }
-        }
-    } -ArgumentList $proxyInfo.Process.Id, $proxyInfo.Port, $ProxyStateFile, 5
+    $watchdog = Start-Watchdog -ProxyProcess $proxyInfo.Process -ProxyPort $proxyInfo.Port -StateFile $ProxyStateFile -MaxRestarts 5 -Persist:$Persist
 }
 
 try {
