@@ -8,8 +8,8 @@ describe('dead stream constants', () => {
         expect(FIRST_BYTE_TIMEOUT_MS).toBe(15_000);
     });
 
-    test('STREAM_HEARTBEAT_MS is 30s', () => {
-        expect(STREAM_HEARTBEAT_MS).toBe(30_000);
+    test('STREAM_HEARTBEAT_MS is 90s', () => {
+        expect(STREAM_HEARTBEAT_MS).toBe(90_000);
     });
 
     test('FIRST_BYTE_TIMEOUT_MS < STREAM_READ_TIMEOUT_MS', () => {

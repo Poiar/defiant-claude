@@ -129,7 +129,7 @@ export function nextRequestId(): number {
 }
 // Core stat recording -- increments counters and records timing.
 // Never throws.
-export function recordStat(providerKey: string | null | undefined, success: boolean, ms: number): void {
+export function recordStat(providerKey: string | null | undefined, success: boolean, ms: number, statusCode?: number): void {
     if (!providerKey) return;
     try {
         if (!providerStats[providerKey]) {
@@ -140,7 +140,10 @@ export function recordStat(providerKey: string | null | undefined, success: bool
         s.totalMs += ms;
         s.lastRequest = Date.now();
         if (success) s.successes++; else s.fails++;
-        if (!success && s.requests >= 5 && (s.fails / s.requests) >= 0.34) {
+        // Exclude HTTP 429 (rate limited) from circuit breaker failure counting.
+        // 429 means the provider is healthy but throttling us — opening the breaker
+        // would block all requests and make the rate problem worse.
+        if (!success && statusCode !== 429 && s.requests >= 5 && (s.fails / s.requests) >= 0.34) {
             openCircuitBreaker(providerKey);
         }
     } catch (_) {

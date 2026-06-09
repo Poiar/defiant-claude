@@ -790,7 +790,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                     return;
                 }
 
-                recordStat(target.providerKey, false, ms);
+                recordStat(target.providerKey, false, ms, result.status);
                 recordRecentRequest({
                     timestamp: Date.now(),
                     model: model,
