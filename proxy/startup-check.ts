@@ -40,6 +40,7 @@ interface ProviderDef {
     endpoint: string;
     keyEnv?: string;
     authHeader?: string;
+    auth?: string;
     wireFormat?: string;
     extraHeaders?: Record<string, string>;
 }
@@ -391,7 +392,7 @@ export async function runStartupChecks(): Promise<StartUpCheckSummary> {
         const def = providersData[key];
         const apiKey = def.keyEnv ? process.env[def.keyEnv] : undefined;
         const pName = def.displayName || key;
-        const pAuth = def.authHeader || 'x-api-key';
+        const pAuth = def.authHeader || def.auth || 'x-api-key';
         const pFmt = def.wireFormat || 'anthropic';
         return Promise.all([
             sendProbe(key, pName, def.endpoint, apiKey, pAuth, pFmt, def.extraHeaders),

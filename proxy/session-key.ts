@@ -23,5 +23,10 @@ export function sessionKey(reqBody: Record<string, unknown> | null | undefined):
                 : ''
           ).slice(0, 100)
         : '';
-    return crypto.createHash('sha256').update(content + '|' + systemHint).digest('hex').slice(0, 32);
+    return crypto.createHash('sha256')
+        .update(content)
+        .update('\x00')
+        .update(systemHint)
+        .digest('hex')
+        .slice(0, 32);
 }

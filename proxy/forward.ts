@@ -144,6 +144,7 @@ export function peekFirstChunk(proxyRes: NodeJS.ReadableStream, timeoutMs?: numb
                 clearTimeout(timer);
                 proxyRes.removeListener('readable', onReadable);
                 proxyRes.removeListener('error', onError);
+                proxyRes.removeListener('end', onEnd);
                 (proxyRes as NodeJS.ReadableStream & { unshift(chunk: Buffer): void }).unshift(chunk);
                 resolve({ ok: true, firstChunk: chunk as Buffer });
         }
@@ -200,9 +201,10 @@ export function tryForward(
     // Extract slot for timeout differentiation — subagent requests get tighter limits.
     const slot = model ? (model.match(/^(sonnet|opus|haiku|subagent):/) || [null])[1] : null;
     const to = getStreamTimeouts(slot);
+    const forwardStart = Date.now();
 
     return new Promise((resolve) => {
-        let streamUsage: { prompt_tokens: number; completion_tokens: number } | null = null;
+        const streamUsage: { prompt_tokens: number; completion_tokens: number } = { prompt_tokens: 0, completion_tokens: 0 };
         let timings: StreamTimings | null = null;
         let responseStarted = false;
         let firstByteTimer: ReturnType<typeof setTimeout> | null = null;
@@ -247,7 +249,10 @@ export function tryForward(
                             const gunzip = zlib.createGunzip();
                             proxyRes.pipe(gunzip);
                             proxyRes.on('error', (err: Error) => gunzip.destroy(err));
-                            gunzip.on('error', () => { /* errors handled via sourceStream listener below */ });
+                            gunzip.on('error', (err: Error) => {
+                                log.error(reqId, 'gunzip decompression error: ' + err.message);
+                                (proxyRes as unknown as NodeJS.ReadableStream & { destroy(err?: Error): void }).destroy(err);
+                            });
                             sourceStream = gunzip;
                             log.info(reqId, 'Decompressing gzip-encoded streaming response');
                         } catch (err) {
@@ -275,12 +280,14 @@ export function tryForward(
                             );
                         }, to.heartbeat);
                     };
+                    const elapsed = Date.now() - forwardStart;
+                    const remainingDeadline = Math.max(5000, to.deadline - elapsed);
                     streamDeadline = setTimeout(() => {
                         cancelStreamTimeouts();
                         (proxyRes as unknown as NodeJS.ReadableStream & { destroy(err?: Error): void }).destroy(
                             new Error('Upstream stream read timeout (deadline) after ' + to.deadline / 1000 + 's, received ' + streamBytes + ' bytes')
                         );
-                    }, to.deadline);
+                    }, remainingDeadline);
                     resetStreamHeartbeat();
                     sourceStream.on('data', (chunk: Buffer | string) => {
                         streamBytes += typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.length;
@@ -319,8 +326,13 @@ export function tryForward(
                         if (rawUsageBuf.length > MAX_SSE_BUFFER) {
                             // Malformed upstream stream (missing SSE delimiters) — discard
                             // usage buffer to prevent unbounded memory growth, same guard
-                            // as the outStream SSE buffer below.
-                            rawUsageBuf = '';
+                            // as the outStream SSE buffer below, but preserve trailing partial event.
+                            const lastSplit = rawUsageBuf.lastIndexOf('\n\n');
+                            if (lastSplit >= 0) {
+                                rawUsageBuf = rawUsageBuf.slice(lastSplit + 2);
+                            } else {
+                                rawUsageBuf = '';
+                            }
                             return;
                         }
                         const parts = rawUsageBuf.split('\n\n');
@@ -336,7 +348,7 @@ export function tryForward(
                                     const pt = parsedPayload.usage.prompt_tokens !== undefined ? parsedPayload.usage.prompt_tokens : parsedPayload.usage.input_tokens;
                                     const ct = parsedPayload.usage.completion_tokens !== undefined ? parsedPayload.usage.completion_tokens : parsedPayload.usage.output_tokens;
                                     if (pt !== undefined || ct !== undefined) {
-                                        streamUsage = { prompt_tokens: pt || 0, completion_tokens: ct || 0 };
+                                        streamUsage.prompt_tokens = pt || 0; streamUsage.completion_tokens = ct || 0;
                                     }
                                 }
                             } catch (_) { /* non-fatal */ }
@@ -353,13 +365,16 @@ export function tryForward(
                         for (const evt of events) {
                             if (evt.length > MAX_SSE_BUFFER) {
                                 log.error(reqId, 'SSE event exceeded 1MB limit -- aborting stream');
-                                (outStream as NodeJS.ReadableStream & { destroy(err?: Error): void }).destroy(new Error('SSE event too large'));
+                                const s = outStream as NodeJS.ReadableStream & { destroy(err?: Error): void };
+                                process.nextTick(() => s.destroy(new Error('SSE event too large')));
                                 return;
                             }
                         }
                         if (sseBuf.length > MAX_SSE_BUFFER) {
                             log.error(reqId, 'SSE event exceeded 1MB limit -- aborting stream');
-                            (outStream as NodeJS.ReadableStream & { destroy(err?: Error): void }).destroy(new Error('SSE event too large'));
+                            const s = outStream as NodeJS.ReadableStream & { destroy(err?: Error): void };
+                            process.nextTick(() => s.destroy(new Error('SSE event too large')));
+                            return;
                         }
                     }
                     );
@@ -448,7 +463,7 @@ export function tryForward(
                                 const pt = original.usage.prompt_tokens !== undefined ? original.usage.prompt_tokens : original.usage.input_tokens;
                                 const ct = original.usage.completion_tokens !== undefined ? original.usage.completion_tokens : original.usage.output_tokens;
                                 if (pt !== undefined || ct !== undefined) {
-                                    streamUsage = { prompt_tokens: pt || 0, completion_tokens: ct || 0 };
+                                    streamUsage.prompt_tokens = pt || 0; streamUsage.completion_tokens = ct || 0;
                                 }
                             }
                         } catch (_) { /* non-fatal */ }
@@ -487,9 +502,9 @@ export function tryForward(
                             }
                         }
                         if (qualityReason) {
-                            resolve({ success: false, status: proxyRes.statusCode, headers: outHeaders, body: responseBody, streamUsage, error: qualityReason, qualityFailure: true, qualityReason, streamMetrics: timings ? finalizeMetrics({ ...timings, firstTokenTime: Date.now(), lastChunkTime: Date.now() }, streamUsage?.completion_tokens || 0) : undefined });
+                            resolve({ success: false, status: proxyRes.statusCode, headers: outHeaders, body: responseBody, streamUsage, error: qualityReason, qualityFailure: true, qualityReason, streamMetrics: undefined });
                         } else {
-                            resolve({ success: true, status: proxyRes.statusCode, headers: outHeaders, body: responseBody, streamUsage, streamMetrics: timings ? finalizeMetrics({ ...timings, firstTokenTime: Date.now(), lastChunkTime: Date.now() }, streamUsage?.completion_tokens || 0) : undefined });
+                            resolve({ success: true, status: proxyRes.statusCode, headers: outHeaders, body: responseBody, streamUsage, streamMetrics: undefined });
                         }
                     }
                 });

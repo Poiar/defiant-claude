@@ -127,6 +127,12 @@ let requestIdCounter: number = 0;
 export function nextRequestId(): number {
     return ++requestIdCounter;
 }
+// Helper: returns true when the failure rate exceeds the circuit-breaker
+// threshold (>= 34 %) and there have been enough requests to judge.
+function isFailureRateAboveThreshold(fails: number, requests: number): boolean {
+    return requests >= 5 && (fails / requests) >= 0.34;
+}
+
 // Core stat recording -- increments counters and records timing.
 // Never throws.
 export function recordStat(providerKey: string | null | undefined, success: boolean, ms: number, statusCode?: number): void {
@@ -143,7 +149,7 @@ export function recordStat(providerKey: string | null | undefined, success: bool
         // Exclude HTTP 429 (rate limited) from circuit breaker failure counting.
         // 429 means the provider is healthy but throttling us — opening the breaker
         // would block all requests and make the rate problem worse.
-        if (!success && statusCode !== 429 && s.requests >= 5 && (s.fails / s.requests) >= 0.34) {
+        if (!success && statusCode !== 429 && isFailureRateAboveThreshold(s.fails, s.requests)) {
             openCircuitBreaker(providerKey);
         }
     } catch (_) {
@@ -293,8 +299,8 @@ export function isProviderHealthy(providerKey: string): boolean {
         if (entry.state === 'HALF_OPEN') return true;
     }
     const s = providerStats[providerKey];
-    if (!s || s.requests < 5) return true;
-    return (s.fails / s.requests) < 0.34;
+    if (!s) return true;
+    return !isFailureRateAboveThreshold(s.fails, s.requests);
 };
 
 // Derive circuit breaker state from recorded stats or active breaker entry.
@@ -303,8 +309,8 @@ export function getCircuitBreakerState(providerKey: string): string {
     const entry = circuitBreakers[providerKey];
     if (entry) return entry.state;
     const s = providerStats[providerKey];
-    if (!s || s.requests < 5) return 'CLOSED';
-    return (s.fails / s.requests) >= 0.34 ? 'OPEN' : 'CLOSED';
+    if (!s) return 'CLOSED';
+    return isFailureRateAboveThreshold(s.fails, s.requests) ? 'OPEN' : 'CLOSED';
 }
 
 // --- Recent request ring buffer ---
@@ -369,6 +375,7 @@ export function recordStreamMetrics(providerKey: string, metrics: StreamMetrics)
 
 let spendFile = path.join(os.homedir(), '.deepclaude', 'spend.json');
 let lastSpendWrite = 0;
+let spendWriteLock = false;
 const SPEND_WRITE_THROTTLE_MS = 1000;
 
 let runningTotal = 0;
@@ -442,6 +449,8 @@ export async function recordSpend(modelName: string, usage: { prompt_tokens: num
 
   const now = Date.now();
   if (now - lastSpendWrite < SPEND_WRITE_THROTTLE_MS) return;
+  if (spendWriteLock) return;
+  spendWriteLock = true;
   lastSpendWrite = now;
 
   try {
@@ -486,12 +495,6 @@ export async function recordSpend(modelName: string, usage: { prompt_tokens: num
     }
     daily[today] = todayEntry;
 
-    dailyAccumulator = 0;
-    // Clear provider accumulators
-    for (const pk of Object.keys(providerDailyAccumulators)) {
-      delete providerDailyAccumulators[pk];
-    }
-
     const data = {
       total: parseFloat(runningTotal.toFixed(4)),
       daily,
@@ -499,7 +502,15 @@ export async function recordSpend(modelName: string, usage: { prompt_tokens: num
       current_model: modelName,
     };
     fs.writeFileSync(spendFile, JSON.stringify(data) + '\n');
-  } catch (_) { /* non-fatal */ }
+
+    // Only clear accumulators AFTER a successful write to prevent data loss
+    dailyAccumulator = 0;
+    for (const pk of Object.keys(providerDailyAccumulators)) {
+      delete providerDailyAccumulators[pk];
+    }
+  } catch (_) { /* non-fatal */ } finally {
+    spendWriteLock = false;
+  }
 }
 
 // --- Spend budget caps ---

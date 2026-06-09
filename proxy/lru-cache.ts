@@ -9,13 +9,8 @@ interface LruCacheOptions {
     ttlMs?: number;
 }
 
-interface LruCacheEntry {
-    value: unknown;
-    at: number;
-}
-
 // Shared cleanup scheduler -- runs one interval for all cache instances.
-const allCaches = new Set<LruCache>();
+const allCaches = new Set<LruCache<unknown>>();
 let cleanupTimer: ReturnType<typeof setInterval> | null = null;
 const CLEANUP_MS = 300_000; // 5 minutes
 
@@ -30,10 +25,10 @@ function ensureCleanupTimer(): void {
     cleanupTimer.unref(); // Don't keep the process alive
 }
 
-export class LruCache {
+export class LruCache<T> {
     private _maxEntries: number;
     private _ttlMs: number;
-    private _map: Map<string, LruCacheEntry>;
+    private _map: Map<string, { value: T; at: number }>;
     private _lastSweep: number;
 
     constructor(opts?: LruCacheOptions) {
@@ -47,7 +42,7 @@ export class LruCache {
     }
 
     // Store a value with the current timestamp.
-    set(key: string, value: unknown): void {
+    set(key: string, value: T): void {
         // Evict LRU if at capacity (first entry = oldest)
         if (this._map.size >= this._maxEntries) {
             const oldest = this._map.keys().next().value;
@@ -63,7 +58,7 @@ export class LruCache {
     }
 
     // Retrieve a value. Returns undefined if missing or expired.
-    get(key: string): unknown | undefined {
+    get(key: string): T | undefined {
         const entry = this._map.get(key);
         if (!entry) return undefined;
 
@@ -88,15 +83,15 @@ export class LruCache {
     }
 
     get size(): number {
-        this._sweep(Date.now());
+        this._sweep(Date.now(), true);
         return this._map.size;
     }
 
     // Remove all expired entries. Called automatically on get/set and by
     // the shared cleanup timer. Safe to call externally.
-    _sweep(now: number): void {
+    _sweep(now: number, force = false): void {
         // Only sweep every 60 seconds at most, unless forced
-        if (now - this._lastSweep < 60_000) return;
+        if (!force && now - this._lastSweep < 60_000) return;
         this._lastSweep = now;
 
         const expiry = now - this._ttlMs;

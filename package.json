@@ -7,7 +7,7 @@
     "node": ">=18"
   },
   "bin": {
-    "deepclaude": "deepclaude.ps1"
+    "deepclaude": "deepclaude.sh"
   },
   "scripts": {
     "lint": "pwsh -c \"Invoke-ScriptAnalyzer -Path deepclaude.ps1\" && npx eslint proxy/ --max-warnings 0",

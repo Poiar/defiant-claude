@@ -32,12 +32,15 @@ import { finalizeMetrics } from './stream-metrics';
 import { logRequest, setLogAllRequests, type RequestLogEntry } from './request-log';
 import { runStartupChecks } from './startup-check';
 
-// Git hash captured at startup so every health check shows the exact commit.
+// Git hash captured lazily so the module can be imported without blocking at load time.
 import { execSync } from 'child_process';
-const GIT_HASH = (() => {
-  try { return execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim(); }
-  catch { return 'unknown'; }
-})();
+let _gitHash: string | null = null;
+function getGitHash(): string {
+  if (_gitHash !== null) return _gitHash;
+  try { _gitHash = execSync('git rev-parse --short HEAD', { encoding: 'utf8', timeout: 5000 }).trim(); }
+  catch { _gitHash = 'unknown'; }
+  return _gitHash;
+}
 
 // Retry config for transient upstream transport errors.
 // Each provider in the fallback chain gets up to 3 retries with exponential
@@ -55,7 +58,7 @@ const FALLBACKABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
 const log = createLogger('proxy');
 
 // Stamp the git hash onto the stats module for health endpoint reporting.
-setGitHash(GIT_HASH);
+setGitHash(getGitHash());
 
 // Check for --probe flag before normal startup
 const probeIdx = process.argv.indexOf('--probe');
@@ -157,7 +160,11 @@ if (hasLogAll || process.env.DEEPCLAUDE_LOG_ALL_REQUESTS === 'true') {
 
 // Load provider registry for data-driven hooks (optional -- proxy works without it)
 let providerRegistry: { providers: Record<string, { endpoint: string; extraHeaders?: Record<string, string> }> } | null = null;
-try { providerRegistry = require('./providers.json'); } catch (_) { /* file not found, continue without registry */ }
+try { providerRegistry = require('./providers.json'); } catch (e: any) {
+    if (e.code !== 'MODULE_NOT_FOUND') {
+        console.warn('Warning: providers.json exists but could not be parsed:', e.message);
+    }
+}
 
 const concurrency = createSlotConcurrency();
 const rateLimiter = createRateLimiter();
@@ -312,9 +319,9 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
     });
 
     req.on('end', () => {
-        if (body === null) return; // body read was cancelled (size limit exceeded)
-        req.setTimeout(0);  // Clear slow-body guard — streaming phase may have long idle gaps
         activeConnections++;
+        if (body === null) { activeConnections--; return; }
+        req.setTimeout(0);  // Clear slow-body guard — streaming phase may have long idle gaps
         const rawBody = Buffer.concat(chunks);
         const reqId = nextRequestId();
 
@@ -403,10 +410,12 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                         const resetStreamHeartbeat = () => {
                             if (streamHeartbeat) clearTimeout(streamHeartbeat);
                             streamHeartbeat = setTimeout(() => {
+                                if (res.destroyed || res.writableEnded) return;
                                 anthroRes.destroy(new Error('Passthrough stream heartbeat timeout after ' + PASSTHROUGH_HEARTBEAT_MS / 1000 + 's, received ' + passthroughBytes + ' bytes'));
                             }, PASSTHROUGH_HEARTBEAT_MS);
                         };
                         streamDeadline = setTimeout(() => {
+                            if (res.destroyed || res.writableEnded) return;
                             cancelStreamTimeouts();
                             anthroRes.destroy(new Error('Passthrough stream deadline after ' + PASSTHROUGH_DEADLINE_MS / 1000 + 's, received ' + passthroughBytes + ' bytes'));
                         }, PASSTHROUGH_DEADLINE_MS);
@@ -627,7 +636,10 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                         const reqParsed = JSON.parse(forwardedBody.toString());
                         const { openaiBody } = translateRequest(reqParsed);
                         forwardedBody = Buffer.from(JSON.stringify(openaiBody));
-                        if (reqParsed.stream) streamTransformer = createStreamTransformer(model || reqParsed.model);
+                        if (reqParsed.stream) {
+                            const transformerModel = target.rewriteModel || model || reqParsed.model;
+                            streamTransformer = createStreamTransformer(transformerModel);
+                        }
                     } catch (e) {
                         log.error(reqId, 'protocol translation error: ' + truncateForLog((e as Error).message));
                     }
@@ -656,6 +668,14 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                 delete options.headers['content-length'];
                 delete options.headers['transfer-encoding'];
                 delete options.headers['accept-encoding'];
+                delete options.headers['cookie'];
+                delete options.headers['set-cookie'];
+                delete options.headers['x-forwarded-for'];
+                delete options.headers['x-forwarded-proto'];
+                delete options.headers['x-forwarded-host'];
+                delete options.headers['x-forwarded-port'];
+                delete options.headers['x-real-ip'];
+                delete options.headers['forwarded'];
 
                 if (target.isBearer) {
                     options.headers['authorization'] = 'Bearer ' + target.key;
@@ -711,6 +731,16 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                     continue;  // skip this provider, try next in fallback chain
                 }
 
+                // Pin connection to validated IP to prevent DNS rebinding TOCTOU.
+                // The original hostname is preserved in the Host header so the
+                // upstream server can route correctly.  forward.ts should use
+                // options.hostname (the pinned IP) and options.headers['Host']
+                // (the original hostname) when making the HTTP request.
+                if (ssrfResult.addresses && ssrfResult.addresses.length > 0) {
+                    options.hostname = ssrfResult.addresses[0];
+                    (options.headers as Record<string, string>)['Host'] = target.targetUrl.hostname;
+                }
+
                 const transport = target.targetUrl.protocol === 'https:' ? https : http;
                 const t0 = Date.now();
 
@@ -722,10 +752,31 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                     // Subagent requests use a dedicated pool to prevent starvation.
                     const { promise: slotPromise, cancel: cancelSlot } = concurrency.acquire(slot);
                     req.once('close', cancelSlot);
-                    let release: () => void;
+                    let release: (() => void) | null = null;
+                    let slotReleased = false;
+                    const onClose = () => {
+                        if (!slotReleased) {
+                            slotReleased = true;
+                            release?.();
+                        }
+                    };
+                    // Register onClose before awaiting slotPromise to eliminate the
+                    // timing window where a client disconnect between the await and
+                    // the registration would leak the slot.
+                    res.once('close', onClose);
                     try {
                         release = await slotPromise;
+                        // If client disconnected while waiting for slot, release
+                        // immediately to prevent slot leak (the onClose handler
+                        // already fired but release was null at that point).
+                        if (slotReleased) {
+                            release();
+                            release = null;
+                            return;
+                        }
                     } catch {
+                        slotReleased = true;
+                        res.removeListener('close', onClose);
                         try {
                             if (!res.headersSent && !res.destroyed) {
                                 res.writeHead(503, { 'content-type': 'application/json' });
@@ -736,13 +787,14 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                     } finally {
                         req.removeListener('close', cancelSlot);
                     }
-                    const onClose = () => release();
-                    res.once('close', onClose);
 
                     try {
                         result = await tryForward(transport as any, options as any, forwardedBody.toString(), streamTransformer, target.format === 'openai', parsedBody, model, reqId);
                     } finally {
-                        release();
+                        if (!slotReleased) {
+                            slotReleased = true;
+                            release?.();
+                        }
                         res.removeListener('close', onClose);
                     }
 
@@ -823,6 +875,16 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                         });
                     }
 
+                    // Register cleanup on client disconnect before the
+                    // headersSent/destroyed check to eliminate the TOCTOU race
+                    // where the client disconnects between the check and pipeline.
+                    const clientStream = result.stream;
+                    if (clientStream) {
+                        res.once('close', () => {
+                            if (!(clientStream as any).destroyed) (clientStream as any).destroy();
+                        });
+                    }
+
                     if (!res.headersSent && !res.destroyed) {
                         res.writeHead(result.status || 200, outHeaders as Record<string, string | number>);
                         if (result.body) {
@@ -855,11 +917,6 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                                 }
                                 if (err) log.error(reqId, 'stream error: ' + scrubCredentials(err.message));
                             });
-                            // Propagate client disconnect to upstream
-                            res.on('close', () => {
-                                const s = result.stream as NodeJS.ReadableStream & { destroyed: boolean; destroy(): void };
-                                if (s && !s.destroyed) s.destroy();
-                            });
                         }
                     }
                     return;
@@ -886,6 +943,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                 // Quality failure -- continue to next fallback provider
                 if (result.qualityFailure) {
                     lastQualityReason = result.qualityReason || null;
+                    lastStatus = result.status || null;
                     log.warn(reqId, req.method + ' ' + (model || '-') + ' -> ' + label + ' quality failure: ' + result.qualityReason + ' ' + ms + 'ms, trying next...');
                     continue;
                 }
@@ -1054,7 +1112,7 @@ process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 process.on('unhandledRejection', (reason: unknown) => {
     log.error(null, 'unhandledRejection: ' + scrubCredentials(String(reason)));
-    process.exit(1);
+    gracefulShutdown('UNHANDLED_REJECTION');
 });
 
 process.on('uncaughtException', (err: Error) => {

@@ -21,6 +21,10 @@
 #   deepclaude ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free       # 3 specs -> last repeats
 #   deepclaude ds:deepseek-v4-pro ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free  # 4 specs -> direct
 
+if [ -z "${DEEPCLAUDE_SESSION_ID:-}" ]; then
+    export DEEPCLAUDE_SESSION_ID="$(uuidgen 2>/dev/null || python3 -c 'import uuid; print(uuid.uuid4())' 2>/dev/null || echo "session-$$-$(date +%s)")"
+fi
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -52,6 +56,14 @@ REGISTRY_FILE="${SCRIPT_DIR}/proxy/providers.json"
 
 declare -A PROVIDER_URL PROVIDER_AUTH PROVIDER_KEYNAME PROVIDER_NAME
 declare -A PROVIDER_FORMAT PROVIDER_FALLBACK PROVIDER_SETUP_URL
+
+if ! command -v jq &>/dev/null; then
+    echo "ERROR: deepclaude requires jq for JSON processing." >&2
+    echo "  Install: brew install jq  (macOS)" >&2
+    echo "       or: sudo apt install jq  (Debian/Ubuntu)" >&2
+    echo "       or: sudo dnf install jq  (Fedora)" >&2
+    exit 1
+fi
 
 if [[ ! -f "$REGISTRY_FILE" ]] || ! jq empty "$REGISTRY_FILE" 2>/dev/null; then
     echo "ERROR: providers.json is missing or invalid" >&2
@@ -210,14 +222,6 @@ init_configs() {
 init_configs
 
 # --- Pre-flight checks ---
-if ! command -v jq &>/dev/null; then
-    echo "ERROR: deepclaude requires jq for JSON processing." >&2
-    echo "  Install: brew install jq  (macOS)" >&2
-    echo "       or: sudo apt install jq  (Debian/Ubuntu)" >&2
-    echo "       or: sudo dnf install jq  (Fedora)" >&2
-    exit 1
-fi
-
 if ! command -v nc &>/dev/null; then
     echo "NOTE: nc (netcat) not found. Port checking may be less reliable." >&2
     echo "  Install: brew install netcat  (macOS)  or  sudo apt install netcat-openbsd" >&2
@@ -575,17 +579,18 @@ show_status() {
 
 show_cost() {
     echo ""
-    echo "  DeepSeek V4 Pro Pricing"
-    echo "  ======================="
+    echo "  Model Pricing (per million tokens)"
+    echo "  ==================================="
     echo ""
-    echo "  Provider        Input/M    Output/M   Cache Hit/M"
-    echo "  ----------      --------   --------   -----------"
-    echo "  DeepSeek        \$0.44      \$0.87      \$0.004"
-    echo "  OpenRouter      \$0.44      \$0.87      (provider)"
-    echo "  Fireworks       \$1.74      \$3.48      (provider)"
-    echo "  Anthropic       \$3.00      \$15.00     \$0.30"
+    echo "  Model                                      Input/M    Output/M"
+    echo "  ---------------                            --------   --------"
+    while IFS=$'\t' read -r model inp out; do
+        if [ "$inp" = "0" ]; then in_str="free"; else in_str=$(printf "\$%.2f" "$inp"); fi
+        if [ "$out" = "0" ]; then out_str="free"; else out_str=$(printf "\$%.2f" "$out"); fi
+        printf "  %-37s %-10s %s\n" "$model" "$in_str" "$out_str"
+    done < <(jq -r '.pricing | to_entries[] | [.key, .value.input, .value.output] | @tsv' "$REGISTRY_FILE")
     echo ""
-    echo "  Monthly estimate (heavy use): \$30-80 vs \$200 Anthropic"
+    echo "  Data sourced from proxy/providers.json pricing section. Cache-hit pricing varies by provider."
     echo ""
 }
 
@@ -1137,7 +1142,12 @@ while [[ $# -gt 0 ]]; do
         -r|--remote)
             REMOTE=true; ACTION="remote"; shift ;;
         --effort)
-            EFFORT="$2"; shift 2 ;;
+            EFFORT="$2"
+            case "$EFFORT" in
+                low|medium|high|max) ;;
+                *) echo "ERROR: Invalid effort level '$EFFORT'. Valid values: low, medium, high, max" >&2; exit 1 ;;
+            esac
+            shift 2 ;;
         --persist)
             PERSIST=true; shift ;;
         --status)
@@ -1214,9 +1224,10 @@ while [[ $# -gt 0 ]]; do
         --lint)
             echo ""; echo "  Linting deepclaude.sh with shellcheck..."; echo ""
             if command -v shellcheck &>/dev/null; then
-                shellcheck -x "$0" || true
+                shellcheck -x "$0"
             else
                 echo "  shellcheck not installed. Install: brew install shellcheck (macOS) or apt install shellcheck (Linux)" >&2
+                exit 1
             fi
             exit 0 ;;
         --lint-config)
@@ -1371,18 +1382,26 @@ case "$ACTION" in
         if [[ "${DEEPCLAUDE_WATCHDOG:-}" == "true" ]] && [[ -n "$proxy_pid" ]]; then
             (
                 set +e
-                for attempt in 1 2; do
+                max_restarts=5
+                restart_count=0
+                for attempt in 1 2 3 4 5; do
                     wait "$proxy_pid" 2>/dev/null
                     wait_rc=$?
                     if [[ $wait_rc -le 128 ]]; then
                         break
                     fi
-                    echo "Proxy crashed. Restarting (attempt $attempt)..." >&2
+                    restart_count=$((restart_count + 1))
+                    echo "Proxy crashed. Restarting (attempt $restart_count)..." >&2
+                    sleep 2
                     read -r restart_port restart_pid <<< "$(start_proxy "$CURRENT_ROUTES_FILE")" || true
                     if [[ -n "$restart_pid" ]] && [[ -n "$restart_port" ]]; then
+                        proxy_pid="$restart_pid"
                         save_proxy_state "$restart_pid" "$restart_port" "$CURRENT_ROUTES_FILE"
                     fi
                 done
+                if [[ $restart_count -ge $max_restarts ]]; then
+                    echo "ERROR: Proxy restarted $max_restarts times. Watchdog giving up." >&2
+                fi
             ) &
             watchdog_pid=$!
         fi
@@ -1463,18 +1482,26 @@ case "$ACTION" in
         if [[ "${DEEPCLAUDE_WATCHDOG:-}" == "true" ]] && [[ -n "$proxy_pid" ]]; then
             (
                 set +e
-                for attempt in 1 2; do
+                max_restarts=5
+                restart_count=0
+                for attempt in 1 2 3 4 5; do
                     wait "$proxy_pid" 2>/dev/null
                     wait_rc=$?
                     if [[ $wait_rc -le 128 ]]; then
                         break
                     fi
-                    echo "Proxy crashed. Restarting (attempt $attempt)..." >&2
+                    restart_count=$((restart_count + 1))
+                    echo "Proxy crashed. Restarting (attempt $restart_count)..." >&2
+                    sleep 2
                     read -r restart_port restart_pid <<< "$(start_proxy "$CURRENT_ROUTES_FILE")" || true
                     if [[ -n "$restart_pid" ]] && [[ -n "$restart_port" ]]; then
+                        proxy_pid="$restart_pid"
                         save_proxy_state "$restart_pid" "$restart_port" "$CURRENT_ROUTES_FILE"
                     fi
                 done
+                if [[ $restart_count -ge $max_restarts ]]; then
+                    echo "ERROR: Proxy restarted $max_restarts times. Watchdog giving up." >&2
+                fi
             ) &
             watchdog_pid=$!
         fi
@@ -1587,18 +1614,26 @@ case "$ACTION" in
         if [[ "${DEEPCLAUDE_WATCHDOG:-}" == "true" ]] && [[ -n "$proxy_pid" ]]; then
             (
                 set +e
-                for attempt in 1 2; do
+                max_restarts=5
+                restart_count=0
+                for attempt in 1 2 3 4 5; do
                     wait "$proxy_pid" 2>/dev/null
                     wait_rc=$?
                     if [[ $wait_rc -le 128 ]]; then
                         break
                     fi
-                    echo "Proxy crashed. Restarting (attempt $attempt)..." >&2
+                    restart_count=$((restart_count + 1))
+                    echo "Proxy crashed. Restarting (attempt $restart_count)..." >&2
+                    sleep 2
                     read -r restart_port restart_pid <<< "$(start_proxy "$CURRENT_ROUTES_FILE")" || true
                     if [[ -n "$restart_pid" ]] && [[ -n "$restart_port" ]]; then
+                        proxy_pid="$restart_pid"
                         save_proxy_state "$restart_pid" "$restart_port" "$CURRENT_ROUTES_FILE"
                     fi
                 done
+                if [[ $restart_count -ge $max_restarts ]]; then
+                    echo "ERROR: Proxy restarted $max_restarts times. Watchdog giving up." >&2
+                fi
             ) &
             watchdog_pid=$!
         fi
