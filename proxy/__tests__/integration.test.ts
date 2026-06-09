@@ -107,10 +107,15 @@ describe('Proxy integration tests', () => {
 
         expect((res.body as Record<string, unknown>).concurrency).toBeDefined();
         const concurrency = (res.body as Record<string, unknown>).concurrency as Record<string, unknown>;
-        expect(typeof concurrency.active).toBe('number');
-        expect(typeof concurrency.waiting).toBe('number');
-        expect(typeof concurrency.limit).toBe('number');
-        expect(typeof concurrency.utilization).toBe('number');
+        // Per-slot pools: subagent + default
+        for (const pool of ['subagent', 'default']) {
+            const p = concurrency[pool] as Record<string, unknown>;
+            expect(p).toBeDefined();
+            expect(typeof p.active).toBe('number');
+            expect(typeof p.waiting).toBe('number');
+            expect(typeof p.limit).toBe('number');
+            expect(typeof p.utilization).toBe('number');
+        }
 
         expect((res.body as Record<string, unknown>).rateLimiter).toBeDefined();
         const rateLimiter = (res.body as Record<string, unknown>).rateLimiter as Record<string, unknown>;
