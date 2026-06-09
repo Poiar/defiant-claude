@@ -37,7 +37,9 @@ export const FIRST_BYTE_TIMEOUT_MS = 15_000;
 // Per-chunk heartbeat: if no data arrives during active streaming within
 // this window the connection is considered silently dead.  The timer resets
 // on every data chunk (not just SSE events).
-export const STREAM_HEARTBEAT_MS = 30_000;
+// Set to 90s to accommodate reasoning/thinking models that can pause for
+// extended periods between the reasoning phase and the response phase.
+export const STREAM_HEARTBEAT_MS = 90_000;
 
 // --- Types ---
 
@@ -126,11 +128,23 @@ export function peekFirstChunk(proxyRes: NodeJS.ReadableStream, timeoutMs?: numb
             clearTimeout(timer);
             proxyRes.removeListener('readable', onReadable);
             proxyRes.removeListener('error', onError);
+            proxyRes.removeListener('end', onEnd);
             resolve({ ok: false, reason: 'error', message: 'stream error during peek' });
+        };
+
+        const onEnd = () => {
+            if (resolved) return;
+            resolved = true;
+            clearTimeout(timer);
+            proxyRes.removeListener('readable', onReadable);
+            proxyRes.removeListener('error', onError);
+            proxyRes.removeListener('end', onEnd);
+            resolve({ ok: true, firstChunk: null });
         };
 
         proxyRes.on('readable', onReadable);
         proxyRes.once('error', onError);
+        proxyRes.once('end', onEnd);
     });
 }
 // --- Forward request to upstream provider ---

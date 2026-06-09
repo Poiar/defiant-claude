@@ -1579,16 +1579,20 @@ if ($Remote) {
     }
 
     $overrides = Get-Content $SlotOverridesFile -Raw | ConvertFrom-Json
+    # Helper: append [1m] to model if its context limit is >=1M
+    $Append1M = {
+        param($m) $modelId = ($m -split ':')[-1]; if ($ModelCtx[$modelId] -ge 1000000) { return $m + '[1m]' }; return $m
+    }
     $env:ANTHROPIC_BASE_URL = "http://127.0.0.1:$proxyPort"
-    $env:ANTHROPIC_DEFAULT_OPUS_MODEL = "opus:" + ($overrides.opus ?? $overrides._defaults.opus ?? "$($resolved.slots['opus'].provider):$($resolved.slots['opus'].model)")
-    $env:ANTHROPIC_DEFAULT_SONNET_MODEL = "sonnet:" + ($overrides.sonnet ?? $overrides._defaults.sonnet ?? "$($resolved.slots['sonnet'].provider):$($resolved.slots['sonnet'].model)")
-    $env:ANTHROPIC_DEFAULT_HAIKU_MODEL = "haiku:" + ($overrides.haiku ?? $overrides._defaults.haiku ?? "$($resolved.slots['haiku'].provider):$($resolved.slots['haiku'].model)")
-    $env:CLAUDE_CODE_SUBAGENT_MODEL = "subagent:" + ($overrides.subagent ?? $overrides._defaults.subagent ?? "$($resolved.slots['subagent'].provider):$($resolved.slots['subagent'].model)")
+    $env:ANTHROPIC_DEFAULT_OPUS_MODEL = & $Append1M ("opus:" + ($overrides.opus ?? $overrides._defaults.opus ?? "$($resolved.slots['opus'].provider):$($resolved.slots['opus'].model)"))
+    $env:ANTHROPIC_DEFAULT_SONNET_MODEL = & $Append1M ("sonnet:" + ($overrides.sonnet ?? $overrides._defaults.sonnet ?? "$($resolved.slots['sonnet'].provider):$($resolved.slots['sonnet'].model)"))
+    $env:ANTHROPIC_DEFAULT_HAIKU_MODEL = & $Append1M ("haiku:" + ($overrides.haiku ?? $overrides._defaults.haiku ?? "$($resolved.slots['haiku'].provider):$($resolved.slots['haiku'].model)"))
+    $env:CLAUDE_CODE_SUBAGENT_MODEL = & $Append1M ("subagent:" + ($overrides.subagent ?? $overrides._defaults.subagent ?? "$($resolved.slots['subagent'].provider):$($resolved.slots['subagent'].model)"))
     $ctxModel = $resolved.slots["opus"].model -replace '\[1m\]', ''
     $opusCtx = $ModelCtx[$ctxModel]
     if ($opusCtx) {
-        if ($opusCtx -ge 1048576) {
-            $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = "$opusCtx"
+        if ($opusCtx -ge 1000000) {
+            $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = "1000000"
         } elseif ($opusCtx -gt 131072) {
             $env:DISABLE_COMPACT = "1"
             $env:CLAUDE_CODE_MAX_CONTEXT_TOKENS = "$opusCtx"
@@ -1599,7 +1603,7 @@ if ($Remote) {
     Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
     $env:ANTHROPIC_AUTH_TOKEN = "proxy"  # dummy — proxy handles real auth
     $env:CLAUDE_CONTEXT_COMPRESSION = 'true'
-    $env:ANTHROPIC_MODEL = $resolved.slots['opus'].model -replace '\[1m\]', ''
+    $env:ANTHROPIC_MODEL = & $Append1M ($resolved.slots['opus'].model -replace '\[1m\]', '')
 
     if ($env:DEEPCLAUDE_WATCHDOG -ne 'false' -and $proxyInfo.Process) {
         $watchdog = Start-Job -Name "DeepClaudeWatchdog" -ScriptBlock {
@@ -1691,6 +1695,19 @@ $sonnetM = "sonnet:" + (Get-SlotModel 'sonnet')
 $haikuM  = "haiku:" + (Get-SlotModel 'haiku')
 $subM    = "subagent:" + (Get-SlotModel 'subagent')
 
+# Append [1m] suffix for models with >=1M context. Claude Code's PV() checks this
+# dynamically on every request, so the context window follows /model switches.
+function Append-1M($modelSpec) {
+    $modelId = ($modelSpec -split ':')[-1]
+    $ctxLimit = $ModelCtx[$modelId]
+    if ($ctxLimit -ge 1000000) { return $modelSpec + '[1m]' }
+    return $modelSpec
+}
+$opusM   = Append-1M $opusM
+$sonnetM = Append-1M $sonnetM
+$haikuM  = Append-1M $haikuM
+$subM    = Append-1M $subM
+
 if ($Dashboard) {
     Write-Host "  Dashboard: http://127.0.0.1:$($proxyInfo.Port)/dashboard" -ForegroundColor Cyan
     if ($Open) {
@@ -1709,8 +1726,10 @@ $env:CLAUDE_CODE_SUBAGENT_MODEL = $subM
 $ctxModel = $resolved.slots["opus"].model -replace '\[1m\]', ''
 $opusCtx = $ModelCtx[$ctxModel]
 if ($opusCtx) {
-    if ($opusCtx -ge 1048576) {
-        $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = "$opusCtx"
+    if ($opusCtx -ge 1000000) {
+        # Claude Code's auto-compact window max is 1,000,000 (bu_ constant).
+        # Setting it higher (e.g. 1,048,576) is rejected as invalid by BKH().
+        $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = "1000000"
     } elseif ($opusCtx -gt 131072) {
         $env:DISABLE_COMPACT = "1"
         $env:CLAUDE_CODE_MAX_CONTEXT_TOKENS = "$opusCtx"

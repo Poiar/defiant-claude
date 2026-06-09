@@ -104,6 +104,11 @@ export function resolveTarget(
     singleUrl: string | null | undefined,
     singleKey: string | null | undefined
 ): ResolveResult {
+    // Strip [1m] context-window hint (Claude Code convention for 1M context models)
+    if (model && model.includes('[1m]')) {
+        model = model.replace(/\[1m\]/g, '');
+    }
+
     // Single-provider (legacy) mode
     if (!routing) {
         const targetUrl = new URL(singleUrl!);
