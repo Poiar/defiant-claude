@@ -44,6 +44,30 @@ export const FIRST_BYTE_TIMEOUT_MS = 15_000;
 // extended periods between the reasoning phase and the response phase.
 export const STREAM_HEARTBEAT_MS = 90_000;
 
+// Slot-aware stream timeout overrides. Subagent requests use tighter limits
+// since they run as background tasks and should fail fast on stalls.
+function getStreamTimeouts(slot: string | null): {
+    firstByte: number;
+    heartbeat: number;
+    deadline: number;
+    bodyRead: number;
+} {
+    if (slot === 'subagent') {
+        return {
+            firstByte: 10_000,   // 10s — subagents shouldn't have cold-start delays
+            heartbeat: 60_000,   // 60s — subagents don't use reasoning models
+            deadline: 180_000,   // 3min — hard cap for a single subagent model call
+            bodyRead: 20_000,    // 20s — subagent responses are small (tool results)
+        };
+    }
+    return {
+        firstByte: FIRST_BYTE_TIMEOUT_MS,
+        heartbeat: STREAM_HEARTBEAT_MS,
+        deadline: STREAM_READ_TIMEOUT_MS,
+        bodyRead: 30_000,        // 30s — default body read timeout
+    };
+}
+
 // --- Types ---
 
 export interface ForwardHeaders {
@@ -173,6 +197,10 @@ export function tryForward(
     model: string | null | undefined,
     reqId: string | number | null | undefined
 ): Promise<ForwardResult> {
+    // Extract slot for timeout differentiation — subagent requests get tighter limits.
+    const slot = model ? (model.match(/^(sonnet|opus|haiku|subagent):/) || [null])[1] : null;
+    const to = getStreamTimeouts(slot);
+
     return new Promise((resolve) => {
         let streamUsage: { prompt_tokens: number; completion_tokens: number } | null = null;
         let timings: StreamTimings | null = null;
@@ -203,7 +231,7 @@ export function tryForward(
             const isStream = ct.includes('text/event-stream');
 
             if (isStream) {
-                peekFirstChunk(proxyRes).then(peek => {
+                peekFirstChunk(proxyRes, to.firstByte).then(peek => {
                     if (!peek.ok) {
                         (proxy as NodeJS.WritableStream & { destroy(): void }).destroy();
                         return resolve({ success: false, error: 'Stream peek: ' + peek.reason });
@@ -228,9 +256,9 @@ export function tryForward(
                             // is handled by existing error paths.
                         }
                     }
-                    // Heartbeat: if no chunk arrives within STREAM_HEARTBEAT_MS the
-                    // connection is silently dead.  Hard cap: total streaming duration
-                    // is bounded by STREAM_READ_TIMEOUT_MS.
+                    // Heartbeat: if no chunk arrives within the slot's heartbeat
+                    // window the connection is silently dead.  Hard cap: total streaming
+                    // duration is bounded by the slot's deadline.
                     let streamHeartbeat: ReturnType<typeof setTimeout> | null = null;
                     let streamDeadline: ReturnType<typeof setTimeout> | null = null;
                     let streamBytes = 0;
@@ -243,16 +271,16 @@ export function tryForward(
                         if (streamHeartbeat) clearTimeout(streamHeartbeat);
                         streamHeartbeat = setTimeout(() => {
                             (proxyRes as unknown as NodeJS.ReadableStream & { destroy(err?: Error): void }).destroy(
-                                new Error('Upstream stream read timeout (heartbeat) after ' + STREAM_HEARTBEAT_MS / 1000 + 's, received ' + streamBytes + ' bytes')
+                                new Error('Upstream stream read timeout (heartbeat) after ' + to.heartbeat / 1000 + 's, received ' + streamBytes + ' bytes')
                             );
-                        }, STREAM_HEARTBEAT_MS);
+                        }, to.heartbeat);
                     };
                     streamDeadline = setTimeout(() => {
                         cancelStreamTimeouts();
                         (proxyRes as unknown as NodeJS.ReadableStream & { destroy(err?: Error): void }).destroy(
-                            new Error('Upstream stream read timeout (deadline) after ' + STREAM_READ_TIMEOUT_MS / 1000 + 's, received ' + streamBytes + ' bytes')
+                            new Error('Upstream stream read timeout (deadline) after ' + to.deadline / 1000 + 's, received ' + streamBytes + ' bytes')
                         );
-                    }, STREAM_READ_TIMEOUT_MS);
+                    }, to.deadline);
                     resetStreamHeartbeat();
                     sourceStream.on('data', (chunk: Buffer | string) => {
                         streamBytes += typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.length;
@@ -339,9 +367,9 @@ export function tryForward(
                     resolve({ success: true, status: proxyRes.statusCode, headers: outHeaders, stream: outStream, streamUsage, streamTimings: timings || undefined });
                 });
             } else {
-                (proxyRes as unknown as NodeJS.ReadableStream & { setTimeout(ms: number, cb: () => void): void }).setTimeout(30000, () => {
+                (proxyRes as unknown as NodeJS.ReadableStream & { setTimeout(ms: number, cb: () => void): void }).setTimeout(to.bodyRead, () => {
                     (proxyRes as unknown as NodeJS.ReadableStream & { destroy(): void }).destroy();
-                    resolve({ success: false, error: 'Response read timeout after 30s', transportError: true });
+                    resolve({ success: false, error: 'Response read timeout after ' + to.bodyRead / 1000 + 's', transportError: true });
                 });
                 const chunks: Buffer[] = [];
                 let totalSize = 0;
@@ -481,12 +509,12 @@ export function tryForward(
         });
 
         // If the upstream accepts the connection but never sends a response
-        // within FIRST_BYTE_TIMEOUT_MS, treat it as a dead stream.
+        // within the slot's first-byte window, treat it as a dead stream.
         firstByteTimer = setTimeout(() => {
             if (responseStarted) return;
             (proxy as NodeJS.WritableStream & { destroy(): void }).destroy();
-            resolve({ success: false, error: 'No response within ' + FIRST_BYTE_TIMEOUT_MS / 1000 + 's', transportError: true, deadStream: true, deadStreamReason: 'first_byte_timeout' });
-        }, FIRST_BYTE_TIMEOUT_MS);
+            resolve({ success: false, error: 'No response within ' + to.firstByte / 1000 + 's', transportError: true, deadStream: true, deadStreamReason: 'first_byte_timeout' });
+        }, to.firstByte);
 
         timings = startStreamTimer();
         proxy.write(forwardedBody);

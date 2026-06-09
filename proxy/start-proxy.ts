@@ -20,7 +20,7 @@ import { isProviderHealthy, recordSpend, recordStat, recordUsage, recordRecentRe
 import { serveDashboard } from './dashboard';
 import { formatError, formatExhaustedError, scrubCredentials, isStreamingClient } from './error-codes';
 import { truncateForLog } from './truncate';
-import { createSlotLimiter } from './concurrency';
+import { createSlotConcurrency } from './concurrency';
 import { createLogger } from './log';
 import { buildFriendlyResponse, buildFriendlyStreamEvents } from './friendly-error';
 import { describe as describeTransportError } from './transport-errors';
@@ -159,7 +159,7 @@ if (hasLogAll || process.env.DEEPCLAUDE_LOG_ALL_REQUESTS === 'true') {
 let providerRegistry: { providers: Record<string, { endpoint: string; extraHeaders?: Record<string, string> }> } | null = null;
 try { providerRegistry = require('./providers.json'); } catch (_) { /* file not found, continue without registry */ }
 
-const concurrency = createSlotLimiter();
+const concurrency = createSlotConcurrency();
 const rateLimiter = createRateLimiter();
 const isDev = process.env.DEEPCLAUDE_DEV === '1' || process.env.NODE_ENV === 'development';
 
@@ -320,24 +320,29 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
 
         // --- Request deadline ---
         // Last-resort safety net covering the entire request lifecycle (body
-        // parsed -> response sent).  Streaming requests also have the per-stream
-        // STREAM_READ_TIMEOUT_MS (300s) inside tryForward, and upstream http
-        // connections have a 60s timeout, but neither bounds the fallback chain
-        // loop or other async bookkeeping.  This ensures we don't hold a concurrency
-        // slot (and the caller's connection) indefinitely.
-        const REQUEST_DEADLINE_MS = 120_000;
-        const requestDeadline = setTimeout(() => {
-            log.warn(reqId, 'request deadline exceeded (' + REQUEST_DEADLINE_MS + 'ms) -- sending 504');
-            try {
-                if (!res.headersSent && !res.destroyed) {
-                    res.writeHead(504, { 'content-type': 'application/json' });
-                    res.end(JSON.stringify(formatError(504)));
-                }
-            } catch (_) { /* socket may already be destroyed */ }
-        }, REQUEST_DEADLINE_MS);
-        // Clear the deadline when the response completes for any reason.
-        res.once('finish', () => clearTimeout(requestDeadline));
-        res.once('close', () => clearTimeout(requestDeadline));
+        // parsed -> response sent).  Set after we know the slot so subagent
+        // requests get a tighter limit.  Non-model passthrough calls get the
+        // default 120s deadline set immediately below.
+        let requestDeadline: ReturnType<typeof setTimeout> | null = null;
+        const clearRequestDeadline = () => {
+            if (requestDeadline) { clearTimeout(requestDeadline); requestDeadline = null; }
+        };
+        const setRequestDeadline = (timeoutMs: number, label: string) => {
+            requestDeadline = setTimeout(() => {
+                log.warn(reqId, 'request deadline exceeded (' + timeoutMs + 'ms, slot=' + label + ') -- sending 504');
+                try {
+                    if (!res.headersSent && !res.destroyed) {
+                        res.writeHead(504, { 'content-type': 'application/json' });
+                        res.end(JSON.stringify(formatError(504)));
+                    }
+                } catch (_) { /* socket may already be destroyed */ }
+            }, timeoutMs);
+        };
+        // Set default deadline immediately (covers non-model passthrough and the
+        // window before slot resolution).  Adjusted for subagent slots below.
+        setRequestDeadline(120_000, 'default');
+        res.once('finish', clearRequestDeadline);
+        res.once('close', clearRequestDeadline);
 
         (async () => {
             let model: string | null = null;
@@ -429,6 +434,15 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
             // If active, the canary provider replaces the primary, keeping
             // the original primary as the first fallback.
             const slot = model ? (model.match(/^(sonnet|opus|haiku|subagent):/) || [null])[1] : null;
+
+            // Tighten the request deadline for subagent slots: they run as
+            // background tasks and a stall should be surfaced quickly so the
+            // parent can retry or fail over rather than hanging indefinitely.
+            if (slot === 'subagent') {
+                clearRequestDeadline();
+                setRequestDeadline(90_000, 'subagent');
+            }
+
             let canaryEntry: CanaryEntry | null = null;
             if (slot && state.routing?.canary?.[slot] && state.routing?.providers) {
                 const cfg = state.routing.canary[slot];
@@ -588,13 +602,16 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                 const basePath = target.targetUrl.pathname.replace(/\/+$/, '');
                 const upstreamPath = deduplicatePath(basePath, req.url || '');
 
+                // Tighter upstream HTTP timeout for subagent slots: they are
+                // background tasks and a hung connection should surface quickly.
+                const upstreamTimeout = slot === 'subagent' ? 45_000 : 60_000;
                 const options = {
                     hostname: target.targetUrl.hostname,
                     port: target.targetUrl.port || (target.targetUrl.protocol === 'https:' ? 443 : 80),
                     path: upstreamPath,
                     method: req.method || 'POST',
                     headers: { ...req.headers } as Record<string, string | string[] | undefined>,
-                    timeout: 60000,
+                    timeout: upstreamTimeout,
                     agent: keepAliveAgent,
                 };
 
@@ -666,8 +683,9 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                 // backoff before moving to the next fallback provider.
                 let result: ForwardResult = { success: false };
                 for (let provAttempt = 0; provAttempt <= MAX_PER_PROVIDER_RETRIES; provAttempt++) {
-                    // Acquire concurrency slot before each attempt
-                    const { promise: slotPromise, cancel: cancelSlot } = concurrency.acquire();
+                    // Acquire per-slot concurrency slot before each attempt.
+                    // Subagent requests use a dedicated pool to prevent starvation.
+                    const { promise: slotPromise, cancel: cancelSlot } = concurrency.acquire(slot);
                     req.once('close', cancelSlot);
                     let release: () => void;
                     try {

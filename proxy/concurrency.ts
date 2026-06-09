@@ -9,7 +9,7 @@ interface SlotAcquireResult {
     cancel: () => void;
 }
 
-interface SlotLimiterStatus {
+export interface SlotLimiterStatus {
     active: number;
     waiting: number;
     limit: number;
@@ -29,6 +29,32 @@ interface QueueEntry {
 
 export const DEFAULT_MAX_CONCURRENT = 25;
 const DEFAULT_ACQUIRE_TIMEOUT = 30000;
+
+// Per-slot concurrency pools. Subagent requests get a dedicated pool so they
+// cannot starve main chat (sonnet/opus/haiku) slots. Each pool is independent.
+export const DEFAULT_SUBAGENT_MAX = 8;
+
+export interface SlotConcurrency {
+    acquire: (slot: string | null, timeoutMs?: number) => SlotAcquireResult;
+    status: () => { subagent: SlotLimiterStatus; default: SlotLimiterStatus };
+}
+
+export function createSlotConcurrency(
+    defaultMax: number = DEFAULT_MAX_CONCURRENT,
+    subagentMax: number = DEFAULT_SUBAGENT_MAX,
+): SlotConcurrency {
+    const subagent = createSlotLimiter(subagentMax);
+    const default_ = createSlotLimiter(defaultMax);
+
+    return {
+        acquire(slot: string | null, timeoutMs?: number) {
+            return slot === 'subagent' ? subagent.acquire(timeoutMs) : default_.acquire(timeoutMs);
+        },
+        status() {
+            return { subagent: subagent.status(), default: default_.status() };
+        },
+    };
+}
 
 export function createSlotLimiter(maxConcurrent?: number): SlotLimiter {
     const limit = maxConcurrent || DEFAULT_MAX_CONCURRENT;
