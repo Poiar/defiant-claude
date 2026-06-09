@@ -54,7 +54,12 @@ export function openCircuitBreaker(providerKey: string): void {
 export function maybeStartProbe(providerKey: string): { url: string; key: string | null | undefined; isBearer: boolean; format: string; model: string } | null {
     const entry = circuitBreakers[providerKey];
     if (!entry || entry.state !== 'OPEN') return null;
-    if (entry.probeCount >= MAX_PROBES) return null;
+    if (entry.probeCount >= MAX_PROBES) {
+        // After exhausting probes, use a long cooldown (5 min) and allow another round.
+        if (Date.now() - entry.openedAt < 300_000) return null;
+        entry.probeCount = 0;
+        entry.cooldownMs = DEFAULT_COOLDOWN_MS;
+    }
     if (Date.now() - entry.openedAt < entry.cooldownMs) return null;
     entry.state = 'HALF_OPEN';
     entry.probeCount++;
@@ -103,6 +108,54 @@ export function getRegisteredProviderKeys(): string[] {
     return Object.keys(providersInfo);
 }
 
+// Remove circuit breaker state for providers that no longer exist.
+// Called after a routes/config reload to prevent stale breaker state
+// from affecting newly loaded providers.
+export function reconcileCircuitBreakers(providerKeys: Set<string>): void {
+    for (const key of Object.keys(circuitBreakers)) {
+        if (!providerKeys.has(key)) {
+            delete circuitBreakers[key];
+        }
+    }
+}
+
+// Remove provider stats entries for providers that no longer exist.
+// Called after a routes/config reload to keep providerStats in sync.
+export function reconcileProviderStats(providerKeys: Set<string>): void {
+    for (const key of Object.keys(providerStats)) {
+        if (!providerKeys.has(key)) {
+            delete providerStats[key];
+        }
+    }
+    for (const key of Object.keys(streamAccumulators)) {
+        if (!providerKeys.has(key)) {
+            delete streamAccumulators[key];
+        }
+    }
+}
+
+// Reload pricing data from providers.json (e.g., after a hot-reload updates
+// the file).  Clears the require cache so the new data is picked up.
+export function reloadPricing(): void {
+    try {
+        const filePath = require.resolve('./providers.json');
+        delete require.cache[filePath];
+        const data = require('./providers.json');
+        pricingData = data.pricing || {};
+        // Also refresh monthly budgets from the reloaded providers.json
+        providerMonthlyBudgets = {};
+        const providersData = data.providers || {};
+        for (const [key, def] of Object.entries(providersData)) {
+            const pDef = def as { monthlyBudget?: number };
+            if (pDef.monthlyBudget !== undefined) {
+                providerMonthlyBudgets[key] = pDef.monthlyBudget;
+            }
+        }
+    } catch (_) {
+        // continue without pricing
+    }
+}
+
 interface ProviderStat {
     requests: number;
     successes: number;
@@ -114,6 +167,21 @@ interface ProviderStat {
 }
 const providerStats: Record<string, ProviderStat> = {};
 export const startTime: number = Date.now();
+
+// --- Event loop lag monitoring ---
+// Use a 1-second interval to measure how long the event loop is stalled.
+const LAG_CHECK_MS = 1000;
+let lagScheduledAt = Date.now();
+let maxEventLoopLag = 0;
+setInterval(() => {
+  const now = Date.now();
+  const lag = Math.max(0, now - lagScheduledAt - LAG_CHECK_MS);
+  if (lag > maxEventLoopLag) maxEventLoopLag = lag;
+  lagScheduledAt = now;
+}, LAG_CHECK_MS);
+// Reset max lag every minute so the health endpoint always reports
+// the worst lag observed in the last rolling minute.
+setInterval(() => { maxEventLoopLag = 0; }, 60_000);
 
 // Read version from package.json at the project root, fallback to hardcoded value.
 let packageVersion: string = '1.0.0';
@@ -282,6 +350,7 @@ export function getFullHealthSnapshot(concurrencyStatus: unknown, rateLimiterSta
             heapTotal: Math.round((mem.heapTotal / 1024 / 1024) * 100) / 100,
             rss: Math.round((mem.rss / 1024 / 1024) * 100) / 100,
             external: Math.round((mem.external / 1024 / 1024) * 100) / 100,
+            eventLoopLagMs: maxEventLoopLag,
         };
     } catch (_) {
         // Non-fatal -- memory stats should never crash a health check.
@@ -292,24 +361,21 @@ export function getFullHealthSnapshot(concurrencyStatus: unknown, rateLimiterSta
 // Requires at least 5 requests before judging. A provider is unhealthy
 // if more than a third of its requests have failed or the circuit breaker
 // is OPEN. HALF_OPEN is treated as healthy (probe traffic is the test).
+// UNTESTED providers (no requests yet) are allowed through but are
+// visually distinguishable in the health endpoint.
 export function isProviderHealthy(providerKey: string): boolean {
-    const entry = circuitBreakers[providerKey];
-    if (entry) {
-        if (entry.state === 'OPEN') return false;
-        if (entry.state === 'HALF_OPEN') return true;
-    }
-    const s = providerStats[providerKey];
-    if (!s) return true;
-    return !isFailureRateAboveThreshold(s.fails, s.requests);
+    const state = getCircuitBreakerState(providerKey);
+    if (state === 'OPEN') return false;
+    return true;
 };
 
 // Derive circuit breaker state from recorded stats or active breaker entry.
-// Returns CLOSED, OPEN, or HALF_OPEN.
+// Returns CLOSED, OPEN, HALF_OPEN, or UNTESTED.
 export function getCircuitBreakerState(providerKey: string): string {
     const entry = circuitBreakers[providerKey];
     if (entry) return entry.state;
     const s = providerStats[providerKey];
-    if (!s) return 'CLOSED';
+    if (!s || s.requests === 0) return 'UNTESTED';
     return isFailureRateAboveThreshold(s.fails, s.requests) ? 'OPEN' : 'CLOSED';
 }
 
@@ -379,6 +445,16 @@ let spendWriteLock = false;
 const SPEND_WRITE_THROTTLE_MS = 1000;
 
 let runningTotal = 0;
+// Load runningTotal from persisted spend file on startup
+try {
+  if (fs.existsSync(spendFile)) {
+    const raw = fs.readFileSync(spendFile, 'utf-8');
+    const parsed = JSON.parse(raw);
+    if (typeof parsed.total === 'number') {
+      runningTotal = parsed.total;
+    }
+  }
+} catch (_) { /* continue with zero */ }
 let sessionTotal = 0;
 let dailyAccumulator = 0;
 const providerDailyAccumulators: Record<string, number> = {};
@@ -501,7 +577,9 @@ export async function recordSpend(modelName: string, usage: { prompt_tokens: num
       sessions: [{ started: sessionStarted, total: parseFloat(sessionTotal.toFixed(4)) }],
       current_model: modelName,
     };
-    fs.writeFileSync(spendFile, JSON.stringify(data) + '\n');
+    const tmpFile = spendFile + '.tmp';
+    fs.writeFileSync(tmpFile, JSON.stringify(data) + '\n');
+    fs.renameSync(tmpFile, spendFile);
 
     // Only clear accumulators AFTER a successful write to prevent data loss
     dailyAccumulator = 0;

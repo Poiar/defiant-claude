@@ -75,28 +75,28 @@ describe('resolveTarget with aliases', () => {
         delete process.env.OPENCODE_KEY;
     });
 
-    test('resolves alias in provider-prefixed model', () => {
+    test('resolves alias in provider-prefixed model', async () => {
         const routing = makeRouting({
             ds: makeProvider('https://api.deepseek.com', 'DEEPSEEK_KEY', 'x-api-key'),
         }, {}, 'ds');
 
-        const result = resolveTarget('ds:sonnet', routing, {});
+        const result = await resolveTarget('ds:sonnet', routing, {});
         expect(result.primary!.providerKey).toBe('ds');
         expect(result.primary!.rewriteModel).toBe('claude-sonnet-4-6');
     });
 
-    test('resolves bare alias with default provider', () => {
+    test('resolves bare alias with default provider', async () => {
         const routing = makeRouting({
             ds: makeProvider('https://api.deepseek.com', 'DEEPSEEK_KEY', 'x-api-key'),
         }, {}, 'ds');
 
-        const result = resolveTarget('sonnet', routing, {});
+        const result = await resolveTarget('sonnet', routing, {});
         expect(result.primary!.providerKey).toBe('ds');
         // Bare alias without route falls back to default provider, rewriteModel stays null
         expect(result.primary!.rewriteModel).toBeNull();
     });
 
-    test('resolves alias then routes table lookup', () => {
+    test('resolves alias then routes table lookup', async () => {
         const routing = makeRouting({
             ds: makeProvider('https://api.deepseek.com', 'DEEPSEEK_KEY', 'x-api-key'),
             oc: makeProvider('https://api.zen.opencode.ai', 'OPENCODE_KEY', 'bearer'),
@@ -104,27 +104,27 @@ describe('resolveTarget with aliases', () => {
             'claude-sonnet-4-6': 'oc',
         }, 'ds');
 
-        const result = resolveTarget('sonnet', routing, {});
+        const result = await resolveTarget('sonnet', routing, {});
         // 'sonnet' resolves to 'claude-sonnet-4-6', which exists in routes table -> routs to oc
         expect(result.primary!.providerKey).toBe('oc');
     });
 
-    test('alias resolution does not affect non-alias models', () => {
+    test('alias resolution does not affect non-alias models', async () => {
         const routing = makeRouting({
             ds: makeProvider('https://api.deepseek.com', 'DEEPSEEK_KEY', 'x-api-key'),
         }, {}, 'ds');
 
-        const result = resolveTarget('ds:deepseek-v4-pro', routing, {});
+        const result = await resolveTarget('ds:deepseek-v4-pro', routing, {});
         expect(result.primary!.providerKey).toBe('ds');
         expect(result.primary!.rewriteModel).toBe('deepseek-v4-pro');
     });
 
-    test('alias in slot prefix fallback is resolved', () => {
+    test('alias in slot prefix fallback is resolved', async () => {
         const routing = makeRouting({
             ds: makeProvider('https://api.deepseek.com', 'DEEPSEEK_KEY', 'x-api-key'),
         }, {}, 'ds');
 
-        const result = resolveTarget('sonnet:ds:v4', routing, {});
+        const result = await resolveTarget('sonnet:ds:v4', routing, {});
         expect(result.primary!.providerKey).toBe('ds');
         expect(result.primary!.rewriteModel).toBe('deepseek-v4-pro');
     });

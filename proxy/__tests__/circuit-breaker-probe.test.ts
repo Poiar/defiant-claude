@@ -136,8 +136,8 @@ describe('circuit breaker state machine', () => {
         expect(entry.cooldownMs).toBe(300000);
     });
 
-    test('after MAX_PROBES failures stays OPEN with no more probes', () => {
-        const key = 'max-probes-done';
+    test('after MAX_PROBES failures, allows another probe round after long cooldown', () => {
+        const key = 'max-probes-cooldown';
         reg(key);
         for (let i = 0; i < 5; i++) {
             recordStat(key, false, 100);
@@ -151,10 +151,16 @@ describe('circuit breaker state machine', () => {
             recordProbeResult(key, false);
         }
 
-        // Sixth attempt should be blocked by MAX_PROBES
-        entry.openedAt = Date.now() - 600000;
+        // After 5 failed probes, the 6th is blocked if cooldown hasn't elapsed
+        entry.openedAt = Date.now() - 60000; // only 1 min past (less than 5 min cooldown)
         expect(maybeStartProbe(key)).toBeNull();
         expect(getBreakerState(key)).toBe('OPEN');
+
+        // After 5+ min cooldown, another probe round is allowed
+        entry.openedAt = Date.now() - 360000; // 6 min past (> 5 min cooldown)
+        const probeTarget = maybeStartProbe(key);
+        expect(probeTarget).not.toBeNull();
+        expect(getBreakerState(key)).toBe('HALF_OPEN');
     });
 
     test('isProviderHealthy returns true for CLOSED', () => {
@@ -218,8 +224,8 @@ describe('circuit breaker state machine', () => {
 });
 
 describe('getCircuitBreakerState backward compatibility', () => {
-    test('returns CLOSED for unknown provider', () => {
-        expect(getCircuitBreakerState('unknown')).toBe('CLOSED');
+    test('returns UNTESTED for unknown provider', () => {
+        expect(getCircuitBreakerState('unknown')).toBe('UNTESTED');
     });
 
     test('returns OPEN for provider with active breaker', () => {

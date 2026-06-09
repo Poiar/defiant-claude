@@ -65,6 +65,7 @@ beforeAll(async () => {
     ], {
         cwd: path.resolve(__dirname, '../..'),
         stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, DEEPCLAUDE_NO_PID_LOCK: '1' },
         ...(process.platform === 'win32' ? { shell: true } : {}),
     });
 

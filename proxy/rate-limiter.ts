@@ -38,6 +38,10 @@ const DEFAULT_WINDOW_MS = 60_000; // 1 minute
 const DEFAULT_MAX_ENTRIES = 10_000;
 
 export function createRateLimiter(opts?: RateLimiterOptions): RateLimiter {
+    // NOTE: This rate limiter uses a single shared pool of entries -- it does
+    // NOT provide per-slot isolation (main vs. subagent).  If per-slot limits
+    // are needed, the caller (start-proxy.ts) should create separate instances
+    // per slot and dispatch check() calls accordingly.
     const maxPerWindow = (opts && opts.maxPerWindow) || DEFAULT_MAX_PER_WINDOW;
     const windowMs = (opts && opts.windowMs) || DEFAULT_WINDOW_MS;
     const maxEntries = (opts && opts.maxEntries) || DEFAULT_MAX_ENTRIES;

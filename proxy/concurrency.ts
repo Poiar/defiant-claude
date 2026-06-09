@@ -42,9 +42,10 @@ export interface SlotConcurrency {
 export function createSlotConcurrency(
     defaultMax: number = DEFAULT_MAX_CONCURRENT,
     subagentMax: number = DEFAULT_SUBAGENT_MAX,
+    maxQueue: number = DEFAULT_MAX_WAIT_QUEUE,
 ): SlotConcurrency {
-    const subagent = createSlotLimiter(subagentMax);
-    const default_ = createSlotLimiter(defaultMax);
+    const subagent = createSlotLimiter(subagentMax, maxQueue);
+    const default_ = createSlotLimiter(defaultMax, maxQueue);
 
     return {
         acquire(slot: string | null, timeoutMs?: number) {
@@ -56,8 +57,11 @@ export function createSlotConcurrency(
     };
 }
 
-export function createSlotLimiter(maxConcurrent?: number): SlotLimiter {
+const DEFAULT_MAX_WAIT_QUEUE = 500;
+
+export function createSlotLimiter(maxConcurrent?: number, maxQueue?: number): SlotLimiter {
     const limit = maxConcurrent || DEFAULT_MAX_CONCURRENT;
+    const maxQueueLen = maxQueue ?? DEFAULT_MAX_WAIT_QUEUE;
     let active = 0;
     const waitQueue: QueueEntry[] = [];
 
@@ -83,6 +87,12 @@ export function createSlotLimiter(maxConcurrent?: number): SlotLimiter {
             active++;
             let released = false;
             return { promise: Promise.resolve(() => { if (!released) { released = true; active--; pump(); } }), cancel: () => { /* no-op */ } };
+        }
+
+        // Cap the wait queue to prevent unbounded memory growth
+        if (waitQueue.length >= maxQueueLen) {
+            const err = new Error('Slot queue full (' + maxQueueLen + ' entries)');
+            return { promise: Promise.reject(err), cancel: () => {} };
         }
 
         let cancelled = false;

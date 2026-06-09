@@ -124,7 +124,7 @@ describe('resolveTarget with dedicated subagent model', () => {
         delete process.env.OPENCODE_KEY;
     });
 
-    test('dedicated subagent model takes priority over routes table', () => {
+    test('dedicated subagent model takes priority over routes table', async () => {
         writeSubagentModel(tmpDir, { providerKey: 'oc', modelId: 'big-pickle' });
 
         const routing = makeRouting({
@@ -134,12 +134,12 @@ describe('resolveTarget with dedicated subagent model', () => {
             'deepseek-v4-flash': 'ds',
         }, 'ds');
 
-        const result = resolveTarget('subagent:ds:deepseek-v4-flash', routing, {});
+        const result = await resolveTarget('subagent:ds:deepseek-v4-flash', routing, {});
         expect(result.primary!.providerKey).toBe('oc');
         expect(result.primary!.rewriteModel).toBe('big-pickle');
     });
 
-    test('slot override takes priority over dedicated subagent model', () => {
+    test('slot override takes priority over dedicated subagent model', async () => {
         writeSubagentModel(tmpDir, { providerKey: 'oc', modelId: 'big-pickle' });
 
         const routing = makeRouting({
@@ -149,12 +149,12 @@ describe('resolveTarget with dedicated subagent model', () => {
         }, {}, 'ds');
 
         const overrides = { subagent: 'or:openrouter/owl-alpha' };
-        const result = resolveTarget('subagent:ds:deepseek-v4-flash', routing, overrides);
+        const result = await resolveTarget('subagent:ds:deepseek-v4-flash', routing, overrides);
         expect(result.primary!.providerKey).toBe('or');
         expect(result.primary!.rewriteModel).toBe('openrouter/owl-alpha');
     });
 
-    test('config route takes effect when no dedicated model or override', () => {
+    test('config route takes effect when no dedicated model or override', async () => {
         const routing = makeRouting({
             ds: makeProvider('https://api.deepseek.com', 'DEEPSEEK_KEY', 'x-api-key'),
             oc: makeProvider('https://api.zen.opencode.ai', 'OPENCODE_KEY', 'bearer'),
@@ -164,7 +164,7 @@ describe('resolveTarget with dedicated subagent model', () => {
         }, 'ds');
 
         // No dedicated model file exists
-        const result = resolveTarget('subagent:ds:deepseek-v4-flash', routing, {});
+        const result = await resolveTarget('subagent:ds:deepseek-v4-flash', routing, {});
         // Without dedicated model or override, the fallback "ds:deepseek-v4-flash" is used.
         // rewriteModel is "deepseek-v4-flash" because prefix matching routes through alias resolution
         // and resolveAlias("deepseek-v4-flash") returns itself.
@@ -172,7 +172,7 @@ describe('resolveTarget with dedicated subagent model', () => {
         expect(result.primary!.rewriteModel).toBe('deepseek-v4-flash');
     });
 
-    test('alias expansion works on dedicated subagent model (sonnet -> claude-sonnet-4-6)', () => {
+    test('alias expansion works on dedicated subagent model (sonnet -> claude-sonnet-4-6)', async () => {
         writeSubagentModel(tmpDir, { providerKey: 'oc', modelId: 'sonnet' });
 
         const routing = makeRouting({
@@ -180,13 +180,13 @@ describe('resolveTarget with dedicated subagent model', () => {
             oc: makeProvider('https://api.zen.opencode.ai', 'OPENCODE_KEY', 'bearer'),
         }, {}, 'ds');
 
-        const result = resolveTarget('subagent:ds:deepseek-v4-flash', routing, {});
+        const result = await resolveTarget('subagent:ds:deepseek-v4-flash', routing, {});
         expect(result.primary!.providerKey).toBe('oc');
         // "sonnet" is aliased to "claude-sonnet-4-6" in providers.json
         expect(result.primary!.rewriteModel).toBe('claude-sonnet-4-6');
     });
 
-    test('alias expansion works on dedicated subagent model (big-pickle passes through)', () => {
+    test('alias expansion works on dedicated subagent model (big-pickle passes through)', async () => {
         writeSubagentModel(tmpDir, { providerKey: 'oc', modelId: 'big-pickle' });
 
         const routing = makeRouting({
@@ -194,13 +194,13 @@ describe('resolveTarget with dedicated subagent model', () => {
             oc: makeProvider('https://api.zen.opencode.ai', 'OPENCODE_KEY', 'bearer'),
         }, {}, 'ds');
 
-        const result = resolveTarget('subagent:ds:deepseek-v4-flash', routing, {});
+        const result = await resolveTarget('subagent:ds:deepseek-v4-flash', routing, {});
         expect(result.primary!.providerKey).toBe('oc');
         // "big-pickle" is its own alias in providers.json (maps to itself)
         expect(result.primary!.rewriteModel).toBe('big-pickle');
     });
 
-    test('non-subagent slots are not affected by dedicated subagent model', () => {
+    test('non-subagent slots are not affected by dedicated subagent model', async () => {
         writeSubagentModel(tmpDir, { providerKey: 'oc', modelId: 'big-pickle' });
 
         const routing = makeRouting({
@@ -209,11 +209,11 @@ describe('resolveTarget with dedicated subagent model', () => {
         }, {}, 'ds');
 
         // Haiku slot should NOT use the dedicated subagent model
-        const result = resolveTarget('haiku:ds:deepseek-v4-flash', routing, {});
+        const result = await resolveTarget('haiku:ds:deepseek-v4-flash', routing, {});
         expect(result.primary!.providerKey).toBe('ds');
     });
 
-    test('dedicated subagent model used when no slot override and no routes match', () => {
+    test('dedicated subagent model used when no slot override and no routes match', async () => {
         writeSubagentModel(tmpDir, { providerKey: 'oc', modelId: 'big-pickle' });
 
         const routing = makeRouting({
@@ -221,12 +221,12 @@ describe('resolveTarget with dedicated subagent model', () => {
             oc: makeProvider('https://api.zen.opencode.ai', 'OPENCODE_KEY', 'bearer'),
         }, {}, 'ds');
 
-        const result = resolveTarget('subagent:ds:deepseek-v4-flash', routing, {});
+        const result = await resolveTarget('subagent:ds:deepseek-v4-flash', routing, {});
         expect(result.primary!.providerKey).toBe('oc');
         expect(result.primary!.rewriteModel).toBe('big-pickle');
     });
 
-    test('invalid subagent model file falls back to config route', () => {
+    test('invalid subagent model file falls back to config route', async () => {
         // Write invalid JSON
         fs.mkdirSync(path.join(tmpDir, '.deepclaude'), { recursive: true });
         fs.writeFileSync(path.join(tmpDir, '.deepclaude', 'subagent-model.json'), '{{{broken');
@@ -237,7 +237,7 @@ describe('resolveTarget with dedicated subagent model', () => {
             'deepseek-v4-flash': 'ds',
         }, 'ds');
 
-        const result = resolveTarget('subagent:ds:deepseek-v4-flash', routing, {});
+        const result = await resolveTarget('subagent:ds:deepseek-v4-flash', routing, {});
         expect(result.primary!.providerKey).toBe('ds');
     });
 });

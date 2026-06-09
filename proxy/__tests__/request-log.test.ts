@@ -308,9 +308,12 @@ describe('file rotation', () => {
     logRequest(makeEntry({ requestId: 99 }));
     _flush();
 
-    // Verify the backup exists and is the expected size.
-    expect(fs.existsSync(logFile + '.1')).toBe(true);
-    const backupContent = fs.readFileSync(logFile + '.1', 'utf-8');
+    // Verify a timestamped backup exists and is the expected size.
+    const logDir = path.dirname(logFile);
+    const base = path.basename(logFile);
+    const backups = fs.readdirSync(logDir).filter(f => f.startsWith(base + '.'));
+    expect(backups.length).toBeGreaterThanOrEqual(1);
+    const backupContent = fs.readFileSync(path.join(logDir, backups[0]), 'utf-8');
     expect(backupContent.length).toBeGreaterThanOrEqual(1_048_576);
 
     // Verify the current log file contains only the new entry.
@@ -319,33 +322,23 @@ describe('file rotation', () => {
     expect(entries[0].requestId).toBe(99);
   });
 
-  test('rotation keeps only 1 backup generation', () => {
+  test('rotation keeps at most 5 timestamped backups', () => {
     const logFile = _getLogFilePath();
     const logDir = path.dirname(logFile);
+    const base = path.basename(logFile);
     if (!fs.existsSync(logDir)) {
       fs.mkdirSync(logDir, { recursive: true });
     }
 
-    // First generation: write a 1 MB file and trigger rotation.
-    fs.writeFileSync(logFile, Buffer.alloc(1_048_576, 'a').toString(), 'utf-8');
-    logRequest(makeEntry({ requestId: 1 }));
-    _flush();
-    expect(fs.existsSync(logFile + '.1')).toBe(true);
+    // Trigger 7 rotations — only the last 5 timestamped backups should survive.
+    for (let i = 1; i <= 7; i++) {
+      fs.writeFileSync(logFile, Buffer.alloc(1_048_576, String(i)).toString(), 'utf-8');
+      logRequest(makeEntry({ requestId: i }));
+      _flush();
+    }
 
-    // Second generation: write another 1 MB file and trigger rotation.
-    fs.writeFileSync(logFile, Buffer.alloc(1_048_576, 'b').toString(), 'utf-8');
-    logRequest(makeEntry({ requestId: 2 }));
-    _flush();
-
-    // Should still have only requests.log and requests.log.1 (no .2).
-    const files = fs.readdirSync(logDir).filter(f => f.startsWith('requests.log'));
-    expect(files).toContain('requests.log');
-    expect(files).toContain('requests.log.1');
-    expect(files).not.toContain('requests.log.2');
-
-    // The .1 backup should start with 'b' (second gen data was archived).
-    const backupContent = fs.readFileSync(logFile + '.1', 'utf-8');
-    expect(backupContent[0]).toBe('b');
+    const backups = fs.readdirSync(logDir).filter(f => f.startsWith(base + '.'));
+    expect(backups.length).toBeLessThanOrEqual(5);
   });
 });
 

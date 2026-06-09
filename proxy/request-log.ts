@@ -77,20 +77,40 @@ function flush(): void {
     const lines = entries.map(e => JSON.stringify(e) + '\n').join('');
     fs.appendFileSync(getLogFilePath(), lines, 'utf-8');
   } catch (_) {
-    // Silently discard on write failure (disk full, permissions, etc.).
-    // Never crash the proxy over a log write.
+    // Prepend entries back to preserve them on write failure (disk full,
+    // permissions, etc.).  Never crash the proxy over a log write.
+    pendingEntries.unshift(...entries);
   }
 }
+
+const MAX_ROTATED_FILES = 5;
 
 function rotateIfNeeded(): void {
   try {
     const stat = fs.statSync(getLogFilePath());
     if (stat.size < MAX_LOG_SIZE) return;
 
-    const backup = getLogFilePath() + '.1';
-    // Remove existing backup if present.
-    try { fs.unlinkSync(backup); } catch (_) { /* may not exist */ }
-    fs.renameSync(getLogFilePath(), backup);
+    const logFile = getLogFilePath();
+    // Use timestamped backup to avoid overwriting previous backups.
+    const dateStr = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    const ts = Date.now();
+    const backup = logFile + '.' + dateStr + '-' + ts;
+    fs.renameSync(logFile, backup);
+
+    // Keep at most MAX_ROTATED_FILES rotated files (remove oldest).
+    const dir = path.dirname(logFile);
+    const base = path.basename(logFile);
+    const files = fs.readdirSync(dir)
+      .filter(f => f.startsWith(base + '.'))
+      .map(f => path.join(dir, f))
+      .sort()
+      .reverse();
+    while (files.length > MAX_ROTATED_FILES) {
+      const oldFile = files.pop();
+      if (oldFile) {
+        try { fs.unlinkSync(oldFile); } catch (_) { /* best effort */ }
+      }
+    }
   } catch (_) {
     // File may not exist yet (first write).
   }

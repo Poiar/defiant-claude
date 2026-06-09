@@ -58,6 +58,7 @@ export function getMomentum(sk: string | null): MomentumResult | null {
         }
     }
 
-    return { preferredProvider: preferredProvider || '', confidence: maxCount };
+    // Normalize as a ratio (0.0 -- 1.0) so the threshold isn't tied to RING_SIZE.
+    return { preferredProvider: preferredProvider || '', confidence: maxCount / RING_SIZE };
 }
 

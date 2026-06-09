@@ -142,8 +142,8 @@ describe('finalizeMetrics', () => {
     const metrics = finalizeMetrics(timings, 100);
     // Duration is 0, computeTPS uses 100ms minimum
     expect(metrics.totalDurationMs).toBe(0);
-    // TPS = 100 / (0.1) = 1000
-    expect(metrics.tps).toBe(1000);
+    // TPS = 0 when durationMs <= 0
+    expect(metrics.tps).toBe(0);
   });
 
   test('no first token results in ttftMs = 0', () => {
@@ -230,17 +230,17 @@ describe('computeTPS', () => {
     expect(tps).toBe(0);
   });
 
-  test('uses 100ms minimum duration to prevent inflated TPS', () => {
-    // 1000 tokens in 10ms (very fast) -> uses 100ms minimum
+  test('uses 10ms minimum duration to prevent inflated TPS', () => {
+    // 1000 tokens in 10ms (very fast) -> uses 10ms minimum
     const tps = computeTPS(1000, 10);
-    // 1000 / (100/1000) = 1000/0.1 = 10000
-    expect(tps).toBe(10000);
+    // 1000 / (10/1000) = 1000/0.01 = 100000
+    expect(tps).toBe(100000);
   });
 
-  test('handles exact 100ms duration', () => {
-    const tps = computeTPS(50, 100);
-    // 50 / (100/1000) = 50/0.1 = 500
-    expect(tps).toBe(500);
+  test('handles exact 10ms duration', () => {
+    const tps = computeTPS(50, 10);
+    // 50 / (10/1000) = 50/0.01 = 5000
+    expect(tps).toBe(5000);
   });
 
   test('rounds to 2 decimal places', () => {

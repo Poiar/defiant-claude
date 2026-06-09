@@ -3,6 +3,7 @@
 import http from 'http';
 import https from 'https';
 import { pipeline, Transform } from 'stream';
+import fs from 'fs';
 
 import { translateRequest, createStreamTransformer } from './protocol-translate';
 import { injectThinkingBlocks } from './thinking-cache';
@@ -166,8 +167,21 @@ try { providerRegistry = require('./providers.json'); } catch (e: any) {
     }
 }
 
-const concurrency = createSlotConcurrency();
-const rateLimiter = createRateLimiter();
+// Read concurrency slot limits from env vars with sensible defaults
+const MAIN_SLOTS = (() => {
+  const v = parseInt(process.env.DEEPCLAUDE_MAX_CONCURRENT || '', 10);
+  return (!isNaN(v) && v > 0) ? v : 25;
+})();
+const SUBAGENT_SLOTS = (() => {
+  const v = parseInt(process.env.DEEPCLAUDE_SUBAGENT_MAX_CONCURRENT || '', 10);
+  return (!isNaN(v) && v > 0) ? v : 8;
+})();
+if (MAIN_SLOTS !== 25 || SUBAGENT_SLOTS !== 8) {
+  log.info(null, 'Concurrency slots: main=' + MAIN_SLOTS + ' subagent=' + SUBAGENT_SLOTS + ' (from env)');
+}
+const concurrency = createSlotConcurrency(MAIN_SLOTS, SUBAGENT_SLOTS);
+const mainRateLimiter = createRateLimiter();
+const subagentRateLimiter = createRateLimiter();
 const isDev = process.env.DEEPCLAUDE_DEV === '1' || process.env.NODE_ENV === 'development';
 
 // Apply spend budget caps from CLI/env
@@ -179,6 +193,50 @@ if (maxSpend !== null || dailyBudget !== null) {
         (maxSpend !== null && dailyBudget !== null ? ', ' : '') +
         (dailyBudget !== null ? 'daily=$' + dailyBudget.toFixed(2) : ''));
 }
+
+// --- PID file: prevent two proxy instances from sharing state ---
+const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+const deepclaudeDir = homeDir + '/.deepclaude';
+let pidPath = '';
+if (!process.env.DEEPCLAUDE_NO_PID_LOCK) {
+try {
+    fs.mkdirSync(deepclaudeDir, { recursive: true });
+    pidPath = deepclaudeDir + '/proxy.pid';
+    fs.writeFileSync(pidPath, String(process.pid), { flag: 'wx' });
+} catch (err: any) {
+    if (err && err.code === 'EEXIST') {
+        try {
+            const existingPid = parseInt(fs.readFileSync(pidPath, 'utf-8').trim(), 10);
+            if (!isNaN(existingPid)) {
+                if (process.platform === 'win32') {
+                    try {
+                        execSync('tasklist /FI "PID eq ' + existingPid + '" /NH', { timeout: 3000, stdio: 'pipe' });
+                        console.error('Another proxy instance is already running (PID ' + existingPid + '). Exiting.');
+                        process.exit(1);
+                    } catch {
+                        fs.writeFileSync(pidPath, String(process.pid));
+                    }
+                } else {
+                    try {
+                        process.kill(existingPid, 0);
+                        console.error('Another proxy instance is already running (PID ' + existingPid + '). Exiting.');
+                        process.exit(1);
+                    } catch {
+                        fs.writeFileSync(pidPath, String(process.pid));
+                    }
+                }
+            } else {
+                fs.writeFileSync(pidPath, String(process.pid));
+            }
+        } catch {
+            fs.writeFileSync(pidPath, String(process.pid));
+        }
+    } else {
+        console.error('Failed to create PID file: ' + (err ? err.message : 'unknown error'));
+        process.exit(1);
+    }
+}
+} // DEEPCLAUDE_NO_PID_LOCK
 
 // Extract display names from provider registry for the dashboard
 let providerDisplayNames: Record<string, string> | undefined;
@@ -194,18 +252,23 @@ if (providerRegistry && providerRegistry.providers) {
 
 // Register provider info for circuit breaker auto-probe recovery
 if (state.routing && state.routing.providers) {
-    for (const [key, provider] of Object.entries(state.routing.providers)) {
-        const rawKey = process.env[provider.keyEnv || ''] || provider.key;
-        const resolvedKey = resolveKey(rawKey);
-        const probeModel = (provider.format || 'anthropic') === 'openai' ? 'gpt-4o-mini' : 'claude-sonnet-4-20250514';
-        registerProviderInfo(key, {
-            url: provider.url,
-            key: resolvedKey,
-            isBearer: provider.auth === 'bearer',
-            format: provider.format || 'anthropic',
-            model: probeModel,
-        });
-    }
+    const routingProviders = state.routing.providers;
+    (async () => {
+        for (const [key, provider] of Object.entries(routingProviders)) {
+            const rawKey = process.env[provider.keyEnv || ''] || provider.key;
+            const resolvedKey = await resolveKey(rawKey);
+            const probeModel = (provider.format || 'anthropic') === 'openai' ? 'gpt-4o-mini' : 'claude-sonnet-4-20250514';
+            registerProviderInfo(key, {
+                url: provider.url,
+                key: resolvedKey,
+                isBearer: provider.auth === 'bearer',
+                format: provider.format || 'anthropic',
+                model: probeModel,
+            });
+        }
+    })().catch((err: unknown) => {
+        log.error(null, 'Failed to register providers at startup: ' + (err as Error).message);
+    });
 }
 
 // --- Data-driven provider hooks ---
@@ -236,12 +299,12 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
     req.setTimeout(30000);  // Prevent slow-body trickle from starving concurrency slots
 
     // --- Dashboard routes (always available when proxy is running) ---
-    if (serveDashboard(req, res, concurrency.status(), rateLimiter.status(), providerDisplayNames)) return;
+    if (serveDashboard(req, res, concurrency.status(), mainRateLimiter.status(), providerDisplayNames)) return;
 
     // --- Health check ---
     if (req.method === 'GET' && req.url === '/health') {
         res.writeHead(200, { 'content-type': 'application/json' });
-        res.end(JSON.stringify(getFullHealthSnapshot(concurrency.status(), rateLimiter.status())));
+        res.end(JSON.stringify(getFullHealthSnapshot(concurrency.status(), mainRateLimiter.status())));
         return;
     }
 
@@ -261,7 +324,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
 
     // --- Rate limit check ---
     const clientIp = req.socket.remoteAddress || '127.0.0.1';
-    const rateCheck = rateLimiter.check(clientIp);
+    const rateCheck = mainRateLimiter.check(clientIp);
     if (!rateCheck.allowed) {
         res.writeHead(429, {
             'content-type': 'application/json',
@@ -270,8 +333,6 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
         res.end(JSON.stringify(formatError(429)));
         return;
     }
-
-    checkReload(state, parsed);
 
     // --- Body size guard ---
     const contentLength = parseInt(req.headers['content-length'] || '', 10);
@@ -349,11 +410,12 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
         };
         // Set default deadline immediately (covers non-model passthrough and the
         // window before slot resolution).  Adjusted for subagent slots below.
-        setRequestDeadline(120_000, 'default');
+        setRequestDeadline(600_000, 'default');
         res.once('finish', clearRequestDeadline);
         res.once('close', clearRequestDeadline);
 
         (async () => {
+            await checkReload(state, parsed);
             let model: string | null = null;
             let parsedBody: Record<string, unknown> | null = null;
             try { const parsed = JSON.parse(rawBody.toString()) as Record<string, unknown>; parsedBody = parsed; model = parsed.model as string; } catch (e) {
@@ -463,7 +525,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                 }
             }
 
-            const resolved = resolveTarget(model, state.routing, state.slotOverrides, parsed.singleUrl, parsed.singleKey);
+            const resolved = await resolveTarget(model, state.routing, state.slotOverrides, parsed.singleUrl, parsed.singleKey);
 
             if (resolved.error) {
                 const err = formatError(502, { provider: 'unknown' }, isDev);
@@ -484,7 +546,20 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
             // parent can retry or fail over rather than hanging indefinitely.
             if (slot === 'subagent') {
                 clearRequestDeadline();
-                setRequestDeadline(90_000, 'subagent');
+                setRequestDeadline(300_000, 'subagent');
+
+                // Per-slot rate limiting for subagent requests
+                const subagentCheck = subagentRateLimiter.check(clientIp);
+                if (!subagentCheck.allowed) {
+                    if (!res.headersSent && !res.destroyed) {
+                        res.writeHead(429, {
+                            'content-type': 'application/json',
+                            'retry-after': String(subagentCheck.retryAfter || 60),
+                        });
+                        res.end(JSON.stringify(formatError(429)));
+                    }
+                    return;
+                }
             }
 
             let canaryEntry: CanaryEntry | null = null;
@@ -505,7 +580,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                 if (providerEntry) {
                     const rawKey = process.env[providerEntry.keyEnv || ''] || providerEntry.key;
                     if (rawKey) {
-                        const resolvedKey = resolveKey(rawKey);
+                        const resolvedKey = await resolveKey(rawKey);
                         if (!(rawKey.startsWith('$aes256gcm:') && resolvedKey === null)) {
                             const entry = getOrCreateEntry(slot, config);
                             const hash = bodyHash(rawBody.toString(), slot);
@@ -587,7 +662,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
             const sk = sessionKey(parsedBody as Record<string, unknown>);
             if (sk && chain.length > 1) {
                 const momentum = getMomentum(sk);
-                if (momentum && momentum.preferredProvider && momentum.confidence >= 2) {
+                if (momentum && momentum.preferredProvider && momentum.confidence >= 0.4) {
                     const fbIdx = chain.findIndex(
                         (t, i) => i > 0 && t.providerKey === momentum.preferredProvider
                     );
@@ -1061,6 +1136,9 @@ runStartupChecks().then((startupCheckResult) => {
     if (startupCheckResult.someDown) {
         log.warn(null, 'Some providers are down. Continuing with degraded routing.');
     }
+    if (startupCheckResult.probesSkipped) {
+        log.warn(null, 'Startup checks skipped (no providers configured)');
+    }
 
     // --- Lifecycle ---
     server.listen(0, '127.0.0.1', () => {
@@ -1086,6 +1164,17 @@ runStartupChecks().then((startupCheckResult) => {
 
 function gracefulShutdown(signal: string): void {
     log.info(null, signal + ' received -- draining ' + activeConnections + ' active connections...');
+    // Remove PID file on graceful shutdown
+    if (pidPath) {
+        try {
+            if (fs.existsSync(pidPath)) {
+                const currentPid = parseInt(fs.readFileSync(pidPath, 'utf-8').trim(), 10);
+                if (currentPid === process.pid) {
+                    fs.unlinkSync(pidPath);
+                }
+            }
+        } catch (_) { /* ignore cleanup errors */ }
+    }
     keepAliveAgent.destroy();
     server.close(() => {
         log.info(null, 'Server stopped accepting new connections');
@@ -1102,6 +1191,8 @@ function gracefulShutdown(signal: string): void {
         if (Date.now() - drainStart >= MAX_DRAIN_MS) {
             log.warn(null, 'Forced shutdown after ' + MAX_DRAIN_MS + 'ms with ' + activeConnections + ' connections remaining');
             clearInterval(drainInterval);
+            // Force-close any remaining connections to prevent deadlock on stuck streams
+            server.closeAllConnections?.();
             process.exit(1);
         }
     }, 250).unref();

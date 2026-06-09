@@ -132,19 +132,19 @@ describe('validateUrl', () => {
     expect(result.valid).toBe(true)
   })
 
-  // --- 12. DNS resolution failure allows through (don't self-DOS) ---
-  test('DNS resolution failure allows when DNS is unavailable', async () => {
+  // --- 12. DNS resolution failure blocks (fail-closed) ---
+  test('DNS resolution failure blocks when DNS is unavailable', async () => {
     stubDns('nonexistent.example.com', [])
     const result = await validateUrl('https://nonexistent.example.com/')
-    expect(result.valid).toBe(true)
-    expect(result.reason).toMatch(/DNS resolution failed \(allowed\)/)
+    expect(result.valid).toBe(false)
+    expect(result.reason).toMatch(/DNS resolution failed/)
   })
 
-  // --- 13. DNS resolution failure accepts when allowPrivate is true ---
-  test('DNS resolution failure accepts when allowPrivate is true', async () => {
+  // --- 13. DNS resolution failure blocks even with allowPrivate ---
+  test('DNS resolution failure blocks when allowPrivate is true', async () => {
     stubDns('nonexistent.example.com', [])
     const result = await validateUrl('https://nonexistent.example.com/', { allowPrivate: true })
-    expect(result.valid).toBe(true)
+    expect(result.valid).toBe(false)
   })
 
   // --- 14. IPv6 loopback (::1) blocked ---

@@ -107,13 +107,13 @@ export function resolveSubagentModel(): { providerKey: string; modelId: string }
 //
 // Returns { primary, fallbacks } on success, { error } on failure.
 
-export function resolveTarget(
+export async function resolveTarget(
     model: string | null | undefined,
     routing: RoutingConfig | null | undefined,
     slotOverrides: SlotOverrides | null | undefined,
     singleUrl: string | null | undefined,
     singleKey: string | null | undefined
-): ResolveResult {
+): Promise<ResolveResult> {
     // Strip [1m] context-window hint (Claude Code convention for 1M context models)
     if (model && model.includes('[1m]')) {
         model = model.replace(/\[1m\]/g, '');
@@ -193,7 +193,7 @@ export function resolveTarget(
 
     const targetUrl = new URL(provider.url);
     const rawKey = process.env[provider.keyEnv || ''] || provider.key;
-    const resolvedKey = resolveKey(rawKey);
+    const resolvedKey = await resolveKey(rawKey);
     if (rawKey && rawKey.startsWith('$aes256gcm:') && resolvedKey === null) {
         return { error: 'Provider "' + providerKey + '" has encrypted key but DEEPCLAUDE_ENCRYPTION_KEY is not set or decryption failed' };
     }
@@ -217,7 +217,7 @@ export function resolveTarget(
             if (!fb) continue;
             const fbRawKey = process.env[fb.keyEnv || ''] || fb.key;
             if (!fbRawKey) continue;
-            const fbResolvedKey = resolveKey(fbRawKey);
+            const fbResolvedKey = await resolveKey(fbRawKey);
             if (fbRawKey.startsWith('$aes256gcm:') && fbResolvedKey === null) continue;
             const fbUrl = new URL(fb.url);
 
@@ -225,6 +225,13 @@ export function resolveTarget(
             // Don't inherit the primary's rewriteModel -- different providers
             // use different model names. Prefer routes matching the same
             // capability tier (opus/sonnet/haiku) to avoid tier downgrades.
+            //
+            // NOTE: Resolution iterates Object.entries(routing.routes) and
+            // breaks on the first match per provider. Since the iteration
+            // order follows JS property insertion order (routes.json key
+            // order), the order in which routes appear in routes.json
+            // determines fallback model priority. List higher-priority
+            // model matches first in routes.json to get the desired rewrite.
             let fbRewrite: string | null = null;
             const tier = (model || '').match(/(opus|sonnet|haiku|subagent)/);
             const tierPart = tier ? tier[1] : null;

@@ -26,6 +26,10 @@ const upstreamAgent = new http.Agent({ keepAlive: true, keepAliveMsecs: 30000, m
 // from a misbehaving upstream).
 export const MAX_SSE_BUFFER = 1_048_576; // 1MB
 
+// Total byte cap for a single streaming response (prevents unbounded memory
+// consumption from infinite/malformed SSE streams).
+export const MAX_TOTAL_STREAM_BYTES = 500 * 1024 * 1024; // 500MB
+
 // Read timeout for upstream SSE streams during the active streaming phase.
 // If no data arrives within this window the stream is destroyed, preventing
 // the proxy from hanging forever on silently-dropped connections.
@@ -40,30 +44,36 @@ export const FIRST_BYTE_TIMEOUT_MS = 15_000;
 // Per-chunk heartbeat: if no data arrives during active streaming within
 // this window the connection is considered silently dead.  The timer resets
 // on every data chunk (not just SSE events).
-// Set to 90s to accommodate reasoning/thinking models that can pause for
-// extended periods between the reasoning phase and the response phase.
-export const STREAM_HEARTBEAT_MS = 90_000;
+// Set to 180s (3 min) to accommodate reasoning/thinking models (DeepSeek R1,
+// o1) that can think for 2+ minutes without sending SSE data. Configurable
+// via DEEPCLAUDE_STREAM_HEARTBEAT_MS env var.
+export const STREAM_HEARTBEAT_MS = 180_000;
 
 // Slot-aware stream timeout overrides. Subagent requests use tighter limits
 // since they run as background tasks and should fail fast on stalls.
+// Heartbeat timeouts are configurable via environment variables so operators
+// can tune per-deployment for reasoning models (DeepSeek R1, o1 etc.) that
+// may think for 2+ minutes without sending SSE data.
 function getStreamTimeouts(slot: string | null): {
     firstByte: number;
     heartbeat: number;
     deadline: number;
     bodyRead: number;
 } {
+    const defaultHeartbeat = parseInt(process.env.DEEPCLAUDE_STREAM_HEARTBEAT_MS || '', 10) || STREAM_HEARTBEAT_MS;
+    const subagentHeartbeat = parseInt(process.env.DEEPCLAUDE_SUBAGENT_STREAM_HEARTBEAT_MS || '', 10) || 90_000;
     if (slot === 'subagent') {
         return {
             firstByte: 10_000,   // 10s — subagents shouldn't have cold-start delays
-            heartbeat: 60_000,   // 60s — subagents don't use reasoning models
-            deadline: 180_000,   // 3min — hard cap for a single subagent model call
+            heartbeat: subagentHeartbeat,
+            deadline: 90_000,    // 90s — matches start-proxy subagent request deadline
             bodyRead: 20_000,    // 20s — subagent responses are small (tool results)
         };
     }
     return {
         firstByte: FIRST_BYTE_TIMEOUT_MS,
-        heartbeat: STREAM_HEARTBEAT_MS,
-        deadline: STREAM_READ_TIMEOUT_MS,
+        heartbeat: defaultHeartbeat,
+        deadline: 120_000,         // 120s — matches start-proxy request deadline
         bodyRead: 30_000,        // 30s — default body read timeout
     };
 }
@@ -171,6 +181,22 @@ export function peekFirstChunk(proxyRes: NodeJS.ReadableStream, timeoutMs?: numb
         };
 
         proxyRes.on('readable', onReadable);
+
+        // Check for data already buffered before listener was attached;
+        // otherwise readable may never re-fire and we'd timeout a valid stream.
+        const bufferedData = proxyRes.read();
+        if (bufferedData !== null) {
+            if (resolved) return;
+            resolved = true;
+            clearTimeout(timer);
+            proxyRes.removeListener('readable', onReadable);
+            proxyRes.removeListener('error', onError);
+            proxyRes.removeListener('end', onEnd);
+            (proxyRes as NodeJS.ReadableStream & { unshift(chunk: Buffer): void }).unshift(bufferedData);
+            resolve({ ok: true, firstChunk: bufferedData as Buffer });
+            return;
+        }
+
         proxyRes.once('error', onError);
         proxyRes.once('end', onEnd);
     });
@@ -291,6 +317,13 @@ export function tryForward(
                     resetStreamHeartbeat();
                     sourceStream.on('data', (chunk: Buffer | string) => {
                         streamBytes += typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.length;
+                        if (streamBytes > MAX_TOTAL_STREAM_BYTES) {
+                            cancelStreamTimeouts();
+                            (proxyRes as unknown as NodeJS.ReadableStream & { destroy(err?: Error): void }).destroy(
+                                new Error('Stream response exceeds max size: ' + streamBytes + ' bytes')
+                            );
+                            return;
+                        }
                         resetStreamHeartbeat();
                     });
                     sourceStream.once('end', () => {
