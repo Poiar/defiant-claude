@@ -1607,24 +1607,32 @@ if ($Remote) {
 
     if ($env:DEEPCLAUDE_WATCHDOG -ne 'false' -and $proxyInfo.Process) {
         $watchdog = Start-Job -Name "DeepClaudeWatchdog" -ScriptBlock {
-            param($Pid, $Port)
-            for ($attempt = 1; $attempt -le 2; $attempt++) {
-                Wait-Process -Id $Pid -Timeout 120 -ErrorAction SilentlyContinue
-                if (-not (Get-Process -Id $Pid -ErrorAction SilentlyContinue)) {
-                    Write-Host "Proxy crashed. Restarting (attempt $attempt)..." -ForegroundColor Yellow
+            param($Pid, $Port, $StateFile)
+            $pollMs = 5000
+            while ($true) {
+                Start-Sleep -Milliseconds $pollMs
+                $procAlive = Get-Process -Id $Pid -ErrorAction SilentlyContinue
+                if (-not $procAlive) {
+                    # If the state file is gone, the proxy was intentionally shut down (e.g. --stop-proxy)
+                    if (-not (Test-Path $StateFile)) {
+                        Write-Host "Proxy (PID $Pid) exited and state file is gone. Watchdog exiting." -ForegroundColor DarkGray
+                        return
+                    }
+                    Write-Host "Proxy (PID $Pid) is no longer running. Restarting..." -ForegroundColor Yellow
                     try {
                         $newProxy = Start-RoutingProxy -RoutesFile $using:CurrentRoutesFile -Persist
                         if ($newProxy -and $newProxy.Process) {
                             Save-ProxyState -ProcessId $newProxy.Process.Id -Port $newProxy.Port -RoutesFile $using:CurrentRoutesFile
                             $Pid = $newProxy.Process.Id
+                            Write-Host "Proxy restarted on port $($newProxy.Port) (new PID $($newProxy.Process.Id))." -ForegroundColor Green
                         }
                     } catch {
                         Write-Host "  Failed to restart proxy: $_" -ForegroundColor Red
-                        break
+                        Start-Sleep -Seconds 10
                     }
                 }
             }
-        } -ArgumentList $proxyInfo.Process.Id, $proxyInfo.Port
+        } -ArgumentList $proxyInfo.Process.Id, $proxyInfo.Port, $ProxyStateFile
     }
 
     try {
@@ -1741,24 +1749,32 @@ Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
 
 if ($env:DEEPCLAUDE_WATCHDOG -ne 'false' -and $proxyInfo.Process) {
     $watchdog = Start-Job -Name "DeepClaudeWatchdog" -ScriptBlock {
-        param($Pid, $Port)
-        for ($attempt = 1; $attempt -le 2; $attempt++) {
-            Wait-Process -Id $Pid -Timeout 120 -ErrorAction SilentlyContinue
-            if (-not (Get-Process -Id $Pid -ErrorAction SilentlyContinue)) {
-                Write-Host "Proxy crashed. Restarting (attempt $attempt)..." -ForegroundColor Yellow
+        param($Pid, $Port, $StateFile)
+        $pollMs = 5000
+        while ($true) {
+            Start-Sleep -Milliseconds $pollMs
+            $procAlive = Get-Process -Id $Pid -ErrorAction SilentlyContinue
+            if (-not $procAlive) {
+                # If the state file is gone, the proxy was intentionally shut down (e.g. --stop-proxy)
+                if (-not (Test-Path $StateFile)) {
+                    Write-Host "Proxy (PID $Pid) exited and state file is gone. Watchdog exiting." -ForegroundColor DarkGray
+                    return
+                }
+                Write-Host "Proxy (PID $Pid) is no longer running. Restarting..." -ForegroundColor Yellow
                 try {
                     $newProxy = Start-RoutingProxy -RoutesFile $using:CurrentRoutesFile -Persist:$using:Persist
                     if ($newProxy -and $newProxy.Process) {
                         Save-ProxyState -ProcessId $newProxy.Process.Id -Port $newProxy.Port -RoutesFile $using:CurrentRoutesFile
                         $Pid = $newProxy.Process.Id
+                        Write-Host "Proxy restarted on port $($newProxy.Port) (new PID $($newProxy.Process.Id))." -ForegroundColor Green
                     }
                 } catch {
                     Write-Host "  Failed to restart proxy: $_" -ForegroundColor Red
-                    break
+                    Start-Sleep -Seconds 10
                 }
             }
         }
-    } -ArgumentList $proxyInfo.Process.Id, $proxyInfo.Port
+    } -ArgumentList $proxyInfo.Process.Id, $proxyInfo.Port, $ProxyStateFile
 }
 
 try {
