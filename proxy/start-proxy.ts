@@ -321,7 +321,11 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
             let model: string | null = null;
             let parsedBody: Record<string, unknown> | null = null;
             try { const parsed = JSON.parse(rawBody.toString()) as Record<string, unknown>; parsedBody = parsed; model = parsed.model as string; } catch (e) {
-                log.error(reqId, 'body parse error: ' + truncateForLog((e as Error).message));
+                if (rawBody.length === 0) {
+                    log.info(reqId, 'body parse warning: empty body (likely health probe)');
+                } else {
+                    log.error(reqId, 'body parse error: ' + truncateForLog((e as Error).message));
+                }
             }
 
             // Compute sanitized headers once for safe logging throughout the handler

@@ -4,6 +4,7 @@
 // fallback response headers.
 
 import http from 'http';
+import zlib from 'zlib';
 import { pipeline, Transform } from 'stream';
 import { buildSafeHeaders } from './util';
 import { translateResponse } from './protocol-translate';
@@ -210,6 +211,8 @@ export function tryForward(
                     // is bounded by STREAM_READ_TIMEOUT_MS.
                     let streamHeartbeat: ReturnType<typeof setTimeout> | null = null;
                     let streamDeadline: ReturnType<typeof setTimeout> | null = null;
+                    let streamBytes = 0;
+                    let streamEndedNormally = false;
                     const cancelStreamTimeouts = () => {
                         if (streamHeartbeat) { clearTimeout(streamHeartbeat); streamHeartbeat = null; }
                         if (streamDeadline) { clearTimeout(streamDeadline); streamDeadline = null; }
@@ -218,20 +221,31 @@ export function tryForward(
                         if (streamHeartbeat) clearTimeout(streamHeartbeat);
                         streamHeartbeat = setTimeout(() => {
                             (proxyRes as unknown as NodeJS.ReadableStream & { destroy(err?: Error): void }).destroy(
-                                new Error('Upstream stream read timeout (heartbeat) after ' + STREAM_HEARTBEAT_MS / 1000 + 's')
+                                new Error('Upstream stream read timeout (heartbeat) after ' + STREAM_HEARTBEAT_MS / 1000 + 's, received ' + streamBytes + ' bytes')
                             );
                         }, STREAM_HEARTBEAT_MS);
                     };
                     streamDeadline = setTimeout(() => {
                         cancelStreamTimeouts();
                         (proxyRes as unknown as NodeJS.ReadableStream & { destroy(err?: Error): void }).destroy(
-                            new Error('Upstream stream read timeout (deadline) after ' + STREAM_READ_TIMEOUT_MS / 1000 + 's')
+                            new Error('Upstream stream read timeout (deadline) after ' + STREAM_READ_TIMEOUT_MS / 1000 + 's, received ' + streamBytes + ' bytes')
                         );
                     }, STREAM_READ_TIMEOUT_MS);
                     resetStreamHeartbeat();
-                    proxyRes.on('data', resetStreamHeartbeat);
-                    proxyRes.once('end', cancelStreamTimeouts);
+                    proxyRes.on('data', (chunk: Buffer | string) => {
+                        streamBytes += typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.length;
+                        resetStreamHeartbeat();
+                    });
+                    proxyRes.once('end', () => {
+                        streamEndedNormally = true;
+                        cancelStreamTimeouts();
+                    });
                     proxyRes.once('error', cancelStreamTimeouts);
+                    proxyRes.once('close', () => {
+                        if (streamEndedNormally) {
+                            log.info(reqId, 'Stream completed normally, total bytes received: ' + streamBytes);
+                        }
+                    });
 
                     const outHeaders = sseHeaders(buildSafeHeaders(proxyRes.headers as Record<string, string | string[] | undefined>));
                     if (!outHeaders['content-type']) {
@@ -322,6 +336,12 @@ export function tryForward(
                 });
                 proxyRes.on('end', () => {
                     let responseBody = Buffer.concat(chunks);
+                    // Decompress gzip-encoded responses if upstream ignored accept-encoding
+                    if (typeof proxyRes.headers['content-encoding'] === 'string' && proxyRes.headers['content-encoding'].includes('gzip')) {
+                        try {
+                            responseBody = zlib.gunzipSync(responseBody);
+                        } catch (_) { /* decompression failure — fall through to existing error handling */ }
+                    }
                     let translationFailed = false;
                     if (isOpenAI) {
                         try {
