@@ -40,3 +40,10 @@ if ($unread -gt 0) {
 } else {
   if (Test-Path $alertFile) { Remove-Item $alertFile }
 }
+
+
+# ── Periodic cleanup: remove stale registrations ──────────────────────
+# Only run ~1 in 5 times to avoid work on every stop
+if ((Get-Random -Maximum 5) -eq 0) {
+  & "$PSScriptRoot\peer-cleanup.ps1" | Out-Null
+}

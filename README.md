@@ -350,7 +350,6 @@ Tip: `deepclaude --install-statusline` automates the manual setup above.
 | `DEEPCLAUDE_STREAM_HEARTBEAT_MS` | Stream silence timeout in ms before heartbeat triggers (default: `180000`) |
 | `DEEPCLAUDE_SUBAGENT_STREAM_HEARTBEAT_MS` | Subagent stream heartbeat timeout in ms (default: `90000`) |
 | `DEEPCLAUDE_DASHBOARD_KEY` | Shared secret for `/dashboard` and `/health/stream` endpoints (unset = no auth) |
-| `DEEPCLAUDE_SESSION_ID` | Per-session UUID for peer messaging identity (auto-generated, inherited by child processes) |
 | `DEEPCLAUDE_NO_PID_LOCK` | Skip PID file locking at startup (`1` to skip; used by integration tests) |
 
 All provider API key env vars (see [Providers table](#providers-and-api-keys)) are pushed into the process so the proxy (child process) inherits them.
