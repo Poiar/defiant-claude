@@ -267,6 +267,12 @@ export function tryForward(
                             (errBody ? ': ' + errBody.slice(0, 200) : '');
                     }
 
+                    // Mark transient 5xx errors as transport errors so the
+                    // per-provider retry loop in start-proxy.ts retries them.
+                    // 5xx from upstreams (especially 502/503/504) are often
+                    // transient and a single retry succeeds.
+                    const isRetryable5xx = proxyRes.statusCode >= 500 && proxyRes.statusCode < 600;
+
                     return resolve({
                         success: false,
                         status: proxyRes.statusCode,
@@ -274,6 +280,7 @@ export function tryForward(
                         rawBody: errBody || null,
                         qualityFailure,
                         qualityReason: qualityReason || undefined,
+                        transportError: isRetryable5xx || undefined,
                     });
                 });
                 proxyRes.on('error', (err: Error) => {
