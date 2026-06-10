@@ -58,7 +58,12 @@ Get-Content $inboxFile -Tail $Tail | ForEach-Object {
 # Update cursor (mark as seen)
 if ($found.Count -gt 0) {
   $newest = ($found | Sort-Object { (Get-Date $_.at) } | Select-Object -Last 1).at
-  if ($newest) { $newest | Out-File $cursorFile -Encoding utf8 -NoNewline }
+  if ($newest) {
+    # Always store as ISO-8601 with ms precision to avoid false "unread" alerts.
+    # Get-Date strips ms from human-readable strings, causing permanent false positives.
+    $iso = try { (Get-Date $newest).ToString('o') } catch { $newest }
+    $iso | Out-File $cursorFile -Encoding utf8 -NoNewline
+  }
 }
 
 if ($Json) {
