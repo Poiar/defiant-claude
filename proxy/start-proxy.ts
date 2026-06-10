@@ -453,6 +453,11 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                 delete anthroHeaders['connection'];
                 delete anthroHeaders['content-length'];
                 delete anthroHeaders['transfer-encoding'];
+                delete anthroHeaders['authorization'];
+                delete anthroHeaders['x-api-key'];
+                delete anthroHeaders['cookie'];
+                delete anthroHeaders['set-cookie'];
+                delete anthroHeaders['proxy-authorization'];
 
                 const anthroTransport = anthro.protocol === 'https:' ? https : http;
                 const anthroReq = anthroTransport.request({
@@ -527,8 +532,14 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
 
             // Prompt-based smart routing: classify request and optionally override model
             // to route cheap/simple queries to cheaper providers.
+            // Save the original slot BEFORE prompt-router may overwrite model,
+            // so canary routing, rate limiting, and deadline tightening still
+            // operate on the actual slot the user requested.
+            const originalSlot = (model || '').match(/^(sonnet|opus|haiku|subagent):/);
+            const savedSlot = originalSlot ? originalSlot[1] : null;
+
             if (parsedBody && state.routing?.promptRouter?.enabled) {
-                const slotMatch = model && model.match(/^(sonnet|opus|haiku|subagent):/);
+                const slotMatch = (model || '').match(/^(sonnet|opus|haiku|subagent):/);
                 if (slotMatch) {
                     const slot = slotMatch[1];
                     const classification = classifyRequest(parsedBody);
@@ -551,10 +562,9 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
             }
 
             // --- Canary routing ---
-            // Extract the slot from model to check for a canary config.
-            // If active, the canary provider replaces the primary, keeping
-            // the original primary as the first fallback.
-            const slot = model ? (model.match(/^(sonnet|opus|haiku|subagent):/) || [null])[1] : null;
+            // Use savedSlot (set before prompt-router) so canary always operates
+            // on the actual requested slot, not the prompt-router-modified model.
+            const slot = savedSlot;
 
             // Tighten the request deadline for subagent slots: they run as
             // background tasks and a stall should be surfaced quickly so the
@@ -780,10 +790,20 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                     delete options.headers['authorization'];
                 }
 
-                // Apply provider-specific extra headers from registry
+                // Apply provider-specific extra headers from registry FIRST,
+                // BEFORE the key injection below, and ONLY for safe header names.
+                // This prevents malicious providers.json from overwriting auth,
+                // host, or other sensitive headers (CRITICAL security fix).
                 const providerDef = lookupProviderByHost(options.hostname);
                 if (providerDef && providerDef.extraHeaders) {
-                    Object.assign(options.headers, providerDef.extraHeaders);
+                    const SAFE_EXTRA_HEADERS = new Set([
+                        'http-referer', 'x-title', 'x-request-id',
+                    ]);
+                    for (const [h, v] of Object.entries(providerDef.extraHeaders)) {
+                        if (SAFE_EXTRA_HEADERS.has(h.toLowerCase()) && typeof v === 'string') {
+                            options.headers[h.toLowerCase()] = v;
+                        }
+                    }
                 }
 
                 // Handle thinking blocks

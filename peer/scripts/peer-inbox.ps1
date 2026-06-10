@@ -50,7 +50,7 @@ Get-Content $inboxFile -Tail $Tail | ForEach-Object {
   }
   if ($Unseen -and $lastAt) {
     $msgDate = try { Get-Date $m.at } catch { $null }
-    if ($msgDate -and $msgDate -le $lastAt) { return }
+    if ($msgDate -and $msgDate -lt $lastAt) { return }
   }
   $found += $m
 }

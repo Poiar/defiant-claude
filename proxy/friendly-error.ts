@@ -36,6 +36,7 @@ export function buildFriendlyResponse(lastStatus: number | null | undefined, mod
         headers: {
             'content-type': 'application/json',
             'x-fallback-exhausted': 'true',
+            'x-deepclaude-error': 'E012',
             'x-attempted-providers': triedList,
         },
         body: JSON.stringify({

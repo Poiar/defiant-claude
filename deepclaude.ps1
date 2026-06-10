@@ -332,8 +332,9 @@ function Write-AtomicFile($path, $json) {
     try {
         $tmpFile = $path + ".tmp"
         [System.IO.File]::WriteAllText($tmpFile, $json)
-        if (Test-Path $path) { Remove-Item $path }
-        Move-Item -Force $tmpFile $path
+        # Use .NET Move with overwrite to avoid the Remove-Item→Move-Item race
+        # window where the file doesn't exist (hot-reload sees ENOENT).
+        [System.IO.File]::Move($tmpFile, $path, $true)
         # Restrict permissions on Unix — state files contain route/provider config
         if ($IsLinux -or $IsMacOS) {
             try { chmod 600 $path 2>$null } catch {}
@@ -388,6 +389,8 @@ foreach ($prop in $Registry.providers.PSObject.Properties) {
         format  = $def.wireFormat
     }
     if ($def.fallback) { $entry.fallback = $def.fallback }
+    if ($def.extraHeaders) { $entry.extraHeaders = $def.extraHeaders }
+    if ($def.streamUsageReporting) { $entry.streamUsageReporting = $def.streamUsageReporting }
     $Providers[$pk] = $entry
 }
 
@@ -431,17 +434,19 @@ function Resolve-Config($configName) {
             $provKey = $Matches[1]
             $modelId = $Matches[2]
             $provider = $Providers[$provKey]
-            if (-not $provider) { throw "Unknown provider '$provKey' in config '$configName' slot '$slot'" }
+            if (-not $provider) { Write-Host "ERROR: Unknown provider '$provKey' in config '$configName' slot '$slot'" -ForegroundColor Red; exit 1 }
             if (-not $provider.key) {
                 Write-Host "  Get a key from your provider's dashboard." -ForegroundColor DarkGray
                 Write-Host "  Then: setx $($provider.keyName) `"sk-...`"" -ForegroundColor DarkGray
-                throw "$($provider.keyName) not set (needed by config '$configName')"
+                Write-Host "ERROR: $($provider.keyName) not set (needed by config '$configName')" -ForegroundColor Red
+                exit 1
             }
             $resolved.slots[$slot] = @{ model = $modelId; provider = $provKey }
             $resolved.modelProviders[$modelId] = $provKey
             $resolved.providers[$provKey] = $provider
         } else {
-            throw "Invalid model spec in config '$configName' slot '$slot': expected 'providerKey:modelId', got '$val'"
+            Write-Host "ERROR: Invalid model spec in config '$configName' slot '$slot': expected 'providerKey:modelId', got '$val'" -ForegroundColor Red
+            exit 1
         }
     }
 
@@ -557,6 +562,8 @@ function Build-RoutesJson {
                     format   = if ($kv.Value.format) { $kv.Value.format } else { "anthropic" }
                     fallback = $fb
                 }
+                if ($kv.Value.extraHeaders) { $providerEntries[$kv.Key].extraHeaders = $kv.Value.extraHeaders }
+                if ($kv.Value.streamUsageReporting) { $providerEntries[$kv.Key].streamUsageReporting = $kv.Value.streamUsageReporting }
             }
         }
     } else {
@@ -569,6 +576,8 @@ function Build-RoutesJson {
                 format   = if ($kv.Value.format) { $kv.Value.format } else { "anthropic" }
                 fallback = $fb
             }
+            if ($kv.Value.extraHeaders) { $providerEntries[$kv.Key].extraHeaders = $kv.Value.extraHeaders }
+            if ($kv.Value.streamUsageReporting) { $providerEntries[$kv.Key].streamUsageReporting = $kv.Value.streamUsageReporting }
         }
     }
     $slots = @{}
@@ -663,20 +672,15 @@ function Start-RoutingProxy {
                 Write-Host "  Reusing existing proxy on port $($existingState.port) (PID $existingPid)" -ForegroundColor DarkGray
                 return @{ Port = $existingState.port; Process = $null; Persist = $true }
             }
-            # Try reading port from PID file
-            $pidFile = Join-Path $DeepClaudeDir "proxy.pid"
-            if (Test-Path $pidFile) {
-                try {
-                    $pidRaw = (Get-Content $pidFile -Raw).Trim()
-                    if ($pidRaw -match '^(\d+):(\d+)$') {
-                        $pidPort = [int]$Matches[2]
-                        if ($pidPort -gt 0) {
-                            Write-Host "  Reusing existing proxy on port $pidPort (PID $existingPid)" -ForegroundColor DarkGray
-                            return @{ Port = $pidPort; Process = $null; Persist = $true }
-                        }
-                    }
-                } catch { $null = $_ }
+            # Validate via Get-ProxyState which checks PID aliveness + TCP connect.
+            $existingState = Get-ProxyState
+            if ($existingState) {
+                Write-Host "  Reusing existing proxy on port $($existingState.port) (PID $($existingState.pid))" -ForegroundColor DarkGray
+                return @{ Port = $existingState.port; Process = $null; Persist = $true }
             }
+            # PID file is stale — remove it
+            $pidFile = Join-Path $DeepClaudeDir "proxy.pid"
+            Remove-Item $pidFile -ErrorAction SilentlyContinue
         }
 
         throw "Proxy failed to start. Output: '$portStr' Stderr: '$errStr'"
@@ -1456,8 +1460,21 @@ if ($SetSlot -or $PSBoundParameters.ContainsKey('SetSlot')) {
             $routes.routes | Add-Member -NotePropertyName $modelId -NotePropertyValue @{
                 provider = $provKey; rewrite = $modelId
             } -Force
+            # Add provider entry if missing from routes
+            if (-not $routes.providers.$provKey) {
+                $p = $Providers[$provKey]
+                if ($p) {
+                    $routes.providers | Add-Member -NotePropertyName $provKey -NotePropertyValue @{
+                        url = $p.url; keyEnv = $p.keyName; auth = $p.auth
+                        format = if ($p.format) { $p.format } else { "anthropic" }
+                        fallback = if ($p.fallback) { $p.fallback } else { $null }
+                    } -Force
+                }
+            }
             $routes | ConvertTo-Json -Depth 5 | Out-File $CurrentRoutesFile -Encoding utf8 -NoNewline
-        } catch { $null = $_ }
+        } catch {
+            Write-Host "  WARNING: Failed to update routes file: $_" -ForegroundColor DarkYellow
+        }
     }
 
     if ($slotName -eq 'opus') {
@@ -1822,7 +1839,10 @@ if ($opusCtx) {
         $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = "$opusCtx"
     }
 }
-Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
+if ($env:ANTHROPIC_API_KEY) {
+    Write-Host "  Note: ANTHROPIC_API_KEY is set but not used with this config." -ForegroundColor DarkGray
+    Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
+}
 
 if ($env:DEEPCLAUDE_WATCHDOG -eq 'true' -and $proxyInfo.Process) {
     $watchdog = Start-Watchdog -ProxyProcess $proxyInfo.Process -ProxyPort $proxyInfo.Port -StateFile $ProxyStateFile -MaxRestarts 5 -Persist:$Persist
