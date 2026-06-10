@@ -148,10 +148,10 @@ describe('resolveTarget with dedicated subagent model', () => {
             or: makeProvider('https://openrouter.ai/api/v1', 'OPENROUTER_KEY', 'bearer'),
         }, {}, 'ds');
 
-        const overrides = { subagent: 'or:openrouter/owl-alpha' };
+        const overrides = { subagent: 'or:deepseek/deepseek-v4-pro' };
         const result = await resolveTarget('subagent:ds:deepseek-v4-flash', routing, overrides);
         expect(result.primary!.providerKey).toBe('or');
-        expect(result.primary!.rewriteModel).toBe('openrouter/owl-alpha');
+        expect(result.primary!.rewriteModel).toBe('deepseek/deepseek-v4-pro');
     });
 
     test('config route takes effect when no dedicated model or override', async () => {

@@ -50,9 +50,13 @@ const MAX_PER_PROVIDER_RETRIES = 2; // 1 initial + 2 retries = 3 total attempts
 const RETRY_BASE_DELAY_MS = 800;   // 800ms -> 1.6s
 
 // Status codes that warrant trying a different provider.
-// Auth errors (401/403) and client errors (400/404/413) won't be fixed
+// 408 — upstream timed out
+// 413 — payload too large (provider-specific limits differ)
+// 429 — rate limited
+// 500/502/503/504 — server-side transient failures
+// Auth errors (401/403) and client errors (400/404) won't be fixed
 // by a different backend -- fail fast rather than burning fallback attempts.
-const FALLBACKABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
+const FALLBACKABLE_STATUS = new Set([408, 413, 429, 500, 502, 503, 504]);
 
 // --- Bootstrap ---
 
@@ -195,6 +199,7 @@ if (maxSpend !== null || dailyBudget !== null) {
 }
 
 // --- PID file: prevent two proxy instances from sharing state ---
+// Format: "PID:PORT" (PORT may be 0 before server starts listening)
 const homeDir = process.env.HOME || process.env.USERPROFILE || '';
 const deepclaudeDir = homeDir + '/.deepclaude';
 let pidPath = '';
@@ -202,34 +207,44 @@ if (!process.env.DEEPCLAUDE_NO_PID_LOCK) {
 try {
     fs.mkdirSync(deepclaudeDir, { recursive: true });
     pidPath = deepclaudeDir + '/proxy.pid';
-    fs.writeFileSync(pidPath, String(process.pid), { flag: 'wx' });
+    fs.writeFileSync(pidPath, String(process.pid) + ':0', { flag: 'wx' });
 } catch (err: any) {
     if (err && err.code === 'EEXIST') {
         try {
-            const existingPid = parseInt(fs.readFileSync(pidPath, 'utf-8').trim(), 10);
+            const raw = fs.readFileSync(pidPath, 'utf-8').trim();
+            const colonIdx = raw.indexOf(':');
+            const existingPid = parseInt(colonIdx >= 0 ? raw.slice(0, colonIdx) : raw, 10);
+            const existingPort = colonIdx >= 0 ? parseInt(raw.slice(colonIdx + 1), 10) : 0;
             if (!isNaN(existingPid)) {
+                let processAlive = false;
                 if (process.platform === 'win32') {
                     try {
-                        execSync('tasklist /FI "PID eq ' + existingPid + '" /NH', { timeout: 3000, stdio: 'pipe' });
-                        console.error('Another proxy instance is already running (PID ' + existingPid + '). Exiting.');
-                        process.exit(1);
-                    } catch {
-                        fs.writeFileSync(pidPath, String(process.pid));
-                    }
+                        const out = execSync('tasklist /FI "PID eq ' + existingPid + '" /NH /FO CSV', { timeout: 3000, stdio: 'pipe' }).toString();
+                        processAlive = out.includes(String(existingPid));
+                    } catch { /* process not found */ }
                 } else {
                     try {
                         process.kill(existingPid, 0);
-                        console.error('Another proxy instance is already running (PID ' + existingPid + '). Exiting.');
-                        process.exit(1);
-                    } catch {
-                        fs.writeFileSync(pidPath, String(process.pid));
-                    }
+                        processAlive = true;
+                    } catch { /* process not found */ }
                 }
+                if (processAlive) {
+                    if (existingPort > 0) {
+                        // Existing proxy is alive and we know its port — reuse it
+                        process.stdout.write('PORT:' + String(existingPort));
+                        process.exit(0);
+                    }
+                    // Alive but old-format PID file (no port) — can't find port, can't proceed
+                    console.error('Another proxy instance is already running (PID ' + existingPid + '). Exiting.');
+                    process.exit(1);
+                }
+                // Stale PID — overwrite with new instance
+                fs.writeFileSync(pidPath, String(process.pid) + ':0');
             } else {
-                fs.writeFileSync(pidPath, String(process.pid));
+                fs.writeFileSync(pidPath, String(process.pid) + ':0');
             }
         } catch {
-            fs.writeFileSync(pidPath, String(process.pid));
+            fs.writeFileSync(pidPath, String(process.pid) + ':0');
         }
     } else {
         console.error('Failed to create PID file: ' + (err ? err.message : 'unknown error'));
@@ -1143,6 +1158,10 @@ runStartupChecks().then((startupCheckResult) => {
     // --- Lifecycle ---
     server.listen(0, '127.0.0.1', () => {
         const port = (server.address() as { port: number }).port;
+        // Update PID file with port so future instances can reuse this proxy
+        if (pidPath) {
+            try { fs.writeFileSync(pidPath, String(process.pid) + ':' + String(port)); } catch {}
+        }
         process.stdout.write('PORT:' + String(port));
         if (hasDashboard) {
             const url = 'http://127.0.0.1:' + port + '/dashboard';

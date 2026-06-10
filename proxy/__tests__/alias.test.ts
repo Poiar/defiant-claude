@@ -34,7 +34,6 @@ describe('resolveAlias', () => {
         expect(resolveAlias('v4-pro')).toBe('deepseek-v4-pro');
         expect(resolveAlias('v4-flash')).toBe('deepseek-v4-flash');
         expect(resolveAlias('flash')).toBe('deepseek-v4-flash');
-        expect(resolveAlias('owl')).toBe('openrouter/owl-alpha');
         expect(resolveAlias('big-pickle')).toBe('big-pickle');
         expect(resolveAlias('kimi')).toBe('kimi-k2.6');
         expect(resolveAlias('mimo')).toBe('mimo-v2.5-pro');
@@ -60,7 +59,7 @@ describe('resolveAlias', () => {
         expect(resolveAlias('claude-sonnet-4-6')).toBe('claude-sonnet-4-6');
         expect(resolveAlias('deepseek-v4-pro')).toBe('deepseek-v4-pro');
         expect(resolveAlias('kimi-k2.6')).toBe('kimi-k2.6');
-        expect(resolveAlias('openrouter/owl-alpha')).toBe('openrouter/owl-alpha');
+        expect(resolveAlias('deepseek/deepseek-v4-pro')).toBe('deepseek/deepseek-v4-pro');
     });
 });
 

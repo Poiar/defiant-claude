@@ -128,11 +128,11 @@ describe('resolveTarget', () => {
         const routing = makeRouting({
             or: makeProvider('https://openrouter.ai/api/v1', 'OPENROUTER_KEY', 'bearer'),
         }, {
-            'openrouter/owl-alpha': { provider: 'or', rewrite: 'openrouter/owl-alpha' },
+            'deepseek/deepseek-v4-pro': { provider: 'or', rewrite: 'deepseek/deepseek-v4-pro' },
         }, 'ds');
 
-        const result = await resolveTarget('openrouter/owl-alpha', routing, {});
+        const result = await resolveTarget('deepseek/deepseek-v4-pro', routing, {});
         expect(result.primary!.providerKey).toBe('or');
-        expect(result.primary!.rewriteModel).toBe('openrouter/owl-alpha');
+        expect(result.primary!.rewriteModel).toBe('deepseek/deepseek-v4-pro');
     });
 });

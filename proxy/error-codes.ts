@@ -82,7 +82,8 @@ export function formatError(status: number, templateVars?: Record<string, string
 // Build the final JSON body for exhausted-fallback responses.
 // In dev mode, includes the original error detail so developers can debug.
 export function formatExhaustedError(lastStatus: number | null | undefined, lastBody: string | null | undefined, isDev?: boolean, qualityReason?: string | null): ApiError {
-    const base = formatError(lastStatus || 502, null, isDev);
+    const status = lastStatus || 502;
+    const base = formatError(status, { status: String(status) }, isDev);
     if (qualityReason) {
         base.message = 'All configured providers failed (last error: ' + qualityReason + ')';
     } else {
