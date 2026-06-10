@@ -60,13 +60,7 @@ $tab = ~/.claude/scripts/peer-tab.ps1 <from>
 send_to_tab $tab $pong
 ```
 
-**4. ALWAYS ack the pinger** (even if inbox was empty):
-```
-$stab = ~/.claude/scripts/peer-tab.ps1 <sender-uuid>
-send_to_tab $stab "/peer-check <your-uuid>"
-```
-This verifies the tab→session mapping. If the sender expected `X` but `Y` responds,
-they know the mapping is stale and run `peer-correct.ps1`.
+**3. Only send a ping if you actually wrote something to their inbox.** If you replied or sent a correction, deliver the ping. If the inbox was empty or the messages didn't warrant a reply, do NOTHING. Silent pings never get a response — that prevents infinite ACK loops.
 
 ## Receiving a correction
 
