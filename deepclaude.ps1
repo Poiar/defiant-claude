@@ -624,7 +624,7 @@ function Start-RoutingProxy {
         throw "Dependencies not installed. Run 'npm install' in '$myDir' first."
     }
     $proc = Start-Process -FilePath $tsxBin `
-        -ArgumentList ($proxyScript, '--routes', $RoutesFile, '--overrides', $SlotOverridesFile) `
+        -ArgumentList ($proxyScript, '--routes', $RoutesFile, '--overrides', $SlotOverridesFile, '--providers', (Join-Path $myDir 'proxy\providers.json')) `
         -NoNewWindow `
         -RedirectStandardOutput $outFile `
         -RedirectStandardError $errFile `
