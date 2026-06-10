@@ -38,5 +38,5 @@ if ($Refs) {
   & "$PSScriptRoot\peer-log.ps1" -Dir out -From $me.name -To $To -Msg $Msg -Type $Type -MsgId $n
 }
 
-# 3. Return only the wake-up ping (sender UUID for ACK/verification)
-Write-Output "/peer-check $($me.name)"
+# 3. Return only the wake-up ping — "you have mail"
+Write-Output "/peer-check"
