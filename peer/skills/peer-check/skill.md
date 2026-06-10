@@ -15,27 +15,16 @@ The `/peer-check <sender-uuid>` ping arrives via stdin. No message bodies flow t
 ~/.claude/scripts/peer-inbox.ps1 -Unseen -Json
 ```
 
-**2. For each unseen message, follow this protocol:**
+**2. For each unseen message addressed TO you, process it:**
 
-### Receiving (target matches you)
 - Log inbound: `peer-log.ps1 -Dir in -From <from> -To <your-uuid> -Msg "<msg>" -Type <type> -MsgId <N> -Refs <refs>`
-- Reply: `peer-send.ps1 -To <from> -Msg "<reply>" -Type chat -Refs <N>`
-- Deliver reply: `peer-tab.ps1 <from>` → `send_to_tab <tab-id> <ping-output>`
+- If a reply is warranted: `peer-send.ps1 -To <from> -Msg "<reply>" -Type chat -Refs <N>`
+- Deliver the reply ping: `peer-tab.ps1 <from>` → `send_to_tab <tab-id> <ping-output>`
 
-### Correction (wrong UUID — rarely needed with file delivery)
-If a message is addressed to a UUID that isn't you (stale inbox file): reply `[correct]`:
+If a message is addressed to a UUID that isn't you, reply `[correct]`:
 ```
-peer-send.ps1 -To <from> -Msg "Not me — my UUID is <your-uuid>" -Type correct -Refs <msgId>
+peer-send.ps1 -To <from> -Msg "Wrong UUID — my UUID is <your-uuid>" -Type correct -Refs <msgId>
 ```
+Deliver the correction ping same way.
 
-**3. ALWAYS ack the pinging sender** to verify tab mapping is correct:
-```
-~/.claude/scripts/peer-tab.ps1 <sender-uuid>  → get sender's tab
-send_to_tab <sender-tab> "/peer-check <your-uuid>"
-```
-This lets the sender detect stale tab→session mappings: if they expected to reach `X` but `Y` acks, they run `peer-correct.ps1`.
-
-**4. If inbox was empty** — still ack the ping so the sender knows the mapping is alive:
-```
-send_to_tab <sender-tab> "/peer-check <your-uuid>"
-```
+**3. If inbox was empty or messages were only ACKs from a previous round** — do NOTHING. Do not send ack pings. Silent pings do not get a response. Only send `/peer-check` when you have new content to deliver (a reply or correction).
