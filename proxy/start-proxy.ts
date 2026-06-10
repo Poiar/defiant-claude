@@ -735,9 +735,14 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                     }
                 }
 
-                // Build upstream path
+                // Build upstream path — map Anthropic client paths to the
+                // format-appropriate upstream endpoint (same as probe + startup-check).
                 const basePath = target.targetUrl.pathname.replace(/\/+$/, '');
-                const upstreamPath = deduplicatePath(basePath, req.url || '');
+                const reqPath = (req.url || '').split('?')[0];
+                const endpointPath = target.format === 'openai'
+                    ? reqPath.replace(/\/v1\/messages/, '/v1/chat/completions')
+                    : reqPath;
+                const upstreamPath = deduplicatePath(basePath, endpointPath + ((req.url || '').includes('?') ? '?' + (req.url || '').split('?').slice(1).join('?') : ''));
 
                 // Tighter upstream HTTP timeout for subagent slots: they are
                 // background tasks and a hung connection should surface quickly.
