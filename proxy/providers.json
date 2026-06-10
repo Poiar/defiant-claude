@@ -16,13 +16,13 @@
       "endpoint": "https://openrouter.ai/api",
       "keyEnv": "OPENROUTER_API_KEY",
       "authHeader": "bearer",
-      "wireFormat": "anthropic",
+      "wireFormat": "openai",
       "setupUrl": "https://openrouter.ai/keys",
       "extraHeaders": {
         "HTTP-Referer": "https://github.com/Poiar/deepclaude",
         "X-Title": "deepclaude"
       },
-      "streamUsageReporting": null
+      "streamUsageReporting": "openai_stream_options"
     },
     "fw": {
       "displayName": "Fireworks AI",
