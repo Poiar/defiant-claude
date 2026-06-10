@@ -1444,6 +1444,22 @@ if ($SetSlot -or $PSBoundParameters.ContainsKey('SetSlot')) {
     $overridesJson = $overrides | ConvertTo-Json
     Write-AtomicFile $SlotOverridesFile $overridesJson
 
+    # Update routes file so the proxy routes this slot to the correct provider.
+    # Without this, the proxy rewrites the model name but still routes by the
+    # stale slot→provider mapping in current-routes.json → 400 from wrong provider.
+    if (Test-Path $CurrentRoutesFile) {
+        try {
+            $routes = Get-Content $CurrentRoutesFile -Raw | ConvertFrom-Json
+            $provKey = $slotModel.Split(':')[0]
+            $modelId = $slotModel.Substring($provKey.Length + 1)
+            $routes.slots.$slotName = "${slotName}:${provKey}:${modelId}"
+            $routes.routes | Add-Member -NotePropertyName $modelId -NotePropertyValue @{
+                provider = $provKey; rewrite = $modelId
+            } -Force
+            $routes | ConvertTo-Json -Depth 5 | Out-File $CurrentRoutesFile -Encoding utf8 -NoNewline
+        } catch { $null = $_ }
+    }
+
     if ($slotName -eq 'opus') {
         Write-Host "  Note: For opus, /model also works directly in Claude Code." -ForegroundColor DarkGray
     }
