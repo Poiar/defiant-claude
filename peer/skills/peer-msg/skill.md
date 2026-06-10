@@ -34,13 +34,16 @@ send_to_tab <target-tab-uuid> "/peer-msg <your-uuid> → <their-uuid> #<N>: <msg
 
 When you see `/peer-msg X → Y` in your prompt:
 
-**1. Check target** — If Y != your UUID, reply with a correction and STOP:
+**1. Check target** — If Y != your UUID, run this and STOP:
 ```
-~/.claude/scripts/peer-next.ps1
-~/.claude/scripts/peer-log.ps1 -Dir in -From X -To Y -Msg "Wrong UUID — my UUID is <your-uuid>" -Type correct -MsgId <N>
-send_to_tab <sender-tab-uuid> "/peer-msg <your-uuid> → X re: <their-msgId> [correct]: Wrong UUID — my UUID is <your-uuid>"
+~/.claude/scripts/peer-next.ps1 | set $n
+~/.claude/scripts/peer-log.ps1 -Dir in -From X -To Y -Msg "Not me — my UUID is <your-uuid>" -Type correct -MsgId $n
+send_to_tab <sender-tab-uuid> "/peer-msg <your-uuid> → X re: <their-msgId> [correct] my UUID is <your-uuid>. Resend to me."
 ```
-Do NOT process the message further. The sender must run `~/.claude/scripts/peer-correct.ps1 -WrongUuid Y -CorrectUuid <your-uuid>` and re-send.
+
+CRITICAL: The reply MUST contain "my UUID is <your-uuid>" so the sender can correct their registry.
+Do NOT echo the original message. Do NOT process the message further.
+The sender will run `~/.claude/scripts/peer-correct.ps1 -WrongUuid Y -CorrectUuid <your-uuid>` and re-send.
 
 **2. Look up sender's tab** — `~/.claude/scripts/peer-tab.ps1 <sender-uuid>`
 
