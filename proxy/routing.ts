@@ -208,62 +208,84 @@ export async function resolveTarget(
         format: provider.format || 'anthropic',
     };
 
+    // Resolve a single fallback provider entry.  Returns the ResolvedTarget
+    // or null when the provider has no key, can't decrypt, or is the primary.
+    async function resolveFallback(
+        fbKey: string,
+        fb: ProviderEntry,
+    ): Promise<ResolvedTarget | null> {
+        if (!routing) return null;
+        if (fbKey === providerKey) return null;
+        const fbRawKey = process.env[fb.keyEnv || ''] || fb.key;
+        if (!fbRawKey) return null;
+        const fbResolvedKey = await resolveKey(fbRawKey);
+        if (fbRawKey.startsWith('$aes256gcm:') && fbResolvedKey === null) return null;
+        const fbUrl = new URL(fb.url);
+
+        // Resolve the correct model rewrite for the fallback provider.
+        // Don't inherit the primary's rewriteModel -- different providers
+        // use different model names. Prefer routes matching the same
+        // capability tier (opus/sonnet/haiku) to avoid tier downgrades.
+        //
+        // NOTE: Resolution iterates Object.entries(routing.routes) and
+        // breaks on the first match per provider. Since the iteration
+        // order follows JS property insertion order (routes.json key
+        // order), the order in which routes appear in routes.json
+        // determines fallback model priority.
+        let fbRewrite: string | null = null;
+        const tier = (model || '').match(/(opus|sonnet|haiku|subagent)/);
+        const tierPart = tier ? tier[1] : null;
+        if (tierPart && routing.routes) {
+            for (const [routeModel, routeEntry] of Object.entries(routing.routes)) {
+                if (!routeModel.includes(tierPart)) continue;
+                if (typeof routeEntry === 'string' && routeEntry === fbKey) {
+                    fbRewrite = routeModel; break;
+                } else if (routeEntry && typeof routeEntry === 'object' && (routeEntry as { provider: string }).provider === fbKey) {
+                    fbRewrite = (routeEntry as { rewrite?: string }).rewrite || routeModel; break;
+                }
+            }
+        }
+        if (!fbRewrite && routing.routes) {
+            for (const [routeModel, routeEntry] of Object.entries(routing.routes)) {
+                if (typeof routeEntry === 'string' && routeEntry === fbKey) {
+                    fbRewrite = routeModel; break;
+                } else if (routeEntry && typeof routeEntry === 'object' && (routeEntry as { provider: string }).provider === fbKey) {
+                    fbRewrite = (routeEntry as { rewrite?: string }).rewrite || routeModel; break;
+                }
+            }
+        }
+
+        return {
+            providerKey: fbKey,
+            url: fb.url,
+            key: fbResolvedKey,
+            isBearer: (fb.auth || fb.authHeader) === 'bearer',
+            targetUrl: fbUrl,
+            rewriteModel: fbRewrite,
+            format: fb.format || 'anthropic',
+        };
+    }
+
     // Build fallback chain
     const fallbacks: ResolvedTarget[] = [];
     if (provider.fallback && Array.isArray(provider.fallback)) {
         for (const fbKey of provider.fallback) {
-            if (fbKey === providerKey) continue;
             const fb = routing.providers ? routing.providers[fbKey] : undefined;
             if (!fb) continue;
-            const fbRawKey = process.env[fb.keyEnv || ''] || fb.key;
-            if (!fbRawKey) continue;
-            const fbResolvedKey = await resolveKey(fbRawKey);
-            if (fbRawKey.startsWith('$aes256gcm:') && fbResolvedKey === null) continue;
-            const fbUrl = new URL(fb.url);
+            const fbTarget = await resolveFallback(fbKey, fb);
+            if (fbTarget) fallbacks.push(fbTarget);
+        }
+    }
 
-            // Resolve the correct model rewrite for the fallback provider.
-            // Don't inherit the primary's rewriteModel -- different providers
-            // use different model names. Prefer routes matching the same
-            // capability tier (opus/sonnet/haiku) to avoid tier downgrades.
-            //
-            // NOTE: Resolution iterates Object.entries(routing.routes) and
-            // breaks on the first match per provider. Since the iteration
-            // order follows JS property insertion order (routes.json key
-            // order), the order in which routes appear in routes.json
-            // determines fallback model priority. List higher-priority
-            // model matches first in routes.json to get the desired rewrite.
-            let fbRewrite: string | null = null;
-            const tier = (model || '').match(/(opus|sonnet|haiku|subagent)/);
-            const tierPart = tier ? tier[1] : null;
-            if (tierPart && routing.routes) {
-                for (const [routeModel, routeEntry] of Object.entries(routing.routes)) {
-                    if (!routeModel.includes(tierPart)) continue;
-                    if (typeof routeEntry === 'string' && routeEntry === fbKey) {
-                        fbRewrite = routeModel; break;
-                    } else if (routeEntry && typeof routeEntry === 'object' && (routeEntry as { provider: string }).provider === fbKey) {
-                        fbRewrite = (routeEntry as { rewrite?: string }).rewrite || routeModel; break;
-                    }
-                }
-            }
-            if (!fbRewrite && routing.routes) {
-                for (const [routeModel, routeEntry] of Object.entries(routing.routes)) {
-                    if (typeof routeEntry === 'string' && routeEntry === fbKey) {
-                        fbRewrite = routeModel; break;
-                    } else if (routeEntry && typeof routeEntry === 'object' && (routeEntry as { provider: string }).provider === fbKey) {
-                        fbRewrite = (routeEntry as { rewrite?: string }).rewrite || routeModel; break;
-                    }
-                }
-            }
-
-            fallbacks.push({
-                providerKey: fbKey,
-                url: fb.url,
-                key: fbResolvedKey,
-                isBearer: (fb.auth || fb.authHeader) === 'bearer',
-                targetUrl: fbUrl,
-                rewriteModel: fbRewrite,
-                format: fb.format || 'anthropic',
-            });
+    // Auto-fallback: when no explicit fallbacks are configured, try all
+    // other available providers as implicit fallbacks.  This prevents
+    // single-provider death spirals where the primary rejects a request for
+    // provider-specific reasons (e.g. output token limits, payload size)
+    // and the session retries the same provider endlessly.
+    if (fallbacks.length === 0 && routing.providers) {
+        for (const [fbKey, fb] of Object.entries(routing.providers)) {
+            const fbTarget = await resolveFallback(fbKey, fb);
+            if (fbTarget) fallbacks.push(fbTarget);
         }
     }
 

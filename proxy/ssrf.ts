@@ -174,6 +174,36 @@ function setCachedDns(hostname: string, addresses: string[]): void {
     if (first) dnsCache.delete(first)
   }
 }
+// --- DNS retry: transient failures at proxy startup are common ---
+// dns.promises.resolve4 uses the c-ares resolver which goes directly to DNS
+// servers without the OS cache. At startup, the first batch of parallel
+// queries can fail transiently. Retry with backoff before giving up.
+
+const DNS_RETRY_MAX = 3;
+const DNS_RETRY_BASE_MS = 200;
+
+async function resolve4WithRetry(hostname: string): Promise<string[]> {
+  let lastErr: Error | null = null;
+  for (let i = 0; i < DNS_RETRY_MAX; i++) {
+    try {
+      return await dns.promises.resolve4(hostname);
+    } catch (err) {
+      lastErr = err as Error;
+      if (i < DNS_RETRY_MAX - 1) {
+        await new Promise(r => setTimeout(r, DNS_RETRY_BASE_MS * Math.pow(2, i)));
+      }
+    }
+  }
+  // c-ares (resolve4) can fail on Windows while the OS resolver works fine.
+  // Fall back to dns.lookup which uses getaddrinfo / the system resolver.
+  try {
+    const { address } = await dns.promises.lookup(hostname, { family: 4 });
+    return [address];
+  } catch (_) {
+    throw lastErr;
+  }
+}
+
 // --- Public API ---
 
 /**
@@ -198,7 +228,7 @@ export async function validateUrl(urlStr: string, options?: ValidateUrlOptions):
   // 2. Resolve hostname to IPs (DNS rebinding defense)
   let addresses: string[]
   try {
-    const records = await dns.promises.resolve4(parsed.hostname)
+    const records = await resolve4WithRetry(parsed.hostname)
     addresses = records
     // Cache successful resolution for fail-open defense
     setCachedDns(parsed.hostname, records)

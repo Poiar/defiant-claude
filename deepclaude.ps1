@@ -5,7 +5,7 @@
 .USAGE
     # Named configs (via -b)
     deepclaude                      # DeepSeek V4 Pro (default)
-    deepclaude -b or                # OpenRouter (owl-alpha)
+    deepclaude -b or                # OpenRouter (DeepSeek)
     deepclaude -b or2               # OpenRouter (DeepSeek)
     deepclaude -b or3               # OpenRouter (best free)
     deepclaude -b fw                # Fireworks AI (fastest)
@@ -15,11 +15,12 @@
     deepclaude -b anthropic         # Normal Claude Code
 
     # Model aliases: sonnet, opus, haiku, v4, flash (short names resolve to full model IDs)
-    # Ad-hoc positional: providerKey:modelId for opus sonnet haiku subagent
-    deepclaude ds:deepseek-v4-pro                                              # 1 spec -> all slots
-    deepclaude ds:deepseek-v4-pro oc:big-pickle                                # 2 specs -> first half / second half
-    deepclaude ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free       # 3 specs -> last repeats
-    deepclaude ds:deepseek-v4-pro ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free  # 4 specs -> direct
+    # Ad-hoc positional: providerKey:modelId for opus sonnet haiku subagent fable
+    deepclaude ds:deepseek-v4-pro                                              # 1 spec -> all 5 slots
+    deepclaude ds:deepseek-v4-pro oc:big-pickle                                # 2 specs -> first 3 / last 2
+    deepclaude ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free       # 3 specs -> opus, rest=second, sub/fable=third
+    deepclaude ds:deepseek-v4-pro ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free  # 4 specs -> sub/fable share last
+    deepclaude ds:deepseek-v4-pro ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free mm:mimo-v2.5-pro  # 5 specs -> direct
 
     # Remote control (starts proxy + browser-based Claude Code)
     deepclaude --remote                                 # Default config
@@ -269,7 +270,7 @@ function Clear-AnthropicEnv {
 function Initialize-SlotOverrides {
     param($resolved)
     $defaults = @{}
-    foreach ($slot in @("opus","sonnet","haiku","subagent")) {
+    foreach ($slot in @("opus","sonnet","haiku","subagent","fable")) {
         $s = $resolved.slots[$slot]
         $defaults[$slot] = "$($s.provider):$($s.model)"
     }
@@ -281,7 +282,7 @@ function Initialize-SlotOverrides {
 
     # Merge: existing overrides win over new defaults
     $merged = @{ _defaults = $defaults }
-    foreach ($slot in @("opus","sonnet","haiku","subagent")) {
+    foreach ($slot in @("opus","sonnet","haiku","subagent","fable")) {
         if ($existing.PSObject.Properties.Name -contains $slot) {
             $merged[$slot] = $existing.$slot
         }
@@ -407,6 +408,7 @@ foreach ($prop in $Registry.configs.PSObject.Properties) {
         sonnet   = $cfg.sonnet
         haiku    = $cfg.haiku
         subagent = $cfg.sub
+        fable    = $cfg.fable
     }
 }
 
@@ -423,7 +425,7 @@ function Resolve-Config($configName) {
         defaultProvider = $null
     }
 
-    foreach ($slot in @("opus","sonnet","haiku","subagent")) {
+    foreach ($slot in @("opus","sonnet","haiku","subagent","fable")) {
         $val = $config[$slot]
         if ($val -match '^(.+?):(.+)$') {
             $provKey = $Matches[1]
@@ -452,7 +454,7 @@ function Resolve-Config($configName) {
 
 # --- Build ad-hoc config from positional "providerKey:modelId" specs ---
 function Build-AdHocConfig($specs) {
-    $slots = @("opus", "sonnet", "haiku", "subagent")
+    $slots = @("opus", "sonnet", "haiku", "subagent", "fable")
     $config = @{
         name = ""
         slots = @{}
@@ -462,16 +464,18 @@ function Build-AdHocConfig($specs) {
         isMultiProvider = $false
     }
 
-    for ($i = 0; $i -lt 4; $i++) {
+    for ($i = 0; $i -lt 5; $i++) {
         # Map slot index -> spec index based on spec count:
-        #   1 spec:  [0, 0, 0, 0]     all same
-        #   2 specs: [0, 0, 1, 1]     first half / second half
-        #   3 specs: [0, 1, 2, 2]     one each, last repeats
-        #   4 specs: [0, 1, 2, 3]     direct mapping
+        #   1 spec:  [0, 0, 0, 0, 0]     all same
+        #   2 specs: [0, 0, 0, 1, 1]     first 3 / last 2
+        #   3 specs: [0, 1, 1, 2, 2]     opus, rest second, sub/fable third
+        #   4 specs: [0, 1, 2, 3, 3]     sub/fable share last
+        #   5 specs: [0, 1, 2, 3, 4]     direct mapping
         $idx = switch ($specs.Count) {
             1 { 0 }
-            2 { if ($i -lt 2) { 0 } else { 1 } }
-            3 { if ($i -eq 0) { 0 } elseif ($i -eq 1) { 1 } else { 2 } }
+            2 { if ($i -lt 3) { 0 } else { 1 } }
+            3 { if ($i -eq 0) { 0 } elseif ($i -le 2) { 1 } else { 2 } }
+            4 { if ($i -lt 3) { $i } else { 3 } }
             default { $i }
         }
         $spec = $specs[$idx]
@@ -518,7 +522,7 @@ function Build-RoutesJson {
         # Include ALL models from ALL configs that have valid keys (for /model switching)
         $seen = @{}
         foreach ($cfg in $Configs.Values) {
-            foreach ($slot in @("opus","sonnet","haiku","subagent")) {
+            foreach ($slot in @("opus","sonnet","haiku","subagent","fable")) {
                 $val = $cfg[$slot]
                 if ($val -match '^(.+?):(.+)$') {
                     $provKey = $Matches[1]
@@ -568,7 +572,7 @@ function Build-RoutesJson {
         }
     }
     $slots = @{}
-    foreach ($slot in @("opus","sonnet","haiku","subagent")) {
+    foreach ($slot in @("opus","sonnet","haiku","subagent","fable")) {
         $s = $resolved.slots[$slot]
         $slots[$slot] = "${slot}:$($s.provider):$($s.model)"
     }
@@ -650,6 +654,31 @@ function Start-RoutingProxy {
         Remove-Item $errFile -ErrorAction SilentlyContinue
         if (-not $proc.HasExited) { try { $proc.Kill() } catch { $null = $_ } }
         $proc.Dispose()
+
+        # If another proxy is already running, try to reuse it
+        if ($errStr -match 'already running.*PID (\d+)') {
+            $existingPid = [int]$Matches[1]
+            $existingState = Get-ProxyState
+            if ($existingState -and $existingState.pid -eq $existingPid) {
+                Write-Host "  Reusing existing proxy on port $($existingState.port) (PID $existingPid)" -ForegroundColor DarkGray
+                return @{ Port = $existingState.port; Process = $null; Persist = $true }
+            }
+            # Try reading port from PID file
+            $pidFile = Join-Path $DeepClaudeDir "proxy.pid"
+            if (Test-Path $pidFile) {
+                try {
+                    $pidRaw = (Get-Content $pidFile -Raw).Trim()
+                    if ($pidRaw -match '^(\d+):(\d+)$') {
+                        $pidPort = [int]$Matches[2]
+                        if ($pidPort -gt 0) {
+                            Write-Host "  Reusing existing proxy on port $pidPort (PID $existingPid)" -ForegroundColor DarkGray
+                            return @{ Port = $pidPort; Process = $null; Persist = $true }
+                        }
+                    }
+                } catch { $null = $_ }
+            }
+        }
+
         throw "Proxy failed to start. Output: '$portStr' Stderr: '$errStr'"
     }
 
@@ -747,7 +776,7 @@ if ($Status) {
     foreach ($kv in $Configs.GetEnumerator()) {
         $label = if ($kv.Key -eq "ds") { " (default)" } else { "" }
         $provKeys = @()
-        foreach ($s in @("opus","sonnet","haiku","subagent")) {
+        foreach ($s in @("opus","sonnet","haiku","subagent","fable")) {
             $val = $kv.Value[$s]
             if ($val -match '^(.+?):') { $pk = $Matches[1]; if ($pk -notin $provKeys) { $provKeys += $pk } }
         }
@@ -758,7 +787,7 @@ if ($Status) {
     if (Test-Path $SlotOverridesFile) {
         try {
             $overrides = Get-Content $SlotOverridesFile -Raw | ConvertFrom-Json
-            $slots = @("opus","sonnet","haiku","subagent")
+            $slots = @("opus","sonnet","haiku","subagent","fable")
             $slotLines = foreach ($s in $slots) {
                 $val = if ($overrides.$s) { $overrides.$s } elseif ($overrides._defaults.$s) { $overrides._defaults.$s } else { "—" }
                 $pk = ($val -split ':')[0]
@@ -916,17 +945,17 @@ if ($Cost) {
 if ($Help) {
     Write-Host "deepclaude - Claude Code with cheap backends (provider-agnostic)"
     Write-Host ""
-    Write-Host "Usage: deepclaude [spec1] [spec2] [spec3] [spec4]   (positional mode)"
+    Write-Host "Usage: deepclaude [spec1] [spec2] [spec3] [spec4] [spec5]   (positional mode)"
     Write-Host "       deepclaude [-b backend] [--status] [--doctor] [--version]"
     Write-Host ""
-    Write-Host "  Each positional arg is providerKey:modelId, mapping to opus/sonnet/haiku/subagent."
+    Write-Host "  Each positional arg is providerKey:modelId, mapping to opus/sonnet/haiku/subagent/fable."
     Write-Host "  Model aliases: sonnet, opus, haiku, v4, flash, ... (short names resolve to full model IDs)"
-    Write-Host "  Fewer than 4 specs repeats the last one for remaining slots."
+    Write-Host "  Fewer than 5 specs repeats the last one for remaining slots."
     Write-Host ""
     Write-Host "  Examples:"
     Write-Host "    deepclaude ds:deepseek-v4-pro ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free"
     Write-Host "    deepclaude ds:deepseek-v4-pro oc:big-pickle    (opus/sonnet=DS, haiku/sub=OC)"
-    Write-Host "    deepclaude ds:deepseek-v4-pro                  (all slots use DS)"
+    Write-Host "    deepclaude ds:deepseek-v4-pro                  (all 5 slots use DS)"
     Write-Host "    deepclaude -b ds+oc                            (named mixed config)"
     Write-Host "    deepclaude -b or                               (named config)"
     Write-Host ""
@@ -939,7 +968,7 @@ if ($Help) {
     Write-Host "  --remote        Browser-based remote control (starts proxy automatically)"
     Write-Host "  --switch CONFIG  Switch active config of a running persistent proxy"
     Write-Host "  --models        List all available models (for use with /model in CC)"
-    Write-Host "  --set-slot SLOT MODEL  Override a slot's model: opus/sonnet/haiku/subagent"
+    Write-Host "  --set-slot SLOT MODEL  Override a slot's model: opus/sonnet/haiku/subagent/fable"
     Write-Host "                     e.g. --set-slot haiku or:z-ai/glm-4.5-air:free"
     Write-Host "                     e.g. --set-slot sonnet   (no model = clear override)"
     Write-Host "  --stop-proxy    Kill the persistent proxy"
@@ -1118,7 +1147,7 @@ if ($Doctor) {
     if (Test-Path $SlotOverridesFile) {
         try {
             $overrides = Get-Content $SlotOverridesFile -Raw | ConvertFrom-Json
-            $validSlots = @("opus","sonnet","haiku","subagent")
+            $validSlots = @("opus","sonnet","haiku","subagent","fable")
             $overrideOk = $true
             foreach ($slot in $validSlots) {
                 $val = if ($overrides.$slot) { $overrides.$slot }
@@ -1367,9 +1396,9 @@ if ($SetSlot -or $PSBoundParameters.ContainsKey('SetSlot')) {
                   elseif ($ModelSpecs -and $ModelSpecs.Count -gt 0) { $ModelSpecs[0] }
                   else { $null }
 
-    $validSlots = @("opus","sonnet","haiku","subagent")
+    $validSlots = @("opus","sonnet","haiku","subagent","fable")
     if ($slotName -notin $validSlots) {
-        Write-Host "ERROR: Invalid slot '$slotName'. Use: opus, sonnet, haiku, subagent" -ForegroundColor Red
+        Write-Host "ERROR: Invalid slot '$slotName'. Use: opus, sonnet, haiku, subagent, fable" -ForegroundColor Red
         exit 1
     }
 
@@ -1417,6 +1446,9 @@ if ($SetSlot -or $PSBoundParameters.ContainsKey('SetSlot')) {
 
     if ($slotName -eq 'opus') {
         Write-Host "  Note: For opus, /model also works directly in Claude Code." -ForegroundColor DarkGray
+    }
+    if ($slotName -eq 'fable') {
+        Write-Host "  Note: For fable, /model also works directly in Claude Code." -ForegroundColor DarkGray
     }
     $proxyState = Get-ProxyState
     if ($proxyState) {
@@ -1472,7 +1504,7 @@ if ($Models) {
     Write-Host "  ================================" -ForegroundColor DarkGray
     $byProvider = @{}
     foreach ($cfg in $Configs.Values) {
-        foreach ($slot in @("opus","sonnet","haiku","subagent")) {
+        foreach ($slot in @("opus","sonnet","haiku","subagent","fable")) {
             $val = $cfg[$slot]
             if ($val -match '^(.+?):(.+)$') {
                 $provKey = $Matches[1]
@@ -1510,7 +1542,7 @@ if ($Models) {
     } else {
         Write-Host "`n  Persistent proxy: NOT RUNNING" -ForegroundColor DarkGray
     }
-    Write-Host "`n  Use /model providerKey:modelId in Claude Code to switch opus." -ForegroundColor DarkGray
+    Write-Host "`n  Use /model providerKey:modelId in Claude Code to switch opus or fable." -ForegroundColor DarkGray
     Write-Host "  Use deepclaude --set-slot SLOT MODEL to switch sonnet/haiku/subagent." -ForegroundColor DarkGray
     Write-Host "  Use deepclaude --switch CONFIG to change all slot mappings at once.`n" -ForegroundColor DarkGray
     exit 0
@@ -1560,7 +1592,7 @@ if ($Switch -or $PSBoundParameters.ContainsKey('Switch')) {
     Initialize-SlotOverrides $switchResolved
 
     Write-Host "  Slot mappings:" -ForegroundColor DarkGray
-    foreach ($slot in @("opus","sonnet","haiku","subagent")) {
+    foreach ($slot in @("opus","sonnet","haiku","subagent","fable")) {
         $s = $switchResolved.slots[$slot]
         $provName = $switchResolved.providers[$s.provider].name
         Write-Host "    $($slot.PadRight(10)) $($s.provider):$($s.model)  ->  $provName" -ForegroundColor DarkGray
@@ -1646,6 +1678,7 @@ if ($Remote) {
     $env:ANTHROPIC_DEFAULT_OPUS_MODEL = & $Append1M ("opus:" + ($overrides.opus ?? $overrides._defaults.opus ?? "$($resolved.slots['opus'].provider):$($resolved.slots['opus'].model)"))
     $env:ANTHROPIC_DEFAULT_SONNET_MODEL = & $Append1M ("sonnet:" + ($overrides.sonnet ?? $overrides._defaults.sonnet ?? "$($resolved.slots['sonnet'].provider):$($resolved.slots['sonnet'].model)"))
     $env:ANTHROPIC_DEFAULT_HAIKU_MODEL = & $Append1M ("haiku:" + ($overrides.haiku ?? $overrides._defaults.haiku ?? "$($resolved.slots['haiku'].provider):$($resolved.slots['haiku'].model)"))
+    $env:ANTHROPIC_DEFAULT_FABLE_MODEL = & $Append1M ("fable:" + ($overrides.fable ?? $overrides._defaults.fable ?? "$($resolved.slots['fable'].provider):$($resolved.slots['fable'].model)"))
     $env:CLAUDE_CODE_SUBAGENT_MODEL = & $Append1M ("subagent:" + ($overrides.subagent ?? $overrides._defaults.subagent ?? "$($resolved.slots['subagent'].provider):$($resolved.slots['subagent'].model)"))
     $ctxModel = $resolved.slots["opus"].model -replace '\[1m\]', ''
     $opusCtx = $ModelCtx[$ctxModel]
@@ -1693,7 +1726,7 @@ Write-Host "`n  Launching Claude Code via $($resolved.name)..." -ForegroundColor
 $provNames = ($resolved.providers.Values | ForEach-Object { $_.name }) -join " + "
 Write-Host "  Providers: $provNames" -ForegroundColor DarkGray
 Write-Host "  Routing:" -ForegroundColor DarkGray
-foreach ($slot in @("opus","sonnet","haiku","subagent")) {
+foreach ($slot in @("opus","sonnet","haiku","subagent","fable")) {
     $s = $resolved.slots[$slot]
     $provName = $resolved.providers[$s.provider].name
     Write-Host "    $($slot.PadRight(10)) $($s.provider):$($s.model)  ->  $provName" -ForegroundColor DarkGray
@@ -1731,6 +1764,7 @@ $opusM   = "opus:" + (Get-SlotModel 'opus')
 $sonnetM = "sonnet:" + (Get-SlotModel 'sonnet')
 $haikuM  = "haiku:" + (Get-SlotModel 'haiku')
 $subM    = "subagent:" + (Get-SlotModel 'subagent')
+$fableM  = "fable:" + (Get-SlotModel 'fable')
 
 # Append [1m] suffix for models with >=1M context. Claude Code's PV() checks this
 # dynamically on every request, so the context window follows /model switches.
@@ -1744,6 +1778,7 @@ $opusM   = Append-1M $opusM
 $sonnetM = Append-1M $sonnetM
 $haikuM  = Append-1M $haikuM
 $subM    = Append-1M $subM
+$fableM  = Append-1M $fableM
 
 if ($Dashboard) {
     Write-Host "  Dashboard: http://127.0.0.1:$($proxyInfo.Port)/dashboard" -ForegroundColor Cyan
@@ -1759,6 +1794,7 @@ $env:ANTHROPIC_MODEL = $opusM
 $env:ANTHROPIC_DEFAULT_OPUS_MODEL = $opusM
 $env:ANTHROPIC_DEFAULT_SONNET_MODEL = $sonnetM
 $env:ANTHROPIC_DEFAULT_HAIKU_MODEL = $haikuM
+$env:ANTHROPIC_DEFAULT_FABLE_MODEL = $fableM
 $env:CLAUDE_CODE_SUBAGENT_MODEL = $subM
 $ctxModel = $resolved.slots["opus"].model -replace '\[1m\]', ''
 $opusCtx = $ModelCtx[$ctxModel]

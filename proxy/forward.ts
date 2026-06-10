@@ -243,11 +243,37 @@ export function tryForward(
                 proxyRes.on('data', (c: Buffer) => { errSize += c.length; if (errSize <= 10000) errChunks.push(c); });
                 proxyRes.on('end', () => {
                     const errBody = Buffer.concat(errChunks).toString();
+
+                    // Detect output-size / payload-too-large errors in the
+                    // upstream response body.  Different providers have
+                    // different output token limits — flagging these as
+                    // quality failures tells the fallback loop to try the
+                    // next provider instead of stopping.
+                    let qualityFailure = false;
+                    let qualityReason = '';
+                    const lowerBody = errBody.toLowerCase();
+                    if (proxyRes.statusCode === 413 ||
+                        lowerBody.includes('max_tokens') ||
+                        lowerBody.includes('too large') ||
+                        lowerBody.includes('too long') ||
+                        lowerBody.includes('output token') ||
+                        lowerBody.includes('context length') ||
+                        lowerBody.includes('token limit') ||
+                        lowerBody.includes('maximum context') ||
+                        lowerBody.includes('reduce the length') ||
+                        lowerBody.includes('request too large')) {
+                        qualityFailure = true;
+                        qualityReason = 'Upstream rejected request as too large (HTTP ' + proxyRes.statusCode + ')' +
+                            (errBody ? ': ' + errBody.slice(0, 200) : '');
+                    }
+
                     return resolve({
                         success: false,
                         status: proxyRes.statusCode,
-                        error: 'HTTP ' + proxyRes.statusCode,
+                        error: qualityReason || 'HTTP ' + proxyRes.statusCode,
                         rawBody: errBody || null,
+                        qualityFailure,
+                        qualityReason: qualityReason || undefined,
                     });
                 });
                 proxyRes.on('error', (err: Error) => {

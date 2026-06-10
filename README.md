@@ -103,7 +103,7 @@ deepclaude                                    # Launch with DeepSeek V4 Pro
 
 ```
 deepclaude                  # ds (default) — DeepSeek V4 Pro
-deepclaude -b or            # OpenRouter (owl-alpha)
+deepclaude -b or            # OpenRouter (DeepSeek)
 deepclaude -b or2           # OpenRouter (DeepSeek)
 deepclaude -b or3           # OpenRouter (best free)
 deepclaude -b fw            # Fireworks AI
@@ -203,7 +203,7 @@ Fallbacks are configured per-provider and transparent to Claude Code. Max 3 atte
 
 ```
 ds     opus=ds:deepseek-v4-pro     sonnet=ds:deepseek-v4-pro     haiku=ds:deepseek-v4-flash    sub=ds:deepseek-v4-flash
-or     opus=or:openrouter/owl-alpha  sonnet=or:openrouter/owl-alpha  haiku=or:z-ai/glm-4.5-air:free  sub=or:z-ai/glm-4.5-air:free
+or     opus=or:deepseek/deepseek-v4-pro  sonnet=or:deepseek/deepseek-v4-pro  haiku=or:deepseek/deepseek-v4-flash  sub=or:deepseek/deepseek-v4-flash
 or2    opus=or:deepseek/deepseek-v4-pro  sonnet=or:deepseek/deepseek-v4-pro  haiku=or:deepseek/deepseek-v4-flash  sub=or:deepseek/deepseek-v4-flash
 or3    opus=or:openai/gpt-oss-120b:free  sonnet=or:poolside/laguna-m.1:free  haiku=or:z-ai/glm-4.5-air:free  sub=or:liquid/lfm-2.5-1.2b-instruct:free
 fw     opus=fw:accounts/fireworks/models/deepseek-v4-pro  (all slots same)
@@ -249,7 +249,6 @@ Per-model context limits are configured automatically:
 | Model | Context |
 |---|---|
 | `deepseek-v4-pro` / `deepseek-v4-flash` (any provider) | 1M |
-| `openrouter/owl-alpha` | 200K |
 | `openai/gpt-oss-120b:free`, `poolside/laguna-m.1:free`, `z-ai/glm-4.5-air:free` | 128K |
 | `big-pickle` | 128K |
 | `kimi-k2.6`, `umans-kimi-k2.6`, `umans-coder` | 256K |

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # deepclaude — Use Claude Code with cheap backends. Provider-agnostic: mix models from different APIs in one config.
-# Usage: deepclaude [spec1] [spec2] [spec3] [spec4]   (positional mode)
+# Usage: deepclaude [spec1] [spec2] [spec3] [spec4] [spec5]   (positional mode)
 #        deepclaude [-b backend] [--status] [--doctor] [--version]
 #
 # Named configs (via -b):
 #   deepclaude                  # ds (default) — DeepSeek V4 Pro
-#   deepclaude -b or            # OpenRouter (owl-alpha)
+#   deepclaude -b or            # OpenRouter (DeepSeek)
 #   deepclaude -b or2           # OpenRouter (DeepSeek)
 #   deepclaude -b or3           # OpenRouter (best free)
 #   deepclaude -b fw            # Fireworks AI
@@ -167,7 +167,7 @@ clear_proxy_state() {
 # --- Slot overrides ---
 init_slot_overrides() {
     local opus_prov="$1" opus_model="$2" sonnet_prov="$3" sonnet_model="$4"
-    local haiku_prov="$5" haiku_model="$6" subagent_prov="$7" subagent_model="$8"
+    local haiku_prov="$5" haiku_model="$6" subagent_prov="$7" subagent_model="$8" fable_prov="${9:-}" fable_model="${10:-}"
 
     mkdir -p -m 700 "$DEEPCLAUDE_DIR"
 
@@ -178,7 +178,8 @@ init_slot_overrides() {
         --arg sonnet "${sonnet_prov}:${sonnet_model}" \
         --arg haiku "${haiku_prov}:${haiku_model}" \
         --arg subagent "${subagent_prov}:${subagent_model}" \
-        '{opus: $opus, sonnet: $sonnet, haiku: $haiku, subagent: $subagent}')
+        --arg fable "${fable_prov}:${fable_model}" \
+        '{opus: $opus, sonnet: $sonnet, haiku: $haiku, subagent: $subagent, fable: $fable}')
 
     local merged
     if [[ -f "$SLOT_OVERRIDES_FILE" ]]; then
@@ -208,16 +209,17 @@ get_slot_model() {
 }
 
 # --- Config resolution (from providers.json) ---
-declare -A CONFIG_NAME CONFIG_OPUS CONFIG_SONNET CONFIG_HAIKU CONFIG_SUBAGENT
+declare -A CONFIG_NAME CONFIG_OPUS CONFIG_SONNET CONFIG_HAIKU CONFIG_SUBAGENT CONFIG_FABLE
 
 init_configs() {
-    while IFS=$'\t' read -r cfg name opus sonnet haiku sub; do
+    while IFS=$'\t' read -r cfg name opus sonnet haiku sub fable; do
         CONFIG_NAME[$cfg]="$name"
         CONFIG_OPUS[$cfg]="$opus"
         CONFIG_SONNET[$cfg]="$sonnet"
         CONFIG_HAIKU[$cfg]="$haiku"
         CONFIG_SUBAGENT[$cfg]="$sub"
-    done < <(jq -r '.configs | to_entries[] | [.key, .value.name, .value.opus, .value.sonnet, .value.haiku, .value.sub] | @tsv' "$REGISTRY_FILE")
+        CONFIG_FABLE[$cfg]="${fable:-$opus}"
+    done < <(jq -r '.configs | to_entries[] | [.key, .value.name, .value.opus, .value.sonnet, .value.haiku, .value.sub, .value.fable] | @tsv' "$REGISTRY_FILE")
 }
 init_configs
 
@@ -242,18 +244,19 @@ parse_spec() {
 build_adhoc_config() {
     local specs=("$@")
     local spec_count=${#specs[@]}
-    local slots=(opus sonnet haiku subagent)
+    local slots=(opus sonnet haiku subagent fable)
     # Output: config_name, then for each slot: provider model
     local name_parts=()
 
     echo "Ad-hoc"
 
-    for i in 0 1 2 3; do
+    for i in 0 1 2 3 4; do
         local idx
         case "$spec_count" in
             1) idx=0 ;;
-            2) if [[ $i -lt 2 ]]; then idx=0; else idx=1; fi ;;
-            3) if [[ $i -eq 0 ]]; then idx=0; elif [[ $i -eq 1 ]]; then idx=1; else idx=2; fi ;;
+            2) if [[ $i -lt 3 ]]; then idx=0; else idx=1; fi ;;
+            3) if [[ $i -eq 0 ]]; then idx=0; elif [[ $i -le 2 ]]; then idx=1; else idx=2; fi ;;
+            4) if [[ $i -lt 3 ]]; then idx=$i; else idx=3; fi ;;
             *) idx=$i ;;
         esac
         local spec="${specs[$idx]}"
@@ -286,7 +289,7 @@ resolve_config() {
 
     echo "${CONFIG_NAME[$config_name]}"
 
-    for slot in opus sonnet haiku subagent; do
+    for slot in opus sonnet haiku subagent fable; do
         local var="CONFIG_${slot^^}[$config_name]"
         local val="${!var}"
         local prov_key model_id
@@ -342,7 +345,7 @@ build_routes_json() {
 
     # Include ALL models from ALL configs that have valid keys (for /model switching)
     for cfg in "${!CONFIG_NAME[@]}"; do
-        for slot in opus sonnet haiku subagent; do
+        for slot in opus sonnet haiku subagent fable; do
             local var="CONFIG_${slot^^}[$cfg]"
             local val="${!var}"
             local pk mid
@@ -450,8 +453,8 @@ stop_proxy_info() {
 
 # --- Set CC environment variables ---
 set_cc_env() {
-    local proxy_port="$1" opus_model="$2" sonnet_model="$3" haiku_model="$4" subagent_model="$5"
-    local opus_ctxt_model="$6"  # model ID for context limit lookup
+    local proxy_port="$1" opus_model="$2" sonnet_model="$3" haiku_model="$4" subagent_model="$5" fable_model="$6"
+    local opus_ctxt_model="$7"  # model ID for context limit lookup
 
     export ANTHROPIC_BASE_URL="http://127.0.0.1:${proxy_port}"
     export ANTHROPIC_AUTH_TOKEN="proxy"
@@ -459,6 +462,7 @@ set_cc_env() {
     export ANTHROPIC_DEFAULT_OPUS_MODEL="opus:${opus_model}"
     export ANTHROPIC_DEFAULT_SONNET_MODEL="sonnet:${sonnet_model}"
     export ANTHROPIC_DEFAULT_HAIKU_MODEL="haiku:${haiku_model}"
+    export ANTHROPIC_DEFAULT_FABLE_MODEL="fable:${fable_model}"
     export CLAUDE_CODE_SUBAGENT_MODEL="subagent:${subagent_model}"
     export CLAUDE_CODE_EFFORT_LEVEL="$EFFORT"
     unset ANTHROPIC_API_KEY 2>/dev/null || true
@@ -484,7 +488,8 @@ set_cc_env() {
 clear_anthropic_env() {
     unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_MODEL \
           ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL \
-          ANTHROPIC_DEFAULT_HAIKU_MODEL CLAUDE_CODE_SUBAGENT_MODEL \
+          ANTHROPIC_DEFAULT_HAIKU_MODEL ANTHROPIC_DEFAULT_FABLE_MODEL \
+          CLAUDE_CODE_SUBAGENT_MODEL \
           CLAUDE_CODE_EFFORT_LEVEL ANTHROPIC_API_KEY \
           CLAUDE_CODE_MAX_CONTEXT_TOKENS DISABLE_COMPACT \
           CLAUDE_CODE_AUTO_COMPACT_WINDOW \
@@ -519,7 +524,7 @@ show_status() {
         local label=""
         [[ "$cfg" == "ds" ]] && label=" (default)"
         local provs=()
-        for slot in opus sonnet haiku subagent; do
+        for slot in opus sonnet haiku subagent fable; do
             local var="CONFIG_${slot^^}[$cfg]"
             local val="${!var}"
             local pk="${val%%:*}"
@@ -539,7 +544,7 @@ show_status() {
     if [[ -f "$SLOT_OVERRIDES_FILE" ]]; then
         echo ""
         echo "  Active slot mapping:"
-        for slot in opus sonnet haiku subagent; do
+        for slot in opus sonnet haiku subagent fable; do
             local val pk
             val=$(jq -r --arg s "$slot" '.[$s] // ._defaults[$s] // "—"' "$SLOT_OVERRIDES_FILE" 2>/dev/null)
             pk="${val%%:*}"
@@ -597,12 +602,12 @@ show_cost() {
 show_help() {
     echo "deepclaude - Claude Code with cheap backends (provider-agnostic)"
     echo ""
-    echo "Usage: deepclaude [spec1] [spec2] [spec3] [spec4]   (positional mode)"
+    echo "Usage: deepclaude [spec1] [spec2] [spec3] [spec4] [spec5]   (positional mode)"
     echo "       deepclaude [-b backend] [--status] [--doctor] [--version]"
     echo ""
-    echo "  Each positional arg is providerKey:modelId, mapping to opus/sonnet/haiku/subagent."
+    echo "  Each positional arg is providerKey:modelId, mapping to opus/sonnet/haiku/subagent/fable/fable."
     echo "  Model aliases: sonnet, opus, haiku, v4, flash, ... (short names resolve to full model IDs)"
-    echo "  Fewer than 4 specs repeats the last one for remaining slots."
+    echo "  Fewer than 5 specs repeats the last one for remaining slots."
     echo ""
     echo "  Examples:"
     echo "    deepclaude ds:deepseek-v4-pro ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free"
@@ -624,7 +629,7 @@ show_help() {
   echo "  --skip-startup-check   Skip the provider health check on proxy startup"
   echo "  --fix-av               Windows Defender exclusion reminder"
   echo "  --install-statusline   Auto-install statusline to ~/.claude/"
-  echo "  --set-slot SLOT MODEL  Override a slot: opus/sonnet/haiku/subagent"
+  echo "  --set-slot SLOT MODEL  Override a slot: opus/sonnet/haiku/subagent/fable/fable"
     echo "  --persist       Keep proxy running after CC exits"
     echo "  --remote              Browser-based remote control (starts proxy automatically)"
     echo "  --switch CONFIG  Switch active config of a running persistent proxy"
@@ -648,7 +653,7 @@ show_help() {
     echo "      --lint runs shellcheck on this script (bash only)."
     echo ""
     echo "Model control:"
-    echo "  --set-slot SLOT MODEL     Override a slot (opus/sonnet/haiku/subagent)"
+    echo "  --set-slot SLOT MODEL     Override a slot (opus/sonnet/haiku/subagent/fable/fable)"
     echo "  --subagent-model MODEL    Set dedicated subagent model (e.g. oc:big-pickle)"
     echo ""
 }
@@ -689,7 +694,7 @@ show_models() {
 
     declare -A by_provider
     for cfg in "${!CONFIG_NAME[@]}"; do
-        for slot in opus sonnet haiku subagent; do
+        for slot in opus sonnet haiku subagent fable; do
             local var="CONFIG_${slot^^}[$cfg]"
             local val="${!var}"
             local pk="${val%%:*}" mid="${val#*:}"
@@ -724,7 +729,7 @@ show_models() {
             if [[ -n "$override_keys" ]]; then
                 echo ""
                 echo "  Slot overrides:"
-                for slot in opus sonnet haiku subagent; do
+                for slot in opus sonnet haiku subagent fable; do
                     local val
                     val=$(jq -r --arg s "$slot" '.[$s] // empty' "$SLOT_OVERRIDES_FILE" 2>/dev/null)
                     if [[ -n "$val" ]]; then
@@ -814,7 +819,7 @@ run_doctor() {
     echo ""
     echo "  Slot Overrides:"
     if [[ -f "$SLOT_OVERRIDES_FILE" ]]; then
-        for slot in opus sonnet haiku subagent; do
+        for slot in opus sonnet haiku subagent fable; do
             local val
             val=$(jq -r --arg s "$slot" '.[$s] // ._defaults[$s] // empty' "$SLOT_OVERRIDES_FILE" 2>/dev/null)
             if [[ -z "$val" ]]; then
@@ -954,7 +959,7 @@ handle_set_slot() {
     local slot_name="$1" slot_model="${2:-}"
 
     if [[ ! "$slot_name" =~ ^(opus|sonnet|haiku|subagent)$ ]]; then
-        echo "ERROR: Invalid slot '$slot_name'. Use: opus, sonnet, haiku, subagent" >&2
+        echo "ERROR: Invalid slot '$slot_name'. Use: opus, sonnet, haiku, subagent, fable" >&2
         exit 1
     fi
 
@@ -1098,17 +1103,18 @@ handle_switch() {
     # Initialize slot overrides
     # Get first 4 lines of slot_data: opus provider model, sonnet provider model, etc.
     local opus_prov="" opus_model="" sonnet_prov="" sonnet_model=""
-    local haiku_prov="" haiku_model="" subagent_prov="" subagent_model=""
+    local haiku_prov="" haiku_model="" subagent_prov="" subagent_model="" fable_prov="" fable_model=""
     while IFS=' ' read -r slot prov model; do
         case "$slot" in
             opus) opus_prov="$prov"; opus_model="$model" ;;
             sonnet) sonnet_prov="$prov"; sonnet_model="$model" ;;
             haiku) haiku_prov="$prov"; haiku_model="$model" ;;
             subagent) subagent_prov="$prov"; subagent_model="$model" ;;
+            fable) fable_prov="$prov"; fable_model="$model" ;;
         esac
     done <<< "$slot_data"
     init_slot_overrides "$opus_prov" "$opus_model" "$sonnet_prov" "$sonnet_model" \
-        "$haiku_prov" "$haiku_model" "$subagent_prov" "$subagent_model"
+        "$haiku_prov" "$haiku_model" "$subagent_prov" "$subagent_model" \n            "$fable_prov" "$fable_model"
 
     echo "  Slot mappings:"
     while IFS=' ' read -r slot prov model; do
@@ -1415,10 +1421,11 @@ case "$ACTION" in
                 sonnet) sonnet_prov="$prov"; sonnet_model="$model" ;;
                 haiku) haiku_prov="$prov"; haiku_model="$model" ;;
                 subagent) subagent_prov="$prov"; subagent_model="$model" ;;
+            fable) fable_prov="$prov"; fable_model="$model" ;;
             esac
         done <<< "$slot_data"
         init_slot_overrides "$opus_prov" "$opus_model" "$sonnet_prov" "$sonnet_model" \
-            "$haiku_prov" "$haiku_model" "$subagent_prov" "$subagent_model"
+            "$haiku_prov" "$haiku_model" "$subagent_prov" "$subagent_model" \n            "$fable_prov" "$fable_model"
 
         # Get actual models from overrides
         opus_m="" sonnet_m="" haiku_m="" sub_m=""
@@ -1426,6 +1433,9 @@ case "$ACTION" in
         sonnet_m=$(get_slot_model "sonnet" "${sonnet_prov}:${sonnet_model}")
         haiku_m=$(get_slot_model "haiku" "${haiku_prov}:${haiku_model}")
         sub_m=$(get_slot_model "subagent" "${subagent_prov}:${subagent_model}")
+        fable_m=$(get_slot_model "fable" "${fable_prov}:${fable_model}")
+
+
 
         echo "  Launching remote control..."
         echo ""
@@ -1438,7 +1448,7 @@ case "$ACTION" in
             fi
         fi
 
-        set_cc_env "$proxy_port" "$opus_m" "$sonnet_m" "$haiku_m" "$sub_m" "$opus_model"
+        set_cc_env "$proxy_port" "$opus_m" "$sonnet_m" "$haiku_m" "$sub_m" "$fable_m" "$opus_model"
         claude --effort "$EFFORT" --dangerously-skip-permissions remote-control "$@"
         claude_exit=$?
         if ! $PERSIST; then
@@ -1515,10 +1525,11 @@ case "$ACTION" in
                 sonnet) sonnet_prov="$prov"; sonnet_model="$model" ;;
                 haiku) haiku_prov="$prov"; haiku_model="$model" ;;
                 subagent) subagent_prov="$prov"; subagent_model="$model" ;;
+            fable) fable_prov="$prov"; fable_model="$model" ;;
             esac
         done <<< "$slot_data"
         init_slot_overrides "$opus_prov" "$opus_model" "$sonnet_prov" "$sonnet_model" \
-            "$haiku_prov" "$haiku_model" "$subagent_prov" "$subagent_model"
+            "$haiku_prov" "$haiku_model" "$subagent_prov" "$subagent_model" \n            "$fable_prov" "$fable_model"
 
         # Resolve actual models from overrides
         opus_m="" sonnet_m="" haiku_m="" sub_m=""
@@ -1526,6 +1537,9 @@ case "$ACTION" in
         sonnet_m=$(get_slot_model "sonnet" "${sonnet_prov}:${sonnet_model}")
         haiku_m=$(get_slot_model "haiku" "${haiku_prov}:${haiku_model}")
         sub_m=$(get_slot_model "subagent" "${subagent_prov}:${subagent_model}")
+        fable_m=$(get_slot_model "fable" "${fable_prov}:${fable_model}")
+
+
 
         # Show routing
         echo "  Routing:"
@@ -1542,7 +1556,7 @@ case "$ACTION" in
             fi
         fi
 
-        set_cc_env "$proxy_port" "$opus_m" "$sonnet_m" "$haiku_m" "$sub_m" "$opus_model"
+        set_cc_env "$proxy_port" "$opus_m" "$sonnet_m" "$haiku_m" "$sub_m" "$fable_m" "$opus_model"
 
         trap cleanup_proxy EXIT
 
@@ -1647,10 +1661,11 @@ case "$ACTION" in
                 sonnet) sonnet_prov="$prov"; sonnet_model="$model" ;;
                 haiku) haiku_prov="$prov"; haiku_model="$model" ;;
                 subagent) subagent_prov="$prov"; subagent_model="$model" ;;
+            fable) fable_prov="$prov"; fable_model="$model" ;;
             esac
         done <<< "$slot_data"
         init_slot_overrides "$opus_prov" "$opus_model" "$sonnet_prov" "$sonnet_model" \
-            "$haiku_prov" "$haiku_model" "$subagent_prov" "$subagent_model"
+            "$haiku_prov" "$haiku_model" "$subagent_prov" "$subagent_model" \n            "$fable_prov" "$fable_model"
 
         # Resolve actual models from overrides
         opus_m="" sonnet_m="" haiku_m="" sub_m=""
@@ -1658,6 +1673,9 @@ case "$ACTION" in
         sonnet_m=$(get_slot_model "sonnet" "${sonnet_prov}:${sonnet_model}")
         haiku_m=$(get_slot_model "haiku" "${haiku_prov}:${haiku_model}")
         sub_m=$(get_slot_model "subagent" "${subagent_prov}:${subagent_model}")
+        fable_m=$(get_slot_model "fable" "${fable_prov}:${fable_model}")
+
+
 
         if $DASHBOARD; then
             echo "  Dashboard: http://127.0.0.1:${proxy_port}/dashboard"
@@ -1667,7 +1685,7 @@ case "$ACTION" in
             fi
         fi
 
-        set_cc_env "$proxy_port" "$opus_m" "$sonnet_m" "$haiku_m" "$sub_m" "$opus_model"
+        set_cc_env "$proxy_port" "$opus_m" "$sonnet_m" "$haiku_m" "$sub_m" "$fable_m" "$opus_model"
 
         trap cleanup_proxy EXIT
 
