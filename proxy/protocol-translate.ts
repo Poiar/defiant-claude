@@ -55,6 +55,7 @@ interface OpenAIMessage {
     role: string;
     content?: string | Array<{ type: string; text?: string; image_url?: { url: string } }>;
     tool_calls?: OpenAIToolCall[];
+    reasoning_content?: string;
 }
 
 interface OpenAIRequestBody {
@@ -201,11 +202,17 @@ function convertMessage(msg: AnthropicMessage): OpenAIMessage | OpenAIMessage[] 
             // Filter out tool results without a valid tool_use_id to avoid
             // OpenAI API 400 errors from an empty tool_call_id string.
             const validToolResults = toolResults.filter(block => block.tool_use_id);
-            const result: OpenAIMessage[] = validToolResults.map(block => ({
-                role: 'tool',
-                tool_call_id: block.tool_use_id,
-                content: stringifyContent(block.content) || '',
-            }));
+            const result: OpenAIMessage[] = validToolResults.map(block => {
+                // Normalize content before stringifyContent: null → '', string → pass,
+                // array → pass. Avoids producing the string "null" for undefined content.
+                const raw = block.content;
+                const normalized = (raw == null) ? '' : raw;
+                return {
+                    role: 'tool',
+                    tool_call_id: block.tool_use_id,
+                    content: stringifyContent(normalized as string | ContentBlock[]) || '',
+                };
+            });
             if (textBlocks.length > 0) {
                 result.push({ role: 'user', content: textBlocks.map(b => b.text).join('\n') });
             }
@@ -218,10 +225,19 @@ function convertMessage(msg: AnthropicMessage): OpenAIMessage | OpenAIMessage[] 
                 if (block.type === 'text') {
                     content.push({ type: 'text', text: block.text });
                 } else if (block.type === 'image' && block.source) {
-                    content.push({
-                        type: 'image_url',
-                        image_url: { url: `data:${block.source.media_type};base64,${block.source.data}` },
-                    });
+                    // Anthropic supports both 'base64' and 'url' source types.
+                    // URL sources pass the URL directly; base64 sources construct a data URI.
+                    if (block.source.type === 'url' && (block.source as any).url) {
+                        content.push({
+                            type: 'image_url',
+                            image_url: { url: (block.source as any).url as string },
+                        });
+                    } else {
+                        content.push({
+                            type: 'image_url',
+                            image_url: { url: `data:${block.source.media_type};base64,${block.source.data}` },
+                        });
+                    }
                 }
             }
             return { role: 'user', content };
@@ -256,6 +272,9 @@ function convertMessage(msg: AnthropicMessage): OpenAIMessage | OpenAIMessage[] 
         return result;
     }
 
+    // Null/undefined content → omit content field entirely (valid OpenAI shape for
+    // pure tool_calls responses). String(content) would produce "null" or "undefined".
+    if (msg.content == null) return { role: msg.role };
     return { role: msg.role, content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content) };
 }
 
@@ -263,8 +282,13 @@ function translateToolChoice(tc: unknown): unknown {
     if (tc === 'auto' || tc === 'any') {
         return tc === 'any' ? 'required' : 'auto';
     }
-    if (tc && typeof tc === 'object' && (tc as { type: string }).type === 'tool' && (tc as { name: string }).name) {
-        return { type: 'function', function: { name: (tc as { name: string }).name } };
+    if (tc && typeof tc === 'object') {
+        const obj = tc as { type?: string; name?: string };
+        // { type: 'any' } → 'required' (same as string 'any' shortcut)
+        if (obj.type === 'any') return 'required';
+        if (obj.type === 'tool' && obj.name) {
+            return { type: 'function', function: { name: obj.name } };
+        }
     }
     return 'auto';
 }
@@ -278,18 +302,26 @@ export function translateResponse(openaiBody: OpenAIResponseBody, model: string)
     const usage = openaiBody.usage || {};
 
     const content: ContentBlock[] = [];
+
+    // Emit thinking block for non-streaming reasoning_content (DeepSeek R1, etc.)
+    if (message && message.reasoning_content && message.reasoning_content.length > 0) {
+        content.push({ type: 'thinking', thinking: message.reasoning_content });
+    }
+
     if (message && message.content != null) {
         let contentText: string;
         if (typeof message.content === 'string') {
             contentText = message.content;
         } else if (Array.isArray(message.content)) {
             contentText = message.content.map((b: any) => b.text || '').join('\n');
-        } else if (message.content != null) {
-            contentText = String(message.content);
         } else {
-            contentText = '';
+            contentText = String(message.content);
         }
-        content.push({ type: 'text', text: contentText });
+        // Skip empty text block when tool_calls are present — Anthropic clients
+        // expect content to contain only tool_use blocks for pure tool-call responses.
+        if (contentText.length > 0 || !(message.tool_calls && message.tool_calls.length > 0)) {
+            content.push({ type: 'text', text: contentText });
+        }
     }
     if (message && message.tool_calls) {
         for (const tc of message.tool_calls) {
@@ -471,12 +503,14 @@ export function createStreamTransformer(model: string): Transform {
         private _buf = '';
 
         _transform(chunk: Buffer | string, _encoding: string, callback: TransformCallback): void {
-            this._buf = (this._buf || '') + chunk.toString();
-            if (this._buf.length > 1_048_576) {
-                log.error(null, 'SSE buffer exceeded 1MB in stream transformer -- aborting');
-                this.destroy(new Error('SSE buffer too large'));
+            // Check buffer BEFORE concatenation to avoid false-positive overflow
+            // from accumulated partial events that haven't been delimited by \n\n.
+            const newData = chunk.toString();
+            if (this._buf.length + newData.length > 1_048_576) {
+                this.destroy(new Error('SSE buffer exceeded 1MB'));
                 return;
             }
+            this._buf += newData;
             const parts = this._buf.split('\n\n');
             this._buf = parts.pop() || '';
             let output = '';
@@ -494,9 +528,21 @@ export function createStreamTransformer(model: string): Transform {
             if (this._buf && this._buf.trim()) {
                 if (!state.finished) output += processEvent(this._buf.trim());
             }
-            // Only emit finishStream if the stream successfully started;
-            // otherwise the output would be an incomplete message.
-            if (!state.finished && state.started) {
+            // Emit finishStream if stream started; otherwise emit minimal start+stop
+            // so Anthropic clients don't receive orphaned message_stop without message_start.
+            if (!state.finished) {
+                if (!state.started) {
+                    state.started = true;
+                    output += emit('message_start', {
+                        type: 'message_start',
+                        message: {
+                            id: state.messageId, type: 'message', role: 'assistant',
+                            content: [], model: state.model,
+                            stop_reason: null, stop_sequence: null,
+                            usage: { input_tokens: 0, output_tokens: 0 },
+                        },
+                    });
+                }
                 output += finishStream('end_turn');
             }
             callback(null, output);
