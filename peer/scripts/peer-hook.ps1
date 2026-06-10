@@ -1,5 +1,5 @@
-# Stop hook: check for unread peer messages and write an alert file.
-# The statusline reads this file to show an alert indicator.
+# Stop hook: check for unread peer messages from per-session inbox file.
+# Writes an alert file for the statusline to show an indicator.
 # Usage: peer-hook.ps1  (called by Claude Code Stop hook)
 
 $ErrorActionPreference = 'SilentlyContinue'
@@ -10,25 +10,23 @@ if (-not $sessionId) { exit 0 }
 $uuid8 = $sessionId.Substring(0, 8)
 $home = $env:USERPROFILE
 
-# ── Count unread peer messages ───────────────────────────────────────
+# ── Count unread from per-session inbox file ──────────────────────────
 $unread = 0
-$logPath = "$home\.claude\peer-messages.jsonl"
-$cursorPath = "$home\.claude\peer-cursor-$uuid8.txt"
+$inboxPath = "$home\.claude\peer-inbox-$uuid8.jsonl"
+$cursorPath = "$home\.claude\peer-inbox-cursor-$uuid8.txt"
 
-if (Test-Path $logPath) {
+if (Test-Path $inboxPath) {
   $lastSeen = $null
   if (Test-Path $cursorPath) {
     try { $lastSeen = Get-Date (Get-Content $cursorPath -Raw).Trim() } catch {}
   }
 
-  $lines = Get-Content $logPath -Tail 50 -ErrorAction SilentlyContinue
+  $lines = Get-Content $inboxPath -Tail 50 -ErrorAction SilentlyContinue
   foreach ($line in $lines) {
     try {
       $m = $line | ConvertFrom-Json
-      if ($m.to -eq $uuid8) {
-        $msgDate = Get-Date $m.at
-        if (-not $lastSeen -or $msgDate -gt $lastSeen) { $unread++ }
-      }
+      $msgDate = Get-Date $m.at
+      if (-not $lastSeen -or $msgDate -gt $lastSeen) { $unread++ }
     } catch {}
   }
 }
@@ -41,8 +39,7 @@ if ($unread -gt 0) {
   if (Test-Path $alertFile) { Remove-Item $alertFile }
 }
 
-
-# ── Periodic cleanup: remove stale registrations ──────────────────────
+# ── Periodic cleanup: remove stale registrations + orphan inboxes ─────
 # Only run ~1 in 5 times to avoid work on every stop
 if ((Get-Random -Maximum 5) -eq 0) {
   & "$PSScriptRoot\peer-cleanup.ps1" | Out-Null

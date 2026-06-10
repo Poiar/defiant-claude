@@ -3,67 +3,75 @@ name: peer-msg
 description: Send a message to another running Claude Code session. Triggers: "send a message to", "tell the other session", "message tab", "notify", "ask the session in tab", "peer msg", "send to tab".
 ---
 
-# Peer Messaging
+# Peer Messaging — File-Based Delivery
 
-Format: `/peer-msg X → Y #N: msg` (new) or `re: N: reply` (reply).
-
-Names are the 8-char UUID from `CLAUDE_CODE_SESSION_ID`. No invented names.
-Registration is **automatic** — tab ID is detected from `TABBY_AGENT_CHAT_TAB_ID`.
+Messages are written to per-session inbox files. Only a tiny `/peer-check <uuid>` ping
+travels through stdin via `send_to_tab`. No message bodies in stdin — no queue bottleneck.
 
 ## Setup (automatic)
 
-Run this once — caches your identity and auto-registers your tab:
 ```
 ~/.claude/scripts/peer-id.ps1
 ```
 
-## Sending a message
+## Sending
 
-**1. Look up target's tab** — `~/.claude/scripts/peer-tab.ps1 <their-8char-uuid>`. If empty, they haven't registered yet — send a discovery ping to all tabs with `claude.exe`.
-
-**2. Get next msgId** — `~/.claude/scripts/peer-next.ps1`
-
-**3. Send** — ALWAYS `mode: paste, submit: true`:
+**1. Write message to target's inbox file + get ping:**
 ```
-send_to_tab <target-tab-uuid> "/peer-msg <your-uuid> → <their-uuid> #<N>: <msg>"
+$ping = ~/.claude/scripts/peer-send.ps1 -To <their-8char-uuid> -Msg "<msg>" -Type <type> [-Refs <N>]
 ```
+This writes to `peer-inbox-<target>.jsonl` and returns `/peer-check <your-uuid>`.
 
-**4. Log** — `~/.claude/scripts/peer-log.ps1 -Dir out -From <your-uuid> -To <their-uuid> -Msg "<msg>" -Type <type> -MsgId <N>`
-
-## Receiving a message
-
-When you see `/peer-msg X → Y` in your prompt:
-
-**1. Check target** — If Y != your UUID, run this and STOP:
+**2. Look up target's tab:**
 ```
-~/.claude/scripts/peer-next.ps1 | set $n
-~/.claude/scripts/peer-log.ps1 -Dir in -From X -To Y -Msg "Not me — my UUID is <your-uuid>" -Type correct -MsgId $n
-send_to_tab <sender-tab-uuid> "/peer-msg <your-uuid> → X re: <their-msgId> [correct] my UUID is <your-uuid>. Resend to me."
+~/.claude/scripts/peer-tab.ps1 <their-8char-uuid>
+```
+If empty, they're unregistered — ping all tabs with `claude.exe`.
+
+**3. Deliver the ping via `send_to_tab`:**
+```
+send_to_tab <target-tab-uuid> $ping     # mode: paste, submit: true
 ```
 
-CRITICAL: The reply MUST contain "my UUID is <your-uuid>" so the sender can correct their registry.
-Do NOT echo the original message. Do NOT process the message further.
-The sender will run `~/.claude/scripts/peer-correct.ps1 -WrongUuid Y -CorrectUuid <your-uuid>` and re-send.
+**Done.** The message body never touched stdin.
 
-**2. Look up sender's tab** — `~/.claude/scripts/peer-tab.ps1 <sender-uuid>`
+## Receiving
 
-**3. Get next msgId** — `~/.claude/scripts/peer-next.ps1`
+When you see `/peer-check <sender-uuid>`:
 
-**4. Reply** — ALWAYS `mode: paste, submit: true`:
+**1. Read unseen messages from YOUR inbox file:**
 ```
-send_to_tab <sender-tab-uuid> "/peer-msg <your-uuid> → <sender-uuid> re: <original-N>: <reply>"
+~/.claude/scripts/peer-id.ps1
+~/.claude/scripts/peer-inbox.ps1 -Unseen -Json
 ```
 
-**5. Log** — `~/.claude/scripts/peer-log.ps1 -Dir in -From <sender-uuid> -To <your-uuid> -Msg "<msg>" -Type <type> -MsgId <N> [-Refs <original-N>]`
+**2. Process each message:**
+- If `to` matches you → log + reply (see below)
+- If `to` doesn't match you → reply with `[correct]`:
+  ```
+  peer-send.ps1 -To <from> -Msg "Wrong UUID — my UUID is <your-uuid>" -Type correct -Refs <msgId>
+  ```
+  (Rare — only happens if someone has a stale inbox file for your UUID.)
+
+**3. Replying to a message:**
+```
+$pong = ~/.claude/scripts/peer-send.ps1 -To <from> -Msg "<reply>" -Type chat -Refs <N>
+$tab = ~/.claude/scripts/peer-tab.ps1 <from>
+send_to_tab $tab $pong
+```
+
+**4. ALWAYS ack the pinger** (even if inbox was empty):
+```
+$stab = ~/.claude/scripts/peer-tab.ps1 <sender-uuid>
+send_to_tab $stab "/peer-check <your-uuid>"
+```
+This verifies the tab→session mapping. If the sender expected `X` but `Y` responds,
+they know the mapping is stale and run `peer-correct.ps1`.
 
 ## Receiving a correction
 
-When you receive `[correct]: Wrong UUID — my UUID is xxx`:
-
-**MANDATORY — fix BEFORE anything else:**
-
+When you receive `[correct]`:
 ```
 ~/.claude/scripts/peer-correct.ps1 -WrongUuid <your-target> -CorrectUuid <their-real-uuid>
 ```
-
-Then re-send your original message to the corrected UUID.
+Then re-send your original message.
