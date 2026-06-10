@@ -3,12 +3,30 @@ name: peer-msg
 description: Send a message to another running Claude Code session. Triggers: "send a message to", "tell the other session", "message tab", "notify", "ask the session in tab", "peer msg", "send to tab".
 ---
 
-# Peer Messaging — File-Based Delivery
+# Peer Messaging — File-Based, Fire-and-Forget
 
-Messages are written to per-session inbox files. Only a tiny `/peer-check <uuid>` ping
-travels through stdin via `send_to_tab`. No message bodies in stdin — no queue bottleneck.
+Messages are written to per-session inbox files. Only `/peer-check` (no args)
+travels through stdin — "you have mail." No sender identity in the ping.
+Read your inbox to find out who wrote.
 
-## Setup (automatic)
+## Protocol
+
+```
+Send:   peer-send.ps1 → peer-inbox-<target>.jsonl  (write)
+        send_to_tab     "/peer-check"               (ping: 13 bytes)
+
+Receive: /peer-check → peer-inbox.ps1 -Unseen       (read)
+         For each msg: log, reply if needed
+         Reply = peer-send.ps1 + send_to_tab        (same mechanism)
+
+Done.   Reply arriving in original sender's inbox IS delivery confirmation.
+        No ack-of-ack. Silent ping → no response. No loops.
+```
+
+The pattern matches AMQP (inbox = queue), SMTP (delivery to inbox = confirmation),
+and the actor model (reply is a new message, not a protocol ack).
+
+## Setup
 
 ```
 ~/.claude/scripts/peer-id.ps1
@@ -16,56 +34,28 @@ travels through stdin via `send_to_tab`. No message bodies in stdin — no queue
 
 ## Sending
 
-**1. Write message to target's inbox file + get ping:**
 ```
-$ping = ~/.claude/scripts/peer-send.ps1 -To <their-8char-uuid> -Msg "<msg>" -Type <type> [-Refs <N>]
+$ping = ~/.claude/scripts/peer-send.ps1 -To <their-8char-uuid> -Msg "<msg>" [-Type chat|query|...] [-Refs <N>]
+$tab  = ~/.claude/scripts/peer-tab.ps1 <their-8char-uuid>
+send_to_tab $tab $ping       # mode: paste, submit: true
 ```
-This writes to `peer-inbox-<target>.jsonl` and returns `/peer-check <your-uuid>`.
-
-**2. Look up target's tab:**
-```
-~/.claude/scripts/peer-tab.ps1 <their-8char-uuid>
-```
-If empty, they're unregistered — ping all tabs with `claude.exe`.
-
-**3. Deliver the ping via `send_to_tab`:**
-```
-send_to_tab <target-tab-uuid> $ping     # mode: paste, submit: true
-```
-
-**Done.** The message body never touched stdin.
 
 ## Receiving
 
-When you see `/peer-check <sender-uuid>`:
+When you see `/peer-check`:
 
-**1. Read unseen messages from YOUR inbox file:**
 ```
 ~/.claude/scripts/peer-id.ps1
 ~/.claude/scripts/peer-inbox.ps1 -Unseen -Json
 ```
 
-**2. Process each message:**
-- If `to` matches you → log + reply (see below)
-- If `to` doesn't match you → reply with `[correct]`:
-  ```
-  peer-send.ps1 -To <from> -Msg "Wrong UUID — my UUID is <your-uuid>" -Type correct -Refs <msgId>
-  ```
-  (Rare — only happens if someone has a stale inbox file for your UUID.)
+Process each message. Reply only if you have something to say.
+The reply uses the exact same send mechanism — write to their inbox, ping their tab.
 
-**3. Replying to a message:**
-```
-$pong = ~/.claude/scripts/peer-send.ps1 -To <from> -Msg "<reply>" -Type chat -Refs <N>
-$tab = ~/.claude/scripts/peer-tab.ps1 <from>
-send_to_tab $tab $pong
-```
+## Correction
 
-**3. Only send a ping if you actually wrote something to their inbox.** If you replied or sent a correction, deliver the ping. If the inbox was empty or the messages didn't warrant a reply, do NOTHING. Silent pings never get a response — that prevents infinite ACK loops.
-
-## Receiving a correction
-
-When you receive `[correct]`:
+If you receive a `[correct]` message:
 ```
-~/.claude/scripts/peer-correct.ps1 -WrongUuid <your-target> -CorrectUuid <their-real-uuid>
+~/.claude/scripts/peer-correct.ps1 -WrongUuid <old> -CorrectUuid <real>
 ```
-Then re-send your original message.
+Then re-send.
