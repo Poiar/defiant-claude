@@ -1,8 +1,10 @@
-# Prepare a peer message command. Outputs the formatted text ready for send_to_tab.
+# File-based peer message delivery.
+# Writes the full message to ~/.claude/peer-inbox-<target>.jsonl,
+# returns a tiny wake-up ping for send_to_tab.
+#
 # Usage: peer-send.ps1 -To "e886a337" -Msg "can you check login.ts?" -Type delegate
-#        peer-send.ps1 -To "e886a337" -Msg "status?" -Type query
-#        peer-send.ps1 -To "e886a337" -Msg "hey!"                    # defaults to chat
-#        peer-send.ps1 -To "e886a337" -Msg "ack" -Refs "5"           # reply to msg #5
+#        $ping = peer-send.ps1 -To "e886a337" -Msg "status?" -Type query
+#        send_to_tab <tab-id> $ping
 param(
   [Parameter(Mandatory)][string]$To,
   [Parameter(Mandatory)][string]$Msg,
@@ -10,26 +12,31 @@ param(
   [string]$Refs
 )
 
-# Single source of truth: peer-id.ps1 handles UUID, name, port, file naming
+$ErrorActionPreference = 'Stop'
 $me = & "$PSScriptRoot\peer-id.ps1" | ConvertFrom-Json
 if ($me.uuid -eq "unknown") { throw "Not a Claude Code session (CLAUDE_CODE_SESSION_ID not set)" }
 
-# Atomic increment via peer-next.ps1 (uses same peer-id.ps1 internally)
 $n = & "$PSScriptRoot\peer-next.ps1"
 
-# Log outbound
-$entry = @{
-  dir = "out"; from = $me.name; to = $To; msg = $Msg; type = $Type
+# 1. Write to target's per-session inbox file
+$inbox = "$env:USERPROFILE\.claude\peer-inbox-$To.jsonl"
+$entry = [ordered]@{
+  from  = $me.name
+  to    = $To
+  msg   = $Msg
+  type  = $Type
   msgId = $n
-  refs = if ($Refs) { $Refs } else { $null }
-  at = (Get-Date -Format "o")
+  refs  = if ($Refs) { $Refs } else { $null }
+  at    = (Get-Date -Format "o")
 } | ConvertTo-Json -Compress
-Add-Content "$env:USERPROFILE\.claude\peer-messages.jsonl" $entry
+Add-Content $inbox $entry
 
-# Output the send_to_tab payload
-$idPrefix = if ($Refs) { "re: $Refs" } else { "#${n}" }
-if ($Type -eq "chat") {
-  Write-Output "/peer-msg $($me.name) → $To ${idPrefix}: $Msg"
+# 2. Log to shared audit trail
+if ($Refs) {
+  & "$PSScriptRoot\peer-log.ps1" -Dir out -From $me.name -To $To -Msg $Msg -Type $Type -MsgId $n -Refs $Refs
 } else {
-  Write-Output "/peer-msg $($me.name) → $To ${idPrefix} [$Type]: $Msg"
+  & "$PSScriptRoot\peer-log.ps1" -Dir out -From $me.name -To $To -Msg $Msg -Type $Type -MsgId $n
 }
+
+# 3. Return only the wake-up ping (sender UUID for ACK/verification)
+Write-Output "/peer-check $($me.name)"
