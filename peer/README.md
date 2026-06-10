@@ -2,8 +2,11 @@
 
 Cross-session messaging between Claude Code instances via Tabby terminal tabs.
 
-**Source of truth:** `~/.claude/scripts/peer-*.ps1` and `~/.claude/skills/peer-*/skill.md`.
-This directory is a versioned snapshot — edit the originals in `~/.claude/`, not here.
+**Source of truth:** this directory. Edit here, then deploy:
+```
+.\peer\install.ps1           # copy to ~/.claude/
+.\peer\install.ps1 -DryRun   # preview what changed
+```
 
 ## Architecture
 
