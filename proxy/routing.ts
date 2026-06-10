@@ -33,6 +33,8 @@ export interface ProviderEntry {
     authHeader?: string;
     format?: string;
     fallback?: string[];
+    extraHeaders?: Record<string, string>;
+    streamUsageReporting?: string;
 }
 
 export interface RoutingConfig {
