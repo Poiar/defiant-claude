@@ -50,17 +50,8 @@ if ((Test-Path $tabsFile) -and -not $WhatIf) {
   if ($changed) { $cleaned | ConvertTo-Json -Compress | Out-File $tabsFile -Encoding utf8 }
 }
 
-# 4. Clean orphaned per-session inbox files
-Get-ChildItem "$home\.claude\peer-inbox-*.jsonl" -ErrorAction SilentlyContinue | ForEach-Object {
-  $name = $_.BaseName -replace '^peer-inbox-', ''
-  if ($name -and -not $alive[$name]) {
-    if ($WhatIf) { Write-Output "Would remove inbox: $($_.Name)" }
-    else {
-      Remove-Item $_.FullName -ErrorAction SilentlyContinue
-      Remove-Item "$home\.claude\peer-inbox-cursor-$name.txt" -ErrorAction SilentlyContinue
-    }
-  }
-}
+# 4. Inbox files are self-cleaning via cursor tracking — never delete them.
+# Deleting an inbox file silently destroys messages that haven't been read yet.
 
 if ($removed.Count -gt 0) {
   Write-Output "Cleaned $($removed.Count) stale registrations: $($removed -join ', ')"
