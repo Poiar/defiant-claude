@@ -213,10 +213,13 @@ export function recordStat(providerKey: string | null | undefined, success: bool
         s.requests++;
         s.totalMs += ms;
         s.lastRequest = Date.now();
-        if (success) s.successes++; else s.fails++;
-        // Exclude HTTP 429 (rate limited) from circuit breaker failure counting.
-        // 429 means the provider is healthy but throttling us — opening the breaker
-        // would block all requests and make the rate problem worse.
+        if (success) s.successes++; else if (statusCode !== 429) s.fails++;
+        // Do NOT count HTTP 429 (rate limited) as a failure. Rate limiting means the
+        // provider is healthy and responsive — just throttling us. Counting 429s as
+        // failures inflates the failure rate and causes false circuit breaker opens:
+        // 19 of 20 requests returning 429 would show 95% failure rate when the real
+        // non-429 failure rate is only 5%. Opening the breaker then blocks ALL requests
+        // to a healthy provider, making the rate problem worse by routing to fallbacks.
         if (!success && statusCode !== 429 && isFailureRateAboveThreshold(s.fails, s.requests)) {
             openCircuitBreaker(providerKey);
         }
