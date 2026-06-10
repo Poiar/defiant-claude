@@ -147,8 +147,10 @@ function applyProviderMetadata(routing: RoutingConfig, providersData: ProvidersD
             existing.fallback = def.fallback; changed = true;
         }
         if (def.extraHeaders) {
-            if (!existing.extraHeaders || JSON.stringify(existing.extraHeaders) !== JSON.stringify(def.extraHeaders)) {
-                existing.extraHeaders = def.extraHeaders; changed = true;
+            // Always apply headers from providers.json, regardless of existing state
+            const newHeaders = JSON.stringify(def.extraHeaders);
+            if (!existing.extraHeaders || JSON.stringify(existing.extraHeaders) !== newHeaders) {
+                existing.extraHeaders = { ...def.extraHeaders }; changed = true;
             }
         }
         if (def.streamUsageReporting !== undefined) {
@@ -156,6 +158,14 @@ function applyProviderMetadata(routing: RoutingConfig, providersData: ProvidersD
             if (existing.streamUsageReporting !== expected) {
                 existing.streamUsageReporting = expected; changed = true;
             }
+        }
+    }
+
+    // Remove providers that exist in routing but not in providers.json
+    for (const key of Object.keys(routing.providers)) {
+        if (!providersData.providers[key]) {
+            delete routing.providers[key];
+            changed = true;
         }
     }
 

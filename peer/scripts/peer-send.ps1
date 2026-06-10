@@ -18,9 +18,12 @@ if ($me.uuid -eq "unknown") { throw "Not a Claude Code session (CLAUDE_CODE_SESS
 
 $n = & "$PSScriptRoot\peer-next.ps1"
 
-# 1. Write to target's per-session inbox file
+# 1. Write to target's per-session inbox file (mutex-protected)
 $inbox = "$env:USERPROFILE\.claude\peer-inbox-$To.jsonl"
-$entry = [ordered]@{
+$mtx = New-Object System.Threading.Mutex($false, "Global\peer-inbox-$To")
+try {
+  [void]$mtx.WaitOne()
+  $entry = [ordered]@{
   from  = $me.name
   to    = $To
   msg   = $Msg
@@ -29,7 +32,11 @@ $entry = [ordered]@{
   refs  = if ($Refs) { $Refs } else { $null }
   at    = (Get-Date -Format "o")
 } | ConvertTo-Json -Compress
-Add-Content $inbox $entry
+  Add-Content $inbox $entry
+} finally {
+  [void]$mtx.ReleaseMutex()
+  $mtx.Dispose()
+}
 
 # 2. Log to shared audit trail
 if ($Refs) {
