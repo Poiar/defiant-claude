@@ -207,7 +207,7 @@ export function recordStat(providerKey: string | null | undefined, success: bool
     if (!providerKey) return;
     try {
         if (!providerStats[providerKey]) {
-            providerStats[providerKey] = { requests: 0, successes: 0, fails: 0, totalMs: 0, inputTokens: 0, outputTokens: 0 };
+            providerStats[providerKey] = { requests: 0, successes: 0, fails: 0, totalMs: 0, inputTokens: 0, outputTokens: 0, cacheHitTokens: 0, cacheMissTokens: 0 };
         }
         const s = providerStats[providerKey];
         s.requests++;
@@ -233,7 +233,7 @@ export function recordUsage(providerKey: string | null | undefined, inputTokens:
     if (!providerKey) return;
     try {
         if (!providerStats[providerKey]) {
-            providerStats[providerKey] = { requests: 0, successes: 0, fails: 0, totalMs: 0, inputTokens: 0, outputTokens: 0 };
+            providerStats[providerKey] = { requests: 0, successes: 0, fails: 0, totalMs: 0, inputTokens: 0, outputTokens: 0, cacheHitTokens: 0, cacheMissTokens: 0 };
         }
         const s = providerStats[providerKey];
         s.inputTokens += inputTokens || 0;
@@ -309,6 +309,13 @@ export function getFullHealthSnapshot(concurrencyStatus: unknown, rateLimiterSta
             } else {
                 providers[k].avgTTFT = 0;
                 providers[k].avgTPS = 0;
+            }
+
+            const hit = providerStats[k]?.cacheHitTokens || 0;
+            const miss = providerStats[k]?.cacheMissTokens || 0;
+            const cacheTotal = hit + miss;
+            if (cacheTotal > 0) {
+                providers[k].cacheHitRate = parseFloat((hit / cacheTotal * 100).toFixed(1));
             }
 
             // Per-provider daily spend (persisted + pending in-memory)
@@ -675,6 +682,15 @@ export async function recordSpend(modelName: string, usage: { prompt_tokens: num
   dailyAccumulator += cost;
   if (providerKey) {
     recordProviderSpend(providerKey, cost);
+    if (typeof usage.cache_hit_tokens === 'number' || typeof usage.cache_miss_tokens === 'number') {
+      try {
+        if (!providerStats[providerKey]) {
+          providerStats[providerKey] = { requests: 0, successes: 0, fails: 0, totalMs: 0, inputTokens: 0, outputTokens: 0, cacheHitTokens: 0, cacheMissTokens: 0 };
+        }
+        providerStats[providerKey].cacheHitTokens += usage.cache_hit_tokens || 0;
+        providerStats[providerKey].cacheMissTokens += usage.cache_miss_tokens || 0;
+      } catch (_) { /* non-fatal */ }
+    }
   }
 
   // Write-ahead journal: persist cost immediately so crashes between
