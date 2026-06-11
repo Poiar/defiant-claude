@@ -950,20 +950,22 @@ if ($Stats) {
         if ($providers.PSObject.Properties.Count -eq 0) {
             Write-Host "  No requests recorded yet." -ForegroundColor DarkGray
         } else {
-            Write-Host "  Provider         Req   OK   Fail   Rate   Avg" -ForegroundColor Yellow
-            Write-Host "  ---------------  ----  ---  -----  -----  ---"
+            Write-Host "  Provider    Req  OK  Fail   Rate  Cache  AvgTime" -ForegroundColor Yellow
+            Write-Host "  ----------  ---  --- -----  -----  -----  -------"
             foreach ($prop in ($providers.PSObject.Properties | Sort-Object Name)) {
                 $k = $prop.Name
                 $v = $prop.Value
                 $rate = if ($v.requests -gt 0) { "{0:P0}" -f ($v.successes / $v.requests) } else { "—" }
                 $avg = if ($v.avgMs -gt 0) { "$($v.avgMs)ms" } else { "—" }
+                $cacheStr = if ($v.cacheHitRate) { "$($v.cacheHitRate)%" } else { "—" }
                 $healthIcon = if ($v.fails -eq 0) { "●" } elseif ($v.requests -lt 3) { "○" } elseif ($v.fails / $v.requests -lt 0.5) { "●" } else { "◐" }
                 $color = if ($v.fails -eq 0) { "Green" } elseif ($v.requests -lt 3) { "DarkGray" } elseif ($v.fails / $v.requests -lt 0.25) { "Green" } elseif ($v.fails / $v.requests -lt 0.5) { "Yellow" } else { "Red" }
-                Write-Host ("  {0,-3} {1,-14}  {2,4}  {3,3}  {4,5}  {5,5}  {6,4}" -f $healthIcon,
-                    ($k.PadRight(14)), $v.requests, $v.successes, $v.fails, $rate, $avg) -ForegroundColor $color
+                Write-Host ("  {0,-3} {1,-8}  {2,3}  {3,3} {4,5}  {5,5}  {6,5}  {7,5}" -f $healthIcon,
+                    ($k.PadRight(8)), $v.requests, $v.successes, $v.fails, $rate, $cacheStr, $avg) -ForegroundColor $color
             }
             Write-Host ""
             Write-Host "  ● healthy  ○ new/unknown  ◐ degraded (>50% failures)" -ForegroundColor DarkGray
+            Write-Host "  Cache: KV disk cache hit % (DeepSeek: 98%+ typical)" -ForegroundColor DarkGray
         }
     } catch {
         Write-Host "  Failed to reach proxy:" $_.Exception.Message -ForegroundColor Red
@@ -1027,16 +1029,19 @@ if ($Cost) {
     Write-Host "`n  Model Pricing (per million tokens)" -ForegroundColor Cyan
     Write-Host "  ===================================" -ForegroundColor DarkGray
     Write-Host ""
-    Write-Host "  Model                                      Input/M    Output/M" -ForegroundColor Yellow
-    Write-Host "  ---------------                            --------   --------"
+    Write-Host "  Model                                      Input/M     CacheHit/M  CacheMiss/M  Output/M" -ForegroundColor Yellow
+    Write-Host "  ---------------                            --------    ----------  -----------  --------"
     $costData = $Registry.pricing
     if ($costData) {
         foreach ($prop in $costData.PSObject.Properties) {
             $model = $prop.Name
             $p = $prop.Value
-            $inp = if ($p.input -eq 0) { "free" } else { "`$$($p.input.ToString('F2'))" }
+            $inp = if ($p.input -eq 0) { "free" } else { "`$$($p.input.ToString('F3'))" }
             $out = if ($p.output -eq 0) { "free" } else { "`$$($p.output.ToString('F2'))" }
-            Write-Host ("  {0,-37} {1,-10} {2}" -f $model, $inp, $out) -ForegroundColor Green
+            $cacheHit = if ($p.input_cache_hit) { "`$$($p.input_cache_hit.ToString('F4'))" } else { "—" }
+            $cacheMiss = if ($p.input_cache_miss) { "`$$($p.input_cache_miss.ToString('F3'))" } else { "—" }
+            $displayName = if ($model.Length -gt 37) { $model.Substring(0, 37) } else { $model }
+            Write-Host ("  {0,-37} {1,-10} {2,-10} {3,-11} {4}" -f $displayName, $inp, $cacheHit, $cacheMiss, $out) -ForegroundColor Green
         }
     } else {
         Write-Host "  (pricing data not available in providers.json)" -ForegroundColor Yellow
