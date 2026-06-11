@@ -314,24 +314,8 @@ function lookupProviderByHost(hostname: string): ProviderDef | null {
     return null;
 }
 
-// Called during config hot-reload to keep extra headers and display names
-// in sync with providers.json without a full proxy restart.
-export function refreshProviderRegistry(): void {
-    try {
-        delete require.cache[require.resolve('./providers.json')];
-        const fresh = require('./providers.json');
-        if (fresh && fresh.providers) {
-            providerRegistry = fresh;
-            providerDisplayNames = {};
-            for (const [key, rawDef] of Object.entries(fresh.providers)) {
-                const rec = rawDef as { displayName?: string };
-                if (rec.displayName) {
-                    providerDisplayNames[key] = rec.displayName;
-                }
-            }
-        }
-    } catch (_) { /* non-fatal — keep stale registry on parse failure */ }
-}
+// Provider registry refresh happens inline in the request handler
+// (throttled every 15s) — see the block after server creation.
 
 // --- HTTP Server ---
 
