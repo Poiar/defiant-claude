@@ -124,108 +124,64 @@ describe('hasPendingToolResult', () => {
     });
 });
 
-// -- Tool-strip retry on 400 --------------------------------------------------
-// Simulates the per-provider retry logic in start-proxy.ts: when a
-// non-Anthropic provider returns HTTP 400 and the request had Anthropic
-// server-side tools converted to custom tools, the proxy strips all tools
-// and retries once.  The model answers from its own knowledge on the retry.
+// -- Tool pre-execute + strip before forwarding ------------------------------
+// The proxy now pre-executes Anthropic server-side tools locally (DuckDuckGo
+// search, SSRF-safe web fetch) and strips all server-side tool definitions
+// before forwarding to non-Anthropic providers like DeepSeek.  This avoids
+// the 400→strip→retry round-trip and gives the model real search results.
 
-describe('400 tool-strip retry path', () => {
+describe('tool pre-execute + strip path', () => {
 
-    test('convertServerTools flags web_search for strip-on-400', () => {
-        const tools = [
+    test('isServerToolType detects web_search_ prefix', () => {
+        expect(isServerToolType('web_search_20260209')).toBe(true);
+        expect(isServerToolType('web_fetch_20260209')).toBe(true);
+        expect(isServerToolType('text_editor_20250728')).toBe(true);
+        expect(isServerToolType(null)).toBe(false);
+        expect(isServerToolType('')).toBe(false);
+    });
+
+    test('Anthropic server tools are filtered out before forwarding', () => {
+        const tools: any[] = [
             { type: 'web_search_20260209', name: 'web_search' },
+            { type: 'web_fetch_20260209', name: 'web_fetch' },
             { type: 'text_editor_20250728', name: 'str_replace_based_edit_tool' },
         ];
-        const conv = convertServerTools(tools);
-        expect(conv.hasWebSearch).toBe(true);
-        expect(conv.hasWebFetch).toBe(false);
-        // Web search converted to custom, text editor left alone
-        expect(conv.tools[0].type).toBe('custom');
-        expect(conv.tools[0].name).toBe('web_search');
-        expect(conv.tools[1].type).toBe('text_editor_20250728');
+        const kept = tools.filter(
+            (t: any) => !(t && typeof t.type === 'string' && isServerToolType(t.type))
+        );
+        // All Anthropic server tools stripped (text_editor is also a server tool)
+        expect(kept.length).toBe(0);
     });
 
-    test('convertServerTools flags web_fetch for strip-on-400', () => {
-        const tools = [
-            { type: 'web_fetch_20260209', name: 'web_fetch' },
+    test('all tools stripped → tools array deleted', () => {
+        const tools: any[] = [
+            { type: 'web_search_20260209', name: 'web_search' },
         ];
-        const conv = convertServerTools(tools);
+        const kept = tools.filter(
+            (t: any) => !(t && typeof t.type === 'string' && isServerToolType(t.type))
+        );
+        expect(kept.length).toBe(0);
+    });
+
+    test('convertServerTools still marks hasWebSearch/hasWebFetch for pre-execution', () => {
+        const conv = convertServerTools([
+            { type: 'web_search_20260209', name: 'web_search' },
+            { type: 'web_fetch_20260209', name: 'web_fetch' },
+        ]);
+        expect(conv.hasWebSearch).toBe(true);
         expect(conv.hasWebFetch).toBe(true);
-        expect(conv.tools[0].type).toBe('custom');
-        expect(conv.tools[0].name).toBe('web_fetch');
+        // Note: convertServerTools is no longer used for forwarding — it's for
+        // detection only. The actual stripping uses isServerToolType directly.
     });
 
-    test('retry condition: 400 + tools present + not yet stripped → retry', () => {
-        const conv = convertServerTools([
-            { type: 'web_search_20260209', name: 'web_search' },
-        ]);
-        const parsedBody: Record<string, unknown> = {
-            model: 'test',
-            messages: [{ role: 'user', content: 'search for cats' }],
-            tools: conv.tools,
-        };
-        let toolsStripped = false;
-        const status = 400;
-        const modified = true;
-
-        // Simulate the retry logic: first 400 → strip tools, retry
-        const shouldRetry = status === 400 && modified && !toolsStripped
-            && parsedBody.tools && Array.isArray(parsedBody.tools) && parsedBody.tools.length > 0;
-
-        expect(shouldRetry).toBe(true);
-
-        // Apply the fix
-        toolsStripped = true;
-        parsedBody.tools = undefined;
-
-        // After stripping, a second 400 would NOT retry (toolsStripped is true)
-        const shouldRetryAgain = status === 400 && modified && !toolsStripped
-            && parsedBody.tools && Array.isArray(parsedBody.tools) && parsedBody.tools.length > 0;
-        expect(shouldRetryAgain).toBe(false);
-    });
-
-    test('no retry on 400 when tools were already stripped', () => {
-        const parsedBody: Record<string, unknown> = {
-            model: 'test',
-            messages: [{ role: 'user', content: 'hello' }],
-            // tools already stripped
-        };
-        const toolsStripped = true;
-        const modified = true;
-        const shouldRetry = 400 === 400 && modified && !toolsStripped
-            && parsedBody.tools && Array.isArray(parsedBody.tools) && (parsedBody.tools as any[]).length > 0;
-
-        expect(shouldRetry).toBe(false);
-    });
-
-    test('no retry on 400 when tools were never present', () => {
-        const parsedBody: Record<string, unknown> = {
-            model: 'test',
-            messages: [{ role: 'user', content: 'hello' }],
-        };
-        const toolsStripped = false;
-        const modified = false; // No tools, nothing modified
-        const shouldRetry = 400 === 400 && modified && !toolsStripped
-            && parsedBody.tools && Array.isArray(parsedBody.tools) && (parsedBody.tools as any[]).length > 0;
-
-        expect(shouldRetry).toBe(false);
-    });
-
-    test('no retry on 401 (auth failure — not a tool problem)', () => {
-        const conv = convertServerTools([
-            { type: 'web_search_20260209', name: 'web_search' },
-        ]);
-        const parsedBody: Record<string, unknown> = {
-            model: 'test',
-            messages: [{ role: 'user', content: 'search for cats' }],
-            tools: conv.tools,
-        };
-        const toolsStripped = false;
-        const modified = true;
-        const shouldRetry = 401 === 400 && modified && !toolsStripped  // status is 401, not 400
-            && parsedBody.tools && Array.isArray(parsedBody.tools) && (parsedBody.tools as any[]).length > 0;
-
-        expect(shouldRetry).toBe(false);
+    test('non-Anthropic tools pass through isServerToolType filter', () => {
+        const tools: any[] = [
+            { type: 'custom', name: 'my_tool' },
+            { type: 'bash_20250124', name: 'bash' },
+        ];
+        const kept = tools.filter(
+            (t: any) => !(t && typeof t.type === 'string' && isServerToolType(t.type))
+        );
+        expect(kept.length).toBe(1);  // Only custom tool passes (bash is a server tool)
     });
 });

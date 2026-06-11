@@ -358,7 +358,30 @@ export function getFullHealthSnapshot(concurrencyStatus: unknown, rateLimiterSta
     } catch (_) {
         // Non-fatal -- memory stats should never crash a health check.
     }
+    base.lastFallback = lastFallback || undefined;
+
+    // Budget warning: yellow flag when session spend passes threshold
+    const budgetWarn = process.env.DEEPCLAUDE_BUDGET_WARNING;
+    if (budgetWarn) {
+        const limit = parseFloat(budgetWarn);
+        if (!isNaN(limit) && limit > 0) {
+            const pct = sessionTotal / limit;
+            if (pct >= 1) {
+                base.budgetWarning = { level: 'red', message: 'Spend cap reached: $' + sessionTotal.toFixed(2) };
+            } else if (pct >= 0.75) {
+                base.budgetWarning = { level: 'yellow', message: 'Budget: $' + sessionTotal.toFixed(2) + ' / $' + limit.toFixed(2) };
+            } else if (pct >= 0.5) {
+                base.budgetWarning = { level: 'info', message: 'Budget: $' + sessionTotal.toFixed(2) };
+            }
+        }
+    }
     return base;
+}
+
+// Track the most recent fallback for health/status visibility
+let lastFallback: { from: string; to: string; at: string } | null = null;
+export function recordFallback(from: string, to: string): void {
+    lastFallback = { from, to, at: new Date().toISOString() };
 }
 
 // Build Prometheus-format metrics. Counters and gauges for standard

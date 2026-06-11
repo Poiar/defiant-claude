@@ -673,6 +673,7 @@ show_help() {
     echo "  --dashboard     Start proxy and print health dashboard URL"
     echo "  --open          Open dashboard in browser (use with --dashboard)"
     echo "  --logs, --tail  Tail the proxy log (~/.deepclaude/proxy.log)"
+    echo "  --health        Quick health check (one-line summary)"
     echo "  --version       Show version and script location"
     echo "  -h, --help      This help"
     echo ""
@@ -1252,6 +1253,8 @@ while [[ $# -gt 0 ]]; do
             OPEN_BROWSER=true; shift ;;
         --logs|--tail)
             ACTION="logs"; shift ;;
+        --health)
+            ACTION="health"; shift ;;
         --probe)
             ACTION="probe"
             if [[ -n "${2:-}" && "$2" != -* ]]; then
@@ -1353,6 +1356,27 @@ case "$ACTION" in
         tail -f "$log_path"
         exit 0 ;;
     status)     show_status ;;
+    health)
+        local state_file="${DEEPCLAUDE_DIR}/proxy.json"
+        if [[ ! -f "$state_file" ]]; then echo "No proxy running. Start one first."; exit 1; fi
+        local port; port=$(jq -r '.port' "$state_file" 2>/dev/null)
+        local health; health=$(curl -sf "http://127.0.0.1:${port}/health" 2>/dev/null || true)
+        if [[ -z "$health" ]]; then echo "Proxy not responding on port $port"; exit 1; fi
+        local up down; up=$(echo "$health" | jq '[.providers // {} | to_entries[] | select(.value.circuitBreaker != "OPEN")] | length' 2>/dev/null || echo 0)
+        down=$(echo "$health" | jq '[.providers // {} | to_entries[] | select(.value.circuitBreaker == "OPEN")] | length' 2>/dev/null || echo 0)
+        local total=$((up + down))
+        local spend_str=""
+        local spend_file="${DEEPCLAUDE_DIR}/spend.json"
+        if [[ -f "$spend_file" ]]; then
+            local sess; sess=$(jq -r '(.sessions // [])[0].total // ""' "$spend_file" 2>/dev/null || true)
+            if [[ -n "$sess" && "$sess" != "null" ]]; then spend_str=" | \$$(printf '%.2f' "$sess") session"; fi
+        fi
+        echo "${up}/${total} up${spend_str}"
+        if [[ "$down" -gt 0 ]]; then
+            local open_list; open_list=$(echo "$health" | jq -r '[.providers // {} | to_entries[] | select(.value.circuitBreaker == "OPEN") | .key] | join(", ")' 2>/dev/null)
+            echo "  down: $open_list"
+        fi
+        exit 0 ;;
     cost)       show_cost ;;
     benchmark)  run_benchmark ;;
     help)       show_help ;;
