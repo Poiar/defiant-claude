@@ -64,8 +64,11 @@ $spendFile = "$env:USERPROFILE\.deepclaude\spend.json"
 if (Test-Path $spendFile) {
   try {
     $spendData = Get-Content $spendFile -Raw | ConvertFrom-Json
-    if ($spendData.total -and $spendData.total -gt 0) {
-      $spendGroup = "$bold$(fg 80 200 120)`$$($spendData.total.ToString('F4'))$reset"
+    $sessionSpend = if ($spendData.sessions -and $spendData.sessions[0] -and $spendData.sessions[0].total) {
+      $spendData.sessions[0].total
+    } elseif ($spendData.total) { $spendData.total }
+    if ($sessionSpend -and $sessionSpend -gt 0) {
+      $spendGroup = "$bold$(fg 80 200 120)`$$($sessionSpend.ToString('F2'))$reset"
     }
   } catch {}
 }
@@ -125,7 +128,8 @@ $locationGroup = $locationParts -join $narrow
 
 $modelParts = @()
 if ($slotLabel -or $model) {
-  $modelParts += "$bold$(fg 200 100 255)$slotLabel$modelKey$reset"
+  $displayModel = if ($modelKey -match '^[a-f0-9]{6,}$') { '' } else { $modelKey }
+  $modelParts += "$bold$(fg 200 100 255)$slotLabel$displayModel$reset"
 }
 if ($effort) {
   $modelParts += "$bold$effortColor$effort$reset"
