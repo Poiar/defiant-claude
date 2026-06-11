@@ -311,4 +311,28 @@ describe('createRateLimiter', () => {
         });
     });
 
+    describe('IPv6 normalization', () => {
+        test('IPv6 addresses with same /64 prefix share rate limit bucket', () => {
+            const limiter = createRateLimiter({ maxPerWindow: 2, windowMs: 60_000 });
+            expect(limiter.check('2001:db8:1234:5678:1:2:3:4').allowed).toBe(true);
+            expect(limiter.check('2001:db8:1234:5678:5:6:7:8').allowed).toBe(true);
+            // Same /64 prefix — third request should be rate limited
+            expect(limiter.check('2001:db8:1234:5678:9:a:b:c').allowed).toBe(false);
+        });
+
+        test('different /64 prefixes get independent buckets', () => {
+            const limiter = createRateLimiter({ maxPerWindow: 2, windowMs: 60_000 });
+            expect(limiter.check('2001:db8:aaaa:1::1').allowed).toBe(true);
+            expect(limiter.check('2001:db8:aaaa:1::2').allowed).toBe(true);
+            // Different /64 prefix — should NOT be rate limited
+            expect(limiter.check('2001:db8:bbbb:2::1').allowed).toBe(true);
+        });
+
+        test('IPv4 addresses are not affected by normalization', () => {
+            const limiter = createRateLimiter({ maxPerWindow: 1, windowMs: 60_000 });
+            expect(limiter.check('192.168.1.1').allowed).toBe(true);
+            expect(limiter.check('192.168.1.2').allowed).toBe(true);
+        });
+    });
+
 });

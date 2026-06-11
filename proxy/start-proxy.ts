@@ -306,12 +306,57 @@ function lookupProviderByHost(hostname: string): ProviderDef | null {
     return null;
 }
 
+// Called during config hot-reload to keep extra headers and display names
+// in sync with providers.json without a full proxy restart.
+export function refreshProviderRegistry(): void {
+    try {
+        delete require.cache[require.resolve('./providers.json')];
+        const fresh = require('./providers.json');
+        if (fresh && fresh.providers) {
+            providerRegistry = fresh;
+            providerDisplayNames = {};
+            for (const [key, rawDef] of Object.entries(fresh.providers)) {
+                const rec = rawDef as { displayName?: string };
+                if (rec.displayName) {
+                    providerDisplayNames[key] = rec.displayName;
+                }
+            }
+        }
+    } catch (_) { /* non-fatal — keep stale registry on parse failure */ }
+}
+
 // --- HTTP Server ---
 
 let activeConnections = 0;
 
 const server = http.createServer((req: http.IncomingMessage, res: http.ServerResponse) => {
     req.setTimeout(30000);  // Prevent slow-body trickle from starving concurrency slots
+
+    // Throttled provider registry refresh — keeps extra headers and display
+    // names in sync with providers.json hot-reloads.
+    {
+        const now = Date.now();
+        const REFRESH_MS = 15000;
+        if (providerRegistry && (providerRegistry as any)._lastRefresh && now - (providerRegistry as any)._lastRefresh < REFRESH_MS) {
+            // skip — within throttled window
+        } else {
+            try {
+                const fresh = require('./providers.json');
+                if (fresh && fresh.providers) {
+                    providerRegistry = fresh;
+                    providerDisplayNames = {};
+                    for (const [key, rawDef] of Object.entries(fresh.providers)) {
+                        const rec = rawDef as { displayName?: string };
+                        if (rec.displayName) {
+                            providerDisplayNames[key] = rec.displayName;
+                        }
+                    }
+                    if (!(providerRegistry as any)._lastRefresh) (providerRegistry as any)._lastRefresh = 0;
+                    (providerRegistry as any)._lastRefresh = now;
+                }
+            } catch (_) { /* non-fatal — keep stale registry */ }
+        }
+    }
 
     // --- Dashboard routes (always available when proxy is running) ---
     if (serveDashboard(req, res, concurrency.status(), mainRateLimiter.status(), providerDisplayNames)) return;
@@ -621,9 +666,14 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                                     format: providerEntry.format || 'anthropic',
                                 };
 
-                                const originalPrimary = resolved.primary!;
-                                resolved.primary = canaryTarget;
-                                resolved.fallbacks = [originalPrimary, ...(resolved.fallbacks || [])];
+                                // Skip canary routing if the canary provider is circuit-broken.
+                                if (!isProviderHealthy(config.targetProvider)) {
+                                    log.info(reqId, 'canary: skipping ' + config.targetProvider + ' — circuit breaker open');
+                                } else {
+                                    const originalPrimary = resolved.primary!;
+                                    resolved.primary = canaryTarget;
+                                    resolved.fallbacks = [originalPrimary, ...(resolved.fallbacks || [])];
+                                }
                             }
 
                             canaryEntry = entry;
@@ -665,7 +715,8 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                 const streamingClient = isStreamingClient(req.headers as Record<string, string | string[] | undefined>, parsedBody);
                 const budgetError = formatError(402, { reason: budgetReason }, isDev);
                 if (streamingClient) {
-                  const friendlyEvents = 'event: error\ndata: ' + JSON.stringify({ type: 'error', error: budgetError }) + '\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\ndata: [DONE]\n\n';
+                  const messageStart = JSON.stringify({ type: 'message_start', message: { id: 'msg_budget_' + reqId, type: 'message', role: 'assistant', model: model || '', content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 0, output_tokens: 0 } } });
+                  const friendlyEvents = 'event: message_start\ndata: ' + messageStart + '\n\nevent: error\ndata: ' + JSON.stringify({ type: 'error', error: budgetError }) + '\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\ndata: [DONE]\n\n';
                   res.writeHead(200, (sseHeaders({}) as Record<string, string | number>));
                   res.write(friendlyEvents);
                   res.end();
@@ -689,12 +740,15 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
             if (sk && chain.length > 1) {
                 const momentum = getMomentum(sk);
                 if (momentum && momentum.preferredProvider && momentum.confidence >= 0.4) {
-                    const fbIdx = chain.findIndex(
-                        (t, i) => i > 0 && t.providerKey === momentum.preferredProvider
-                    );
-                    if (fbIdx > 1) {
-                        const [preferred] = chain.splice(fbIdx, 1);
-                        chain.splice(1, 0, preferred);
+                    // Only promote if the preferred provider is currently healthy
+                    if (isProviderHealthy(momentum.preferredProvider)) {
+                        const fbIdx = chain.findIndex(
+                            (t, i) => i > 0 && t.providerKey === momentum.preferredProvider
+                        );
+                        if (fbIdx > 1) {
+                            const [preferred] = chain.splice(fbIdx, 1);
+                            chain.splice(1, 0, preferred);
+                        }
                     }
                 }
             }

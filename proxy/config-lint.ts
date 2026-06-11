@@ -270,7 +270,7 @@ export function formatLintResults(issues: LintIssue[], registryPath?: string): s
         for (const [ck, cv] of Object.entries(configs)) {
             const entry = cv as ConfigEntry;
             const slotParts: string[] = [];
-            const slotMap: Record<string, string> = { opus: 'opus', sonnet: 'sonnet', haiku: 'haiku', sub: 'subagent' };
+            const slotMap: Record<string, string> = { opus: 'opus', sonnet: 'sonnet', haiku: 'haiku', fable: 'fable', sub: 'subagent' };
             for (const sk of ['opus', 'sonnet', 'haiku', 'fable', 'sub'] as const) {
                 const val = entry[sk];
                 if (val && typeof val === 'string') {

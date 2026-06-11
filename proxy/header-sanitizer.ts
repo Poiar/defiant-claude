@@ -53,7 +53,9 @@ export function sanitizeHeaders(headers: Record<string, string | string[]> | nul
         strValue = strValue.replace(/[\x00-\x1f\x7f]/g, '');
 
         if (strValue.length > MAX_VALUE_LEN) {
-            strValue = strValue.substring(0, MAX_VALUE_LEN);
+            // Use Array.from to correctly handle multi-byte UTF-8 characters
+            // instead of splitting surrogate pairs mid-character.
+            strValue = Array.from(strValue).slice(0, MAX_VALUE_LEN).join('');
             dropped++;
         }
 

@@ -260,7 +260,16 @@ async function webFetchImpl(url: string, _depth?: number, _visited?: Set<string>
     } catch (e) { return 'Error: Invalid URL.'; }
 
     if (_depth > 5 || _visited.has(url)) return 'Too many redirects fetching: ' + url;
-    _visited.add(url);
+    // Normalize URL for dedup to catch equivalent-form redirects
+    // (trailing slashes, case differences, fragments)
+    try {
+        const norm = new URL(url);
+        norm.hash = '';
+        norm.pathname = norm.pathname.replace(/\/+$/, '') || '/';
+        _visited.add(norm.href.toLowerCase());
+    } catch (_) {
+        _visited.add(url);
+    }
 
     // FIX 4: Use shared validateUrl from ssrf.ts as the primary SSRF check
     // (scheme validation, metadata IPs, private ranges, DNS resolution)

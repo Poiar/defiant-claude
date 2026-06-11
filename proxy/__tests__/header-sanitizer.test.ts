@@ -150,4 +150,16 @@ describe('sanitizeHeaders', () => {
         expect(result.headers.authorization).toBeUndefined()
         expect(result.dropped).toBe(2)
     })
+
+    test('Does not split multi-byte UTF-8 characters on truncation', () => {
+        // Build a value that forces truncation at MAX_VALUE_LEN with a multi-byte character
+        const longPrefix = 'a'.repeat(MAX_VALUE_LEN - 2);
+        const emojiChar = '😀'; // U+1F600 — 2 UTF-16 code units
+        const value = longPrefix + emojiChar + 'trailing';
+        expect(value.length).toBeGreaterThan(MAX_VALUE_LEN);
+        const result = sanitizeHeaders({ 'x-custom': value });
+        const truncated = result.headers['x-custom'] as string;
+        // Should not end with a lone surrogate (U+D83D)
+        expect(truncated.charCodeAt(truncated.length - 1)).not.toBe(0xD83D);
+    })
 })

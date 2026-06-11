@@ -954,7 +954,7 @@ run_benchmark() {
 handle_set_slot() {
     local slot_name="$1" slot_model="${2:-}"
 
-    if [[ ! "$slot_name" =~ ^(opus|sonnet|haiku|subagent)$ ]]; then
+    if [[ ! "$slot_name" =~ ^(opus|sonnet|haiku|subagent|fable)$ ]]; then
         echo "ERROR: Invalid slot '$slot_name'. Use: opus, sonnet, haiku, subagent, fable" >&2
         exit 1
     fi
@@ -1110,7 +1110,8 @@ handle_switch() {
         esac
     done <<< "$slot_data"
     init_slot_overrides "$opus_prov" "$opus_model" "$sonnet_prov" "$sonnet_model" \
-        "$haiku_prov" "$haiku_model" "$subagent_prov" "$subagent_model" \n            "$fable_prov" "$fable_model"
+        "$haiku_prov" "$haiku_model" "$subagent_prov" "$subagent_model" \
+            "$fable_prov" "$fable_model"
 
     echo "  Slot mappings:"
     while IFS=' ' read -r slot prov model; do
@@ -1421,7 +1422,8 @@ case "$ACTION" in
             esac
         done <<< "$slot_data"
         init_slot_overrides "$opus_prov" "$opus_model" "$sonnet_prov" "$sonnet_model" \
-            "$haiku_prov" "$haiku_model" "$subagent_prov" "$subagent_model" \n            "$fable_prov" "$fable_model"
+            "$haiku_prov" "$haiku_model" "$subagent_prov" "$subagent_model" \
+            "$fable_prov" "$fable_model"
 
         # Get actual models from overrides
         opus_m="" sonnet_m="" haiku_m="" sub_m=""
@@ -1525,7 +1527,8 @@ case "$ACTION" in
             esac
         done <<< "$slot_data"
         init_slot_overrides "$opus_prov" "$opus_model" "$sonnet_prov" "$sonnet_model" \
-            "$haiku_prov" "$haiku_model" "$subagent_prov" "$subagent_model" \n            "$fable_prov" "$fable_model"
+            "$haiku_prov" "$haiku_model" "$subagent_prov" "$subagent_model" \
+            "$fable_prov" "$fable_model"
 
         # Resolve actual models from overrides
         opus_m="" sonnet_m="" haiku_m="" sub_m=""
@@ -1661,7 +1664,8 @@ case "$ACTION" in
             esac
         done <<< "$slot_data"
         init_slot_overrides "$opus_prov" "$opus_model" "$sonnet_prov" "$sonnet_model" \
-            "$haiku_prov" "$haiku_model" "$subagent_prov" "$subagent_model" \n            "$fable_prov" "$fable_model"
+            "$haiku_prov" "$haiku_model" "$subagent_prov" "$subagent_model" \
+            "$fable_prov" "$fable_model"
 
         # Resolve actual models from overrides
         opus_m="" sonnet_m="" haiku_m="" sub_m=""
