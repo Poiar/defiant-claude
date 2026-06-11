@@ -62,7 +62,7 @@ function computeFingerprint(messages: Message[]): string {
     return hash(text);
 }
 
-export function store(sessionKeyParam: string | null, firstToolUseId: string | null, blocks: StoredBlock[], messageCount: number = 0, fp: string = ''): void {
+export function store(sessionKeyParam: string | null, firstToolUseId: string | null, blocks: StoredBlock[], messageCount: number = -1, fp: string = ''): void {
     if (!blocks || blocks.length === 0 || !firstToolUseId) return;
     cache.set(`${sessionKeyParam}:${fp}:${firstToolUseId}`, {
         blocks: blocks.map(b => ({ type: b.type, thinking: b.thinking, signature: b.signature || '' })),
@@ -129,7 +129,9 @@ export function extractThinkingBlocks(messages: Message[]): ExtractResult | null
         const thinking = blocks.filter(b => b.type === 'thinking');
         const toolUses = blocks.filter(b => b.type === 'tool_use');
         if (thinking.length > 0 && toolUses.length > 0) {
-            return { sk, fp, firstToolUseId: toolUses[0].id!, blocks: thinking as StoredBlock[] };
+            const firstId = toolUses[0].id;
+            if (!firstId) return null;
+            return { sk, fp, firstToolUseId: firstId, blocks: thinking as StoredBlock[] };
         }
     }
 

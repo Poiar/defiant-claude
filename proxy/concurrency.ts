@@ -112,6 +112,7 @@ export function createSlotLimiter(maxConcurrent?: number, maxQueue?: number): Sl
                 entry.cancelled = true;
                 reject(new Error('Slot acquire timeout after ' + to + 'ms'));
             }, to);
+            if (timer && typeof timer === 'object') (timer as NodeJS.Timeout).unref();
         });
         promise.catch(() => { /* Suppress unhandled rejection when cancelled */ });
 

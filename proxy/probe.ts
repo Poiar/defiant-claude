@@ -237,7 +237,7 @@ export function sendProbe(target: ProbeSlot): Promise<ProbeResult> {
 }
 
 function resolveSlotProvider(config: RoutingConfig, modelName: string, slotValue: string): { providerKey: string; actualModel: string } | null {
-    const slotMatch = slotValue.match(/^(sonnet|opus|haiku|subagent):(\w+):(.+)$/);
+    const slotMatch = slotValue.match(/^(sonnet|opus|haiku|subagent|fable):(\w+):(.+)$/);
     if (!slotMatch) return null;
     const providerKey = slotMatch[2];
     const actualModel = slotMatch[3];

@@ -64,9 +64,15 @@ export function buildFriendlyStreamEvents(lastStatus: number | null | undefined,
     }
 
     const errorEvent = {
-        error_code: 'E012',
-        message: errorMsg,
-        type: 'exhausted',
+        type: 'error',
+        error: {
+            type: 'api_error',
+            message: errorMsg,
+        },
+        _deepclaude: {
+            error_code: 'E012',
+            attempted_providers: triedList,
+        },
     };
 
     const stopEvent = { type: 'message_stop' };

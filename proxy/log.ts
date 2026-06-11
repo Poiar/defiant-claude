@@ -21,11 +21,18 @@ try {
     // File logging unavailable (e.g. read-only fs, bad path); console-only fallback.
 }
 
+let lastFsync = 0;
 function writeFile(msg: string): void {
     if (logFd === null) return;
     try {
         fs.writeSync(logFd, msg + '\n');
-        fs.fsyncSync(logFd);
+        // Throttle fsync to once per second to avoid blocking the event loop
+        // on every log line under high throughput.
+        const now = Date.now();
+        if (now - lastFsync >= 1000) {
+            fs.fsyncSync(logFd);
+            lastFsync = now;
+        }
     } catch {
         // Swallow file write errors so a bad disk never crashes the proxy.
     }

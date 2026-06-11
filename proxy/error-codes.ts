@@ -36,6 +36,7 @@ export const ERROR_CODES: Record<string, ErrorCodeEntry> = {
     UNKNOWN_PROVIDER:    { code: 'UNKNOWN_PROVIDER',    status: 502, message: 'Unknown provider: {provider}',                     ecode: 'E011', suggestion: 'The provider \'{provider}\' is not configured. Check your config with \'deepclaude --status\' or switch to a known config with \'deepclaude --switch\'.' },
     ALL_PROVIDERS_FAILED:{ code: 'ALL_PROVIDERS_FAILED',status: 502, message: 'All configured providers failed',                  ecode: 'E012', suggestion: 'All configured providers failed. Check your API keys with \'deepclaude --doctor\' and verify your network connection.' },
     NO_DEFAULT_PROVIDER: { code: 'NO_DEFAULT_PROVIDER', status: 502, message: 'No default provider configured',                   ecode: 'E013', suggestion: 'No default provider is configured. Set up a provider with \'deepclaude --switch <config>\' or set DEEPCLAUDE_DEFAULT_BACKEND.' },
+    BUDGET_EXCEEDED:     { code: 'BUDGET_EXCEEDED',     status: 402, message: 'Budget limit reached: {reason}',                    ecode: 'E014', suggestion: 'Your usage has reached the configured budget cap. Adjust the cap with \'deepclaude --set-budget\', check your daily limit, or wait until the budget resets.' },
 };
 
 // Maps HTTP status codes to error codes for quick lookup.
@@ -85,14 +86,14 @@ export function formatExhaustedError(lastStatus: number | null | undefined, last
     const status = lastStatus || 502;
     const base = formatError(status, { status: String(status) }, isDev);
     if (qualityReason) {
-        base.message = 'All configured providers failed (last error: ' + qualityReason + ')';
+        base.message = 'All configured providers failed (last error: ' + scrubCredentials(qualityReason) + ')';
     } else {
         base.message = 'All configured providers failed' + (lastStatus ? ' (last error: ' + lastStatus + ')' : '');
     }
     base.error_code = 'E012';
     base.suggestion = 'All configured providers failed. Check your API keys with \'deepclaude --doctor\' and verify your network connection.';
     if (isDev && lastBody) {
-        base.last_error_body = scrubCredentials(String(lastBody).slice(0, 500));
+        base.last_error_body = scrubCredentials(String(lastBody)).slice(0, 500);
     }
     return base;
 }

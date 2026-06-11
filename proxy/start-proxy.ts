@@ -535,11 +535,11 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
             // Save the original slot BEFORE prompt-router may overwrite model,
             // so canary routing, rate limiting, and deadline tightening still
             // operate on the actual slot the user requested.
-            const originalSlot = (model || '').match(/^(sonnet|opus|haiku|subagent):/);
+            const originalSlot = (model || '').match(/^(sonnet|opus|haiku|subagent|fable):/);
             const savedSlot = originalSlot ? originalSlot[1] : null;
 
             if (parsedBody && state.routing?.promptRouter?.enabled) {
-                const slotMatch = (model || '').match(/^(sonnet|opus|haiku|subagent):/);
+                const slotMatch = (model || '').match(/^(sonnet|opus|haiku|subagent|fable):/);
                 if (slotMatch) {
                     const slot = slotMatch[1];
                     const classification = classifyRequest(parsedBody);
@@ -663,14 +663,15 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
             if (budgetReason) {
               if (!res.headersSent && !res.destroyed) {
                 const streamingClient = isStreamingClient(req.headers as Record<string, string | string[] | undefined>, parsedBody);
+                const budgetError = formatError(402, { reason: budgetReason }, isDev);
                 if (streamingClient) {
-                  const friendlyEvents = 'event: error\ndata: ' + JSON.stringify({ type: 'error', error: { type: 'overloaded_error', message: budgetReason } }) + '\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\ndata: [DONE]\n\n';
+                  const friendlyEvents = 'event: error\ndata: ' + JSON.stringify({ type: 'error', error: budgetError }) + '\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\ndata: [DONE]\n\n';
                   res.writeHead(200, (sseHeaders({}) as Record<string, string | number>));
                   res.write(friendlyEvents);
                   res.end();
                 } else {
                   res.writeHead(402, { 'content-type': 'application/json', 'x-budget-cap': 'true' });
-                  res.end(JSON.stringify({ type: 'error', error: { type: 'overloaded_error', message: budgetReason } }));
+                  res.end(JSON.stringify({ type: 'error', error: budgetError }));
                 }
               }
               return;
@@ -997,6 +998,14 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                     if (clientStream) {
                         res.once('close', () => {
                             if (!(clientStream as any).destroyed) (clientStream as any).destroy();
+                        });
+                    }
+                    // Destroy upstream request on client disconnect to prevent
+                    // buffering data from a provider that keeps streaming after
+                    // the client has gone (wasted bandwidth + memory).
+                    if (result._upstream) {
+                        res.once('close', () => {
+                            try { (result._upstream as any).destroy(); } catch (_) { /* already closed */ }
                         });
                     }
 
