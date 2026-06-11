@@ -99,6 +99,7 @@ export interface ForwardResult {
     deadStreamReason?: string;
     streamTimings?: StreamTimings;
     streamMetrics?: StreamMetrics;
+    _upstream?: NodeJS.WritableStream; // For cleanup on client disconnect
 }
 interface PeekResult {
     ok: boolean;
@@ -225,7 +226,7 @@ export function tryForward(
     reqId: string | number | null | undefined
 ): Promise<ForwardResult> {
     // Extract slot for timeout differentiation — subagent requests get tighter limits.
-    const slot = model ? (model.match(/^(sonnet|opus|haiku|subagent):/) || [null])[1] : null;
+    const slot = model ? (model.match(/^(sonnet|opus|haiku|subagent|fable):/) || [null])[1] : null;
     const to = getStreamTimeouts(slot);
     const forwardStart = Date.now();
 
@@ -338,6 +339,7 @@ export function tryForward(
                                 new Error('Upstream stream read timeout (heartbeat) after ' + to.heartbeat / 1000 + 's, received ' + streamBytes + ' bytes')
                             );
                         }, to.heartbeat);
+                        if (streamHeartbeat && typeof streamHeartbeat === 'object') (streamHeartbeat as NodeJS.Timeout).unref();
                     };
                     const elapsed = Date.now() - forwardStart;
                     const remainingDeadline = Math.max(5000, to.deadline - elapsed);
@@ -347,6 +349,7 @@ export function tryForward(
                             new Error('Upstream stream read timeout (deadline) after ' + to.deadline / 1000 + 's, received ' + streamBytes + ' bytes')
                         );
                     }, remainingDeadline);
+                    if (streamDeadline && typeof streamDeadline === 'object') (streamDeadline as NodeJS.Timeout).unref();
                     resetStreamHeartbeat();
                     sourceStream.on('data', (chunk: Buffer | string) => {
                         streamBytes += typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.length;
@@ -404,9 +407,9 @@ export function tryForward(
                         const parts = rawUsageBuf.split('\n\n');
                         rawUsageBuf = parts.pop() || '';
                         for (const part of parts) {
-                            const dataMatch = part.match(/^data: (.+)/m);
-                            if (!dataMatch) continue;
-                            const payload = dataMatch[1];
+                            const dataLines = [...part.matchAll(/^data: ?(.*)$/gm)];
+                            if (!dataLines.length) continue;
+                            const payload = dataLines.map(m => m[1]).join('\n');
                             if (payload === '[DONE]') continue;
                             try {
                                 const parsedPayload = JSON.parse(payload);
@@ -445,7 +448,7 @@ export function tryForward(
                     }
                     );
 
-                    resolve({ success: true, status: proxyRes.statusCode, headers: outHeaders, stream: outStream, streamUsage, streamTimings: timings || undefined });
+                    resolve({ success: true, status: proxyRes.statusCode, headers: outHeaders, stream: outStream, streamUsage, streamTimings: timings || undefined, _upstream: proxy });
                 });
             } else {
                 (proxyRes as unknown as NodeJS.ReadableStream & { setTimeout(ms: number, cb: () => void): void }).setTimeout(to.bodyRead, () => {
@@ -570,7 +573,7 @@ export function tryForward(
                         if (qualityReason) {
                             resolve({ success: false, status: proxyRes.statusCode, headers: outHeaders, body: responseBody, streamUsage, error: qualityReason, qualityFailure: true, qualityReason, streamMetrics: undefined });
                         } else {
-                            resolve({ success: true, status: proxyRes.statusCode, headers: outHeaders, body: responseBody, streamUsage, streamMetrics: undefined });
+                            resolve({ success: true, status: proxyRes.statusCode, headers: outHeaders, body: responseBody, streamUsage, streamMetrics: undefined, _upstream: proxy });
                         }
                     }
                 });

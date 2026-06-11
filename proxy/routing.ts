@@ -143,7 +143,7 @@ export async function resolveTarget(
     //   2. Dedicated subagent model (--subagent-model)
     //   3. Routes table fallback (from config)
     //   4. Default provider fallback
-    const slotMatch = model && model.match(/^(sonnet|opus|haiku|subagent):(.+)$/);
+    const slotMatch = model && model.match(/^(sonnet|opus|haiku|subagent|fable):(.+)$/);
     let resolvedModel = model;
     if (slotMatch) {
         const slot = slotMatch[1];

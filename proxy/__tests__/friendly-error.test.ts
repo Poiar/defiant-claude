@@ -94,7 +94,8 @@ describe('buildFriendlyStreamEvents', () => {
         const dataLine = events.match(/data: (.+)/);
         expect(dataLine).not.toBeNull();
         const parsed = JSON.parse(dataLine![1]);
-        expect(parsed.type).toBe('exhausted');
-        expect(parsed.error_code).toBe('E012');
+        expect(parsed.type).toBe('error');
+        expect(parsed.error.type).toBe('api_error');
+        expect(parsed._deepclaude.error_code).toBe('E012');
     });
 });

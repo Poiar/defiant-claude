@@ -4,6 +4,8 @@ import crypto from 'node:crypto';
 import http from 'http';
 import { getFullHealthSnapshot } from './stats';
 
+let activeSseConnections = 0;
+
 // Optional dashboard authentication via shared secret.
 // If DEEPCLAUDE_DASHBOARD_KEY is set, the X-Dashboard-Key header must
 // match it using a timing-safe comparison to prevent side-channel attacks.
@@ -52,6 +54,13 @@ export function serveDashboard(
 
     if (url === '/health/stream') {
         if (!checkDashboardAuth(req, res)) return true;
+        const MAX_SSE_CONNECTIONS = 20;
+        if (activeSseConnections >= MAX_SSE_CONNECTIONS) {
+            res.writeHead(503, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Too many dashboard connections. Try again later.' }));
+            return true;
+        }
+        activeSseConnections++;
         res.writeHead(200, {
             'content-type': 'text/event-stream',
             'cache-control': 'no-cache',
@@ -75,6 +84,7 @@ export function serveDashboard(
 
         const closeHandler = (): void => {
             clearInterval(interval);
+            activeSseConnections = Math.max(0, activeSseConnections - 1);
         };
         req.on('close', closeHandler);
         res.on('close', closeHandler);

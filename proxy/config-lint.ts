@@ -109,7 +109,7 @@ export function validateConfig(registryPath?: string): LintIssue[] {
 
     for (const [ck, cv] of Object.entries(configs)) {
         const entry = cv as ConfigEntry;
-        for (const sk of ['opus', 'sonnet', 'haiku', 'sub'] as const) {
+        for (const sk of ['opus', 'sonnet', 'haiku', 'fable', 'sub'] as const) {
             const val = entry[sk];
             if (val && typeof val === 'string' && val.indexOf(':') >= 0) {
                 const colonIdx = val.indexOf(':');
@@ -271,7 +271,7 @@ export function formatLintResults(issues: LintIssue[], registryPath?: string): s
             const entry = cv as ConfigEntry;
             const slotParts: string[] = [];
             const slotMap: Record<string, string> = { opus: 'opus', sonnet: 'sonnet', haiku: 'haiku', sub: 'subagent' };
-            for (const sk of ['opus', 'sonnet', 'haiku', 'sub'] as const) {
+            for (const sk of ['opus', 'sonnet', 'haiku', 'fable', 'sub'] as const) {
                 const val = entry[sk];
                 if (val && typeof val === 'string') {
                     const displaySlot = slotMap[sk];

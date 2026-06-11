@@ -42,6 +42,7 @@ const LOG_FILE = path.join(os.homedir(), '.deepclaude', 'requests.log');
 let LOG_FILE_OVERRIDE: string | null = null;
 function getLogFilePath(): string { return LOG_FILE_OVERRIDE || LOG_FILE; }
 const MAX_LOG_SIZE = 1_048_576; // 1MB
+const MAX_PENDING_ENTRIES = 10_000; // Prevent OOM on persistent disk failure
 
 let logAllEnabled = false;
 const pendingEntries: RequestLogEntry[] = [];
@@ -79,7 +80,11 @@ function flush(): void {
   } catch (_) {
     // Prepend entries back to preserve them on write failure (disk full,
     // permissions, etc.).  Never crash the proxy over a log write.
-    pendingEntries.unshift(...entries);
+    // Cap to prevent unbounded memory growth during persistent failures.
+    const available = MAX_PENDING_ENTRIES - pendingEntries.length;
+    if (available > 0) {
+      pendingEntries.unshift(...entries.slice(-available));
+    }
   }
 }
 
@@ -137,6 +142,10 @@ export function logRequest(entry: RequestLogEntry): void {
     }
   }
 
+  if (pendingEntries.length >= MAX_PENDING_ENTRIES) {
+    // Drop oldest entry under memory pressure — safety over completeness.
+    pendingEntries.shift();
+  }
   pendingEntries.push(entry);
   scheduleFlush();
 }

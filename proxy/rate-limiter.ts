@@ -64,9 +64,23 @@ export function createRateLimiter(opts?: RateLimiterOptions): RateLimiter {
         }
     }
 
+    function normalizeIp(ip: string): string {
+        // Normalize IPv6 privacy addresses to /64 prefix to prevent
+        // clients from bypassing rate limits by rotating RFC 4941 addresses.
+        if (ip.includes(':')) {
+            const parts = ip.split(':');
+            if (parts.length >= 4) {
+                // Keep first 4 hextets (64 bits), zero the rest
+                return parts.slice(0, 4).join(':') + '::/64';
+            }
+        }
+        return ip;
+    }
+
     function check(ip: string): RateLimitResult {
+        const key = normalizeIp(ip);
         const now = Date.now();
-        let entry = entries.get(ip);
+        let entry = entries.get(key);
 
         if (!entry || now - entry.windowStart >= windowMs) {
             // New window -- evict LRU if at capacity and this is a new IP
@@ -74,7 +88,7 @@ export function createRateLimiter(opts?: RateLimiterOptions): RateLimiter {
                 const oldest = entries.keys().next().value;
                 if (oldest !== undefined) entries.delete(oldest);
             }
-            entries.set(ip, { count: 1, windowStart: now });
+            entries.set(key, { count: 1, windowStart: now });
             return { allowed: true };
         }
 

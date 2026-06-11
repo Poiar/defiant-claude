@@ -41,8 +41,10 @@ interface AnthropicRequestBody {
     max_tokens?: number;
     temperature?: number;
     top_p?: number;
+    top_k?: number;
     stop_sequences?: string[];
     tool_choice?: unknown;
+    metadata?: Record<string, unknown>;
 }
 
 interface OpenAIToolCall {
@@ -67,8 +69,10 @@ interface OpenAIRequestBody {
     max_tokens?: number;
     temperature?: number;
     top_p?: number;
+    top_k?: number;
     stop?: string[];
     tool_choice?: unknown;
+    metadata?: Record<string, unknown>;
 }
 
 interface OpenAIChoice {
@@ -174,6 +178,8 @@ export function translateRequest(anthropicBody: AnthropicRequestBody): { openaiB
     if (anthropicBody.max_tokens !== undefined) openaiBody.max_tokens = anthropicBody.max_tokens;
     if (anthropicBody.temperature !== undefined) openaiBody.temperature = anthropicBody.temperature;
     if (anthropicBody.top_p !== undefined) openaiBody.top_p = anthropicBody.top_p;
+    if (anthropicBody.top_k !== undefined) openaiBody.top_k = anthropicBody.top_k;
+    if (anthropicBody.metadata !== undefined) openaiBody.metadata = anthropicBody.metadata;
     if (anthropicBody.stop_sequences && anthropicBody.stop_sequences.length) {
         openaiBody.stop = anthropicBody.stop_sequences;
     }
@@ -219,7 +225,8 @@ function convertMessage(msg: AnthropicMessage): OpenAIMessage | OpenAIMessage[] 
             return result;
         }
         const hasImage = contentBlocks.some(b => b.type === 'image');
-        if (hasImage) {
+        const hasDocument = contentBlocks.some(b => b.type === 'document');
+        if (hasImage || hasDocument) {
             const content: Array<{ type: string; text?: string; image_url?: { url: string } }> = [];
             for (const block of contentBlocks) {
                 if (block.type === 'text') {
@@ -237,6 +244,21 @@ function convertMessage(msg: AnthropicMessage): OpenAIMessage | OpenAIMessage[] 
                             type: 'image_url',
                             image_url: { url: `data:${block.source.media_type};base64,${block.source.data}` },
                         });
+                    }
+                } else if (block.type === 'document' && block.source) {
+                    // Anthropic document blocks (PDFs, etc.) — pass as file data URIs.
+                    // OpenAI Chat Completions doesn't have a standard document content part,
+                    // so we emit a text annotation AND a data URI for providers that support it.
+                    const mediaType = block.source.media_type || 'application/octet-stream';
+                    const docName = (block as any).title || (block as any).file_name || 'document';
+                    if (block.source.type === 'url' && (block.source as any).url) {
+                        content.push({ type: 'text', text: '[Attached document: ' + docName + ' (' + mediaType + ')]' });
+                    } else {
+                        content.push({
+                            type: 'image_url',
+                            image_url: { url: `data:${mediaType};base64,${block.source.data}` },
+                        });
+                        content.push({ type: 'text', text: '[Attached document: ' + docName + ' (' + mediaType + ', ' + Math.round((block.source.data || '').length * 3 / 4) + ' bytes)]' });
                     }
                 }
             }
@@ -413,9 +435,9 @@ export function createStreamTransformer(model: string): Transform {
     }
 
     function processEvent(eventBlock: string): string {
-        const dataMatch = eventBlock.match(/^data: (.+)$/m);
-        if (!dataMatch) return '';
-        const payload = dataMatch[1];
+        const dataLines = [...eventBlock.matchAll(/^data: ?(.*)$/gm)];
+        if (!dataLines.length) return '';
+        const payload = dataLines.map(m => m[1]).join('\n');
 
         if (payload === '[DONE]') {
             return finishStream('end_turn');
@@ -423,6 +445,15 @@ export function createStreamTransformer(model: string): Transform {
 
         let parsed: OpenAIResponseBody;
         try { parsed = JSON.parse(payload); } catch { return ''; }
+
+        // Propagate upstream SSE error events (content filter, rate limit mid-stream, etc.)
+        if (parsed.error) {
+            const upstreamError = parsed.error;
+            const apiError = upstreamError.type === 'api_error'
+                ? { type: 'error', error: upstreamError }
+                : { type: 'error', error: { type: 'api_error', message: upstreamError.message || String(upstreamError) } };
+            return emit('error', apiError);
+        }
 
         const choice = parsed.choices && parsed.choices[0];
         if (!choice) return '';

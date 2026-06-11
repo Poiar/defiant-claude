@@ -21,7 +21,7 @@ export function sessionKey(reqBody: Record<string, unknown> | null | undefined):
             : Array.isArray(reqBody.system)
                 ? (reqBody.system as Array<Record<string, unknown>>).map(b => String(b.text || '')).join('')
                 : ''
-          ).slice(0, 100)
+          ).slice(0, 500)
         : '';
     return crypto.createHash('sha256')
         .update(content)

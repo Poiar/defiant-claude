@@ -155,9 +155,9 @@ describe('ERROR_CODES', () => {
         expect(new Set(ecodes).size).toBe(ecodes.length);
     });
 
-    test('all 13 entries have distinct E001-E013 codes', () => {
+    test('all 14 entries have distinct E001-E014 codes', () => {
         const ecodes = Object.values(ERROR_CODES).map(e => e.ecode).sort();
-        expect(ecodes).toEqual(['E001','E002','E003','E004','E005','E006','E007','E008','E009','E010','E011','E012','E013']);
+        expect(ecodes).toEqual(['E001','E002','E003','E004','E005','E006','E007','E008','E009','E010','E011','E012','E013','E014']);
     });
 });
 
