@@ -5,3 +5,4 @@ if %ERRORLEVEL% neq 0 (
     exit /b 1
 )
 pwsh -NoLogo -File "%~dp0deepclaude.ps1" %*
+exit /b %ERRORLEVEL%

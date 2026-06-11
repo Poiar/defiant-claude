@@ -206,6 +206,14 @@ let pidPath = '';
 if (!process.env.DEEPCLAUDE_NO_PID_LOCK) {
 try {
     fs.mkdirSync(deepclaudeDir, { recursive: true });
+    // Clean up stale .tmp files from interrupted launcher writes
+    try {
+        for (const f of fs.readdirSync(deepclaudeDir)) {
+            if (f.endsWith('.tmp') || f.endsWith('.lock')) {
+                fs.rmSync(deepclaudeDir + '/' + f, { force: true });
+            }
+        }
+    } catch (_) { /* non-fatal */ }
     pidPath = deepclaudeDir + '/proxy.pid';
     fs.writeFileSync(pidPath, String(process.pid) + ':0', { flag: 'wx' });
 } catch (err: any) {
