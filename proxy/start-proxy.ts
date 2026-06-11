@@ -521,7 +521,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                     try {
                         if (!res.headersSent && !res.destroyed) {
                             res.writeHead(502);
-                            res.end(JSON.stringify(formatError(502, null, isDev)));
+                            res.end(JSON.stringify(formatError(502, { status: '502' }, isDev)));
                         }
                     } catch (_) { /* socket may already be destroyed */ }
                 });
@@ -1013,9 +1013,9 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                                 try {
                                     if (!res.headersSent && !res.destroyed) {
                                         res.writeHead(502, { 'content-type': 'application/json' });
-                                        res.end(JSON.stringify(formatError(502, null, isDev)));
+                                        res.end(JSON.stringify(formatError(502, { status: '502' }, isDev)));
                                     } else if (!res.destroyed) {
-                                        res.write('event: error\ndata: ' + JSON.stringify(formatError(502, null, isDev)) + '\n\n');
+                                        res.write('event: error\ndata: ' + JSON.stringify(formatError(502, { status: '502' }, isDev)) + '\n\n');
                                         res.end();
                                     }
                                 } catch (_) { /* socket may already be destroyed */ }
@@ -1129,7 +1129,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
         })().catch((err: Error) => {
             log.error(null, 'unhandled error in request handler: ' + truncateForLog(err.message || String(err)));
             try {
-                if (!res.headersSent && !res.destroyed) { res.writeHead(502); res.end(JSON.stringify(formatError(502, null, isDev))); }
+                if (!res.headersSent && !res.destroyed) { res.writeHead(502); res.end(JSON.stringify(formatError(502, { status: '502' }, isDev))); }
             } catch (_) { /* socket may already be destroyed */ }
         }).finally(() => {
             activeConnections--;

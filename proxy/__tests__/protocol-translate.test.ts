@@ -982,7 +982,7 @@ describe('createStreamTransformer', () => {
   test('destroys stream on buffer overflow', (done) => {
     const transformer = createStreamTransformer('test');
     transformer.on('error', (err: Error) => {
-      expect(err.message).toBe('SSE buffer too large');
+      expect(err.message).toBe('SSE buffer exceeded 1MB');
       done();
     });
     transformer.write(Buffer.alloc(1_048_577, 'x').toString());
