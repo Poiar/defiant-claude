@@ -47,6 +47,7 @@ const MAX_PENDING_ENTRIES = 10_000; // Prevent OOM on persistent disk failure
 let logAllEnabled = false;
 const pendingEntries: RequestLogEntry[] = [];
 let flushScheduled = false;
+let writeLock = false;  // Prevent concurrent rotation + write races
 
 // --- Scheduler ---
 
@@ -65,6 +66,8 @@ function flush(): void {
   // Drain the queue so new entries can be queued even if the write fails.
   const entries = pendingEntries.splice(0, pendingEntries.length);
 
+  if (writeLock) return;  // Another flush is already writing
+  writeLock = true;
   try {
     const logDir = path.dirname(getLogFilePath());
     if (!fs.existsSync(logDir)) {
@@ -85,6 +88,8 @@ function flush(): void {
     if (available > 0) {
       pendingEntries.unshift(...entries.slice(-available));
     }
+  } finally {
+    writeLock = false;
   }
 }
 
