@@ -42,7 +42,7 @@ if ($model -and (Test-Path $overridesFile)) {
   } catch {}
 }
 
-$modelKey = $model
+$modelKey = $model -replace '^[a-f0-9]{6,}:', ''   # Strip bare hex tab/session IDs
 $modelLookup = $modelKey -replace '^[a-z][a-z0-9_-]*:', ''
 
 $tokens = $d.context_window.total_input_tokens

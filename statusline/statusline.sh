@@ -68,7 +68,7 @@ try {
 } catch(e) {}
 
 // Resolve slot + providerKey for display
-const modelKey = model;
+const modelKey = model.replace(/^[a-f0-9]{6,}:/, '');   // Strip bare hex tab/session IDs
 const modelLookup = modelKey.replace(/^[a-z][a-z0-9_-]*:/, '');
 
 const tokens = d?.context_window?.total_input_tokens;
