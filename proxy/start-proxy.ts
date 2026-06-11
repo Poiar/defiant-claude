@@ -16,8 +16,8 @@ import { bodyHash, shouldUseCanary, recordCanaryResult, getOrCreateEntry, type C
 import { tryForward, addFallbackHeaders, sseHeaders, type ForwardHeaders, type ForwardResult } from './forward';
 import { sendProbe } from './probe';
 import type { ProbeSlot } from './probe';
-import { convertServerTools, populateToolResults } from './server-tools';
-import { isProviderHealthy, recordSpend, recordStat, recordUsage, recordRecentRequest, recordStreamMetrics, getFullHealthSnapshot, buildPrometheusMetrics, nextRequestId, checkBudget, setSessionCap, setDailyBudget, registerProviderInfo, maybeStartProbe, recordProbeResult, getRegisteredProviderKeys, getProviderInfo, setGitHash } from './stats';
+import { convertServerTools, populateToolResults, isServerToolType } from './server-tools';
+import { isProviderHealthy, recordSpend, recordStat, recordUsage, recordRecentRequest, recordStreamMetrics, getFullHealthSnapshot, buildPrometheusMetrics, nextRequestId, checkBudget, setSessionCap, setDailyBudget, registerProviderInfo, maybeStartProbe, recordProbeResult, getRegisteredProviderKeys, getProviderInfo, setGitHash, recordFallback } from './stats';
 import { serveDashboard } from './dashboard';
 import { formatError, formatExhaustedError, scrubCredentials, isStreamingClient } from './error-codes';
 import { truncateForLog } from './truncate';
@@ -688,17 +688,36 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
             if (parsedBody) {
                 try {
                     let modified = false;
-                    let toolsStripped = false; // Track if we stripped tools for retry on 400
 
+                    // Pre-execute web_search/web_fetch tools locally and strip
+                    // them from the request. DeepSeek doesn't support Anthropic
+                    // server-side tools, and converting to custom tools causes 400s.
+                    // Instead: execute the search locally, inject results into the
+                    // conversation, and forward without tools. The model can act on
+                    // the injected results but won't make new tool calls.
                     if (parsedBody.messages) {
+                        // 1) Pre-execute pending tool calls and populate results
                         const populated = await populateToolResults(parsedBody.messages as any[]);
                         if (populated) modified = true;
                     }
 
-                    const conv = convertServerTools(parsedBody.tools as any[]);
-                    if (conv.hasWebSearch || conv.hasWebFetch) {
-                        parsedBody.tools = conv.tools as any[];
-                        modified = true;
+                    // 2) If Anthropic server-side tools are present, strip them entirely.
+                    // The model already got search results from the pre-execution step;
+                    // stripping prevents DeepSeek from 400-ing on unrecognized tools.
+                    if (parsedBody.tools && Array.isArray(parsedBody.tools)) {
+                        const serverToolCount = (parsedBody.tools as any[]).filter(
+                            (t: any) => t && typeof t.type === 'string' && isServerToolType(t.type)
+                        ).length;
+                        if (serverToolCount > 0) {
+                            // Keep only non-Anthropic tools (text_editor, bash, etc.)
+                            parsedBody.tools = (parsedBody.tools as any[]).filter(
+                                (t: any) => !(t && typeof t.type === 'string' && isServerToolType(t.type))
+                            );
+                            if ((parsedBody.tools as any[]).length === 0) {
+                                delete parsedBody.tools;
+                            }
+                            modified = true;
+                        }
                     }
 
                     if (modified) { baseBody = Buffer.from(JSON.stringify(parsedBody)); bodyPreprocessed = true; }
@@ -769,6 +788,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                 // Track which model we're falling back from
                 if (isRetry && attempt === 1) {
                     fallbackFromModel = resolvedResult.primary.rewriteModel || model;
+                    recordFallback(fallbackFromModel || 'unknown', target.providerKey);
                 }
 
                 // Rewrite model for this target
@@ -972,23 +992,8 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                     // Success -> stop retrying
                     if (result.success) break;
 
-                    // Non-transport error (HTTP 4xx/5xx) -> stop retrying this provider,
-                    // UNLESS we can strip Anthropic server-side tools and retry once.
-                    // Many non-Anthropic providers (DeepSeek, etc.) reject requests that
-                    // contain tool definitions they don't support — even after conversion
-                    // to custom tools.  Stripping them lets the request succeed with the
-                    // provider using its own search/retrieval patterns.
-                    if (!result.transportError) {
-                        if (result.status === 400 && modified && !toolsStripped && parsedBody && parsedBody.tools && Array.isArray(parsedBody.tools) && parsedBody.tools.length > 0) {
-                            toolsStripped = true;
-                            parsedBody.tools = undefined;
-                            baseBody = Buffer.from(JSON.stringify(parsedBody));
-                            bodyPreprocessed = true;
-                            log.warn(reqId, target.providerKey + ' returned 400 with tools — retrying without tools');
-                            continue;
-                        }
-                        break;
-                    }
+                    // Non-transport error (HTTP 4xx/5xx) -> stop retrying this provider
+                    if (!result.transportError) break;
 
                     // Transport error, retries left -> backoff and retry
                     if (provAttempt < MAX_PER_PROVIDER_RETRIES) {

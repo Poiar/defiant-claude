@@ -86,6 +86,7 @@ param(
     [switch]$LogAll,
     [switch]$SkipStartupCheck,
     [switch]$Logs,
+    [switch]$Health,
     [Parameter(ValueFromRemainingArguments)]
     [string[]]$ModelSpecs
 )
@@ -165,6 +166,7 @@ if ($Backend -match '^--(.+)$') {
     elseif ($flag -eq 'log-all')         { $LogAll = $true }
     elseif ($flag -eq 'skip-startup-check') { $SkipStartupCheck = $true }
     elseif ($flag -eq 'logs' -or $flag -eq 'tail') { $Logs = $true }
+    elseif ($flag -eq 'health')          { $Health = $true }
     else {
         Write-Host "ERROR: Unknown flag '--$flag'. Use --help for available flags." -ForegroundColor Red
         exit 1
@@ -211,12 +213,46 @@ if ($Logs) {
     exit 0
 }
 
+# --- Health check ---
+if ($Health) {
+    $stateFile = Join-Path $DeepClaudeDir "proxy.json"
+    if (-not (Test-Path $stateFile)) {
+        Write-Host "No proxy running. Start one first." -ForegroundColor Yellow
+        exit 1
+    }
+    $state = Get-Content $stateFile -Raw | ConvertFrom-Json
+    $health = Invoke-RestMethod -Uri "http://127.0.0.1:$($state.port)/health" -TimeoutSec 5
+    $providers = $health.providers
+    $healthy = 0; $down = 0; $total = 0
+    foreach ($p in $providers.PSObject.Properties) {
+        $total++
+        $cb = $p.Value.circuitBreaker
+        if ($cb -eq 'OPEN') { $down++ } else { $healthy++ }
+    }
+    $spendFile = Join-Path $DeepClaudeDir "spend.json"
+    $sessionSpend = ''
+    if (Test-Path $spendFile) {
+        try {
+            $sp = Get-Content $spendFile -Raw | ConvertFrom-Json
+            if ($sp.sessions -and $sp.sessions[0].total) {
+                $sessionSpend = " | `$$([math]::Round($sp.sessions[0].total, 2)) session"
+            }
+        } catch {}
+    }
+    Write-Host "$healthy/$total up ${sessionSpend}" -ForegroundColor $(if ($down -eq 0) { 'Green' } elseif ($healthy -gt 0) { 'Yellow' } else { 'Red' })
+    if ($down -gt 0) {
+        $openList = ($providers.PSObject.Properties | Where-Object { $_.Value.circuitBreaker -eq 'OPEN' }).Name -join ', '
+        Write-Host "  down: $openList" -ForegroundColor Red
+    }
+    exit 0
+}
+
 # Gather all positional specs: first goes to $Backend, rest to $ModelSpecs
 $AllSpecs = @()
 if ($Backend) { $AllSpecs += $Backend }
 if ($ModelSpecs) { $AllSpecs += $ModelSpecs }
 
-if (-not $AllSpecs -and -not $Status -and -not $Cost -and -not $Benchmark -and -not $Help -and -not $Lint -and -not $LintConfig -and -not $FixAv -and -not $Switch -and -not $SetSlot -and -not $SubagentModel -and -not $Models -and -not $StopProxy -and -not $Version -and -not $Doctor -and -not $Stats -and -not $PSBoundParameters.ContainsKey('ProbeFile') -and -not $DryRun -and -not $Logs) {
+if (-not $AllSpecs -and -not $Status -and -not $Cost -and -not $Benchmark -and -not $Help -and -not $Lint -and -not $LintConfig -and -not $FixAv -and -not $Switch -and -not $SetSlot -and -not $SubagentModel -and -not $Models -and -not $StopProxy -and -not $Version -and -not $Doctor -and -not $Stats -and -not $PSBoundParameters.ContainsKey('ProbeFile') -and -not $DryRun -and -not $Logs -and -not $Health) {
     $AllSpecs = @(if ($env:DEEPCLAUDE_DEFAULT_BACKEND) { $env:DEEPCLAUDE_DEFAULT_BACKEND } elseif ($env:CHEAPCLAUDE_DEFAULT_BACKEND) { $env:CHEAPCLAUDE_DEFAULT_BACKEND } else { "ds" })
 }
 
@@ -1047,6 +1083,7 @@ if ($Help) {
     Write-Host "  --log-all       Log all requests to ~/.deepclaude/requests.log"
     Write-Host "  --skip-startup-check  Skip the provider health check on proxy startup"
     Write-Host "  --logs, --tail   Tail the proxy log (~/.deepclaude/proxy.log)"
+    Write-Host "  --health         Quick health check (one-line summary)"
     Write-Host "  --subagent-model MODEL  Set a dedicated subagent model (e.g., oc:big-pickle)"
     Write-Host "  --version       Print version and proxy path"
     Write-Host "  --effort LEVEL  Set Claude Code effort level (default: max). Values: low, medium, high, max."

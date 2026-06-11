@@ -99,6 +99,18 @@ if (Test-Path $proxyFile) {
             'CLOSED'    { "$bold$(fg 80 200 120)·$reset" }
           }
         }
+        # Fallback indicator — show if failover happened in last 10 min
+        if ($health.lastFallback) {
+          $age = [math]::Round(((Get-Date) - [datetime]::Parse($health.lastFallback.at)).TotalMinutes)
+          if ($age -lt 10) {
+            $cbIndicator += " $bold" + (fg 255 180 50) + "↳" + $health.lastFallback.to + $reset
+          }
+        }
+        # Budget warning
+        if ($health.budgetWarning -and $health.budgetWarning.level -ne 'info') {
+          $color = if ($health.budgetWarning.level -eq 'red') { (fg 255 80 80) } else { (fg 255 180 50) }
+          $cbIndicator += " $bold" + $color + "⚠ " + $health.budgetWarning.message + $reset
+        }
       }
     }
   } catch {}
