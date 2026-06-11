@@ -87,6 +87,17 @@ while IFS=$'\t' read -r model limit; do
     MODEL_CTX["$model"]="$limit"
 done < <(jq -r '.contextLimits | to_entries[] | [.key, .value] | @tsv' "$REGISTRY_FILE")
 
+# --- Per-model compaction window (tokens, from providers.json) ---
+# If a model has a compactionWindow, it overrides the auto-calculated value from
+# contextLimits. DeepSeek models push near the wall — compaction rewrites history,
+# invalidating the disk cache prefix (cache miss = 50× more expensive).
+declare -A COMPACTION_WINDOW
+if jq -e '.compactionWindow' "$REGISTRY_FILE" > /dev/null 2>&1; then
+    while IFS=$'\t' read -r model limit; do
+        COMPACTION_WINDOW["$model"]="$limit"
+    done < <(jq -r '.compactionWindow | to_entries[] | [.key, .value] | @tsv' "$REGISTRY_FILE")
+fi
+
 get_provider_key() {
     local pk="$1"
     case "$pk" in
@@ -479,18 +490,29 @@ set_cc_env() {
     export CLAUDE_CODE_EFFORT_LEVEL="$EFFORT"
     unset ANTHROPIC_API_KEY 2>/dev/null || true
 
-    local opus_ctx="${MODEL_CTX[$opus_ctxt_model]:-}"
+    local opus_ctx="${COMPACTION_WINDOW[$opus_ctxt_model]:-}"
     if [[ -n "$opus_ctx" ]]; then
-        if (( opus_ctx >= 1048576 )); then
-            export CLAUDE_CODE_AUTO_COMPACT_WINDOW="$opus_ctx"
-        elif (( opus_ctx >= 200000 )); then
-            export CLAUDE_CODE_MAX_CONTEXT_TOKENS="$opus_ctx"
-            export DISABLE_COMPACT="1"
-        elif (( opus_ctx > 131072 )); then
-            export CLAUDE_CODE_MAX_CONTEXT_TOKENS="$opus_ctx"
-            export DISABLE_COMPACT="1"
+        # Per-model compaction window (from compactionWindow in providers.json)
+        if (( opus_ctx >= 1000000 )); then
+            export CLAUDE_CODE_AUTO_COMPACT_WINDOW="1000000"
         else
             export CLAUDE_CODE_AUTO_COMPACT_WINDOW="$opus_ctx"
+        fi
+    else
+        # Fall back to full context limit (pre-compactionWindow behavior)
+        local opus_ctx_fallback="${MODEL_CTX[$opus_ctxt_model]:-}"
+        if [[ -n "$opus_ctx_fallback" ]]; then
+            if (( opus_ctx_fallback >= 1048576 )); then
+                export CLAUDE_CODE_AUTO_COMPACT_WINDOW="$opus_ctx_fallback"
+            elif (( opus_ctx_fallback >= 200000 )); then
+                export CLAUDE_CODE_MAX_CONTEXT_TOKENS="$opus_ctx_fallback"
+                export DISABLE_COMPACT="1"
+            elif (( opus_ctx_fallback > 131072 )); then
+                export CLAUDE_CODE_MAX_CONTEXT_TOKENS="$opus_ctx_fallback"
+                export DISABLE_COMPACT="1"
+            else
+                export CLAUDE_CODE_AUTO_COMPACT_WINDOW="$opus_ctx_fallback"
+            fi
         fi
     fi
 
