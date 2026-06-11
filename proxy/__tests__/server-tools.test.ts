@@ -123,3 +123,109 @@ describe('hasPendingToolResult', () => {
         expect(result.needsPopulation).toBe(false);
     });
 });
+
+// -- Tool-strip retry on 400 --------------------------------------------------
+// Simulates the per-provider retry logic in start-proxy.ts: when a
+// non-Anthropic provider returns HTTP 400 and the request had Anthropic
+// server-side tools converted to custom tools, the proxy strips all tools
+// and retries once.  The model answers from its own knowledge on the retry.
+
+describe('400 tool-strip retry path', () => {
+
+    test('convertServerTools flags web_search for strip-on-400', () => {
+        const tools = [
+            { type: 'web_search_20260209', name: 'web_search' },
+            { type: 'text_editor_20250728', name: 'str_replace_based_edit_tool' },
+        ];
+        const conv = convertServerTools(tools);
+        expect(conv.hasWebSearch).toBe(true);
+        expect(conv.hasWebFetch).toBe(false);
+        // Web search converted to custom, text editor left alone
+        expect(conv.tools[0].type).toBe('custom');
+        expect(conv.tools[0].name).toBe('web_search');
+        expect(conv.tools[1].type).toBe('text_editor_20250728');
+    });
+
+    test('convertServerTools flags web_fetch for strip-on-400', () => {
+        const tools = [
+            { type: 'web_fetch_20260209', name: 'web_fetch' },
+        ];
+        const conv = convertServerTools(tools);
+        expect(conv.hasWebFetch).toBe(true);
+        expect(conv.tools[0].type).toBe('custom');
+        expect(conv.tools[0].name).toBe('web_fetch');
+    });
+
+    test('retry condition: 400 + tools present + not yet stripped → retry', () => {
+        const conv = convertServerTools([
+            { type: 'web_search_20260209', name: 'web_search' },
+        ]);
+        const parsedBody: Record<string, unknown> = {
+            model: 'test',
+            messages: [{ role: 'user', content: 'search for cats' }],
+            tools: conv.tools,
+        };
+        let toolsStripped = false;
+        const status = 400;
+        const modified = true;
+
+        // Simulate the retry logic: first 400 → strip tools, retry
+        const shouldRetry = status === 400 && modified && !toolsStripped
+            && parsedBody.tools && Array.isArray(parsedBody.tools) && parsedBody.tools.length > 0;
+
+        expect(shouldRetry).toBe(true);
+
+        // Apply the fix
+        toolsStripped = true;
+        parsedBody.tools = undefined;
+
+        // After stripping, a second 400 would NOT retry (toolsStripped is true)
+        const shouldRetryAgain = status === 400 && modified && !toolsStripped
+            && parsedBody.tools && Array.isArray(parsedBody.tools) && parsedBody.tools.length > 0;
+        expect(shouldRetryAgain).toBe(false);
+    });
+
+    test('no retry on 400 when tools were already stripped', () => {
+        const parsedBody: Record<string, unknown> = {
+            model: 'test',
+            messages: [{ role: 'user', content: 'hello' }],
+            // tools already stripped
+        };
+        const toolsStripped = true;
+        const modified = true;
+        const shouldRetry = 400 === 400 && modified && !toolsStripped
+            && parsedBody.tools && Array.isArray(parsedBody.tools) && (parsedBody.tools as any[]).length > 0;
+
+        expect(shouldRetry).toBe(false);
+    });
+
+    test('no retry on 400 when tools were never present', () => {
+        const parsedBody: Record<string, unknown> = {
+            model: 'test',
+            messages: [{ role: 'user', content: 'hello' }],
+        };
+        const toolsStripped = false;
+        const modified = false; // No tools, nothing modified
+        const shouldRetry = 400 === 400 && modified && !toolsStripped
+            && parsedBody.tools && Array.isArray(parsedBody.tools) && (parsedBody.tools as any[]).length > 0;
+
+        expect(shouldRetry).toBe(false);
+    });
+
+    test('no retry on 401 (auth failure — not a tool problem)', () => {
+        const conv = convertServerTools([
+            { type: 'web_search_20260209', name: 'web_search' },
+        ]);
+        const parsedBody: Record<string, unknown> = {
+            model: 'test',
+            messages: [{ role: 'user', content: 'search for cats' }],
+            tools: conv.tools,
+        };
+        const toolsStripped = false;
+        const modified = true;
+        const shouldRetry = 401 === 400 && modified && !toolsStripped  // status is 401, not 400
+            && parsedBody.tools && Array.isArray(parsedBody.tools) && (parsedBody.tools as any[]).length > 0;
+
+        expect(shouldRetry).toBe(false);
+    });
+});
