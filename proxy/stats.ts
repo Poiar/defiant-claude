@@ -616,10 +616,10 @@ try {
   }
 } catch (_) { /* continue without provider budgets */ }
 
-function lookupPrice(modelName: string): { input: number; output: number } | null {
-  if (pricingData[modelName]) return pricingData[modelName];
+function lookupPrice(modelName: string): { input: number; output: number; inputCacheHit?: number; inputCacheMiss?: number } | null {
+  if (pricingData[modelName]) return pricingData[modelName] as { input: number; output: number; inputCacheHit?: number; inputCacheMiss?: number };
   const stripped = modelName.replace(/^[a-z][a-z0-9_-]*:/, '');
-  if (stripped !== modelName && pricingData[stripped]) return pricingData[stripped];
+  if (stripped !== modelName && pricingData[stripped]) return pricingData[stripped] as { input: number; output: number; inputCacheHit?: number; inputCacheMiss?: number };
   return null;
 }
 
@@ -632,11 +632,21 @@ export function recordProviderSpend(providerKey: string, amount: number): void {
   } catch (_) { /* non-fatal */ }
 }
 
-export async function recordSpend(modelName: string, usage: { prompt_tokens: number; completion_tokens: number }, providerKey?: string): Promise<void> {
+export async function recordSpend(modelName: string, usage: { prompt_tokens: number; completion_tokens: number; cache_hit_tokens?: number; cache_miss_tokens?: number }, providerKey?: string): Promise<void> {
   const price = lookupPrice(modelName);
   if (!price) return;
 
-  const cost = (usage.prompt_tokens / 1_000_000) * price.input + (usage.completion_tokens / 1_000_000) * price.output;
+  let cost: number;
+  // Use granular cache hit/miss pricing when both the pricing entry and usage data support it
+  if (price.inputCacheHit !== undefined && price.inputCacheMiss !== undefined
+      && typeof usage.cache_hit_tokens === 'number' && typeof usage.cache_miss_tokens === 'number'
+      && (usage.cache_hit_tokens + usage.cache_miss_tokens) > 0) {
+    cost = (usage.cache_hit_tokens / 1_000_000) * price.inputCacheHit
+         + (usage.cache_miss_tokens / 1_000_000) * price.inputCacheMiss
+         + (usage.completion_tokens / 1_000_000) * price.output;
+  } else {
+    cost = (usage.prompt_tokens / 1_000_000) * price.input + (usage.completion_tokens / 1_000_000) * price.output;
+  }
   runningTotal += cost;
   sessionTotal += cost;
   dailyAccumulator += cost;
