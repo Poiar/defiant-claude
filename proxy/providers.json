@@ -211,11 +211,11 @@
     "ds+or": { "name": "DeepSeek + OpenRouter subs",              "opus": "ds:deepseek-v4-pro", "sonnet": "ds:deepseek-v4-pro", "haiku": "or:z-ai/glm-4.5-air:free", "sub": "or:z-ai/glm-4.5-air:free", "fable": "ds:deepseek-v4-pro" }
   },
   "pricing": {
-    "_comment": "All prices per million tokens (USD). Input = cache-miss rate (worst case).",
-    "deepseek-v4-pro": { "input": 0.435, "output": 0.87 },
-    "deepseek-v4-flash": { "input": 0.14, "output": 0.28 },
-    "deepseek/deepseek-v4-pro": { "input": 0.435, "output": 0.87 },
-    "deepseek/deepseek-v4-flash": { "input": 0.14, "output": 0.28 },
+    "_comment": "All prices per million tokens (USD). input = cache-miss (worst case). input_cache_hit / input_cache_miss = granular DeepSeek pricing. output is flat rate.",
+    "deepseek-v4-pro": { "input": 0.435, "input_cache_hit": 0.003625, "input_cache_miss": 0.435, "output": 0.87 },
+    "deepseek-v4-flash": { "input": 0.14, "input_cache_hit": 0.0028, "input_cache_miss": 0.14, "output": 0.28 },
+    "deepseek/deepseek-v4-pro": { "input": 0.435, "input_cache_hit": 0.003625, "input_cache_miss": 0.435, "output": 0.87 },
+    "deepseek/deepseek-v4-flash": { "input": 0.14, "input_cache_hit": 0.0028, "input_cache_miss": 0.14, "output": 0.28 },
     "accounts/fireworks/models/deepseek-v4-pro": { "input": 0.40, "output": 1.10 },
     "openai/gpt-oss-120b:free": { "input": 0, "output": 0 },
     "poolside/laguna-m.1:free": { "input": 0, "output": 0 },

@@ -89,7 +89,7 @@ export interface ForwardResult {
     headers?: ForwardHeaders;
     body?: Buffer;
     stream?: NodeJS.ReadableStream;
-    streamUsage?: { prompt_tokens: number; completion_tokens: number } | null;
+    streamUsage?: { prompt_tokens: number; completion_tokens: number; cache_hit_tokens: number; cache_miss_tokens: number } | null;
     error?: string;
     rawBody?: string | null;
     transportError?: boolean;
@@ -231,7 +231,7 @@ export function tryForward(
     const forwardStart = Date.now();
 
     return new Promise((resolve) => {
-        const streamUsage: { prompt_tokens: number; completion_tokens: number } = { prompt_tokens: 0, completion_tokens: 0 };
+        const streamUsage: { prompt_tokens: number; completion_tokens: number; cache_hit_tokens: number; cache_miss_tokens: number } = { prompt_tokens: 0, completion_tokens: 0, cache_hit_tokens: 0, cache_miss_tokens: 0 };
         let timings: StreamTimings | null = null;
         let responseStarted = false;
         let firstByteTimer: ReturnType<typeof setTimeout> | null = null;
@@ -419,6 +419,11 @@ export function tryForward(
                                     if (pt !== undefined || ct !== undefined) {
                                         streamUsage.prompt_tokens = pt || 0; streamUsage.completion_tokens = ct || 0;
                                     }
+                                    // Capture cache hit/miss breakdown for providers that report it (DeepSeek)
+                                    if (typeof parsedPayload.usage.prompt_cache_hit_tokens === 'number') {
+                                        streamUsage.cache_hit_tokens = parsedPayload.usage.prompt_cache_hit_tokens;
+                                        streamUsage.cache_miss_tokens = (parsedPayload.usage.prompt_cache_miss_tokens as number) || 0;
+                                    }
                                 }
                             } catch (_) { /* non-fatal */ }
                         }
@@ -539,6 +544,10 @@ export function tryForward(
                                 const ct = original.usage.completion_tokens !== undefined ? original.usage.completion_tokens : original.usage.output_tokens;
                                 if (pt !== undefined || ct !== undefined) {
                                     streamUsage.prompt_tokens = pt || 0; streamUsage.completion_tokens = ct || 0;
+                                }
+                                if (typeof original.usage.prompt_cache_hit_tokens === 'number') {
+                                    streamUsage.cache_hit_tokens = original.usage.prompt_cache_hit_tokens;
+                                    streamUsage.cache_miss_tokens = (original.usage.prompt_cache_miss_tokens as number) || 0;
                                 }
                             }
                         } catch (_) { /* non-fatal */ }
