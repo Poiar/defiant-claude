@@ -147,7 +147,13 @@ if ($Backend -match '^--(.+)$') {
         $ModelSpecs = if ($ModelSpecs.Count -gt 1) { $ModelSpecs[1..($ModelSpecs.Count-1)] } else { @() }
     }
     elseif ($flag -eq 'probe')           { $ProbeFile = '' }
-    elseif ($flag -eq 'dry-run' -or $flag -eq 'what-if') { $DryRun = $true }
+    elseif ($flag -eq 'dry-run' -or $flag -eq 'what-if') {
+        $DryRun = $true
+        if ($ModelSpecs -and $ModelSpecs.Count -gt 0 -and $ModelSpecs[0] -notmatch '^-|:') {
+            $DryRunFile = $ModelSpecs[0]
+            $ModelSpecs = if ($ModelSpecs.Count -gt 1) { $ModelSpecs[1..($ModelSpecs.Count-1)] } else { @() }
+        }
+    }
     elseif ($flag -eq 'dashboard')       { $Dashboard = $true }
     elseif ($flag -eq 'open')            { $Open = $true }
     elseif ($flag -eq 'log-all')         { $LogAll = $true }
@@ -1680,6 +1686,11 @@ if (-not $IsAnthropic -and $AllSpecs.Count -gt 0) {
 
 # Set Claude Code effort level for all launch paths
 $env:CLAUDE_CODE_EFFORT_LEVEL = $Effort
+
+# --- Launch ---
+if ($Open -and -not $Dashboard) {
+    Write-Host "  NOTE: --open only has effect with --dashboard" -ForegroundColor DarkGray
+}
 
 # --- Remote ---
 if ($Remote) {

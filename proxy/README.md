@@ -15,12 +15,11 @@ claude remote-control
 ## Usage
 
 ```javascript
-import { startModelProxy } from './model-proxy.js';
+// The proxy is started via the launcher scripts (deepclaude.ps1 / deepclaude.sh)
+// or directly:
+//   npx tsx proxy/start-proxy.ts --url <upstream> --key <api-key>
 
-const proxy = await startModelProxy({
-    targetUrl: 'https://api.deepseek.com/anthropic',
-    apiKey: process.env.DEEPSEEK_API_KEY,
-});
+// Example: manually forward to DeepSeek's Anthropic-compatible endpoint
 
 console.log(`Proxy on port ${proxy.port}`);
 
