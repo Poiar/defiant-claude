@@ -118,9 +118,25 @@ mask_key() {
 write_atomic() {
     local path="$1" content="$2"
     local tmp="${path}.tmp"
+    local lock="${path}.lock"
+    # Advisory file lock: retry up to 10 times (50ms each) if another
+    # session is writing this state file. Stale locks (dead PID) are broken.
+    local retry=0
+    while [[ $retry -lt 10 ]]; do
+        if [[ -f "$lock" ]]; then
+            local lock_pid=$(grep -oP 'pid=\K\d+' "$lock" 2>/dev/null || echo "0")
+            if [[ "$lock_pid" -gt 0 ]] && kill -0 "$lock_pid" 2>/dev/null; then
+                sleep 0.05; retry=$((retry + 1)); continue
+            fi
+            rm -f "$lock" 2>/dev/null
+        fi
+        printf 'pid=%s\nts=%s\n' "$$" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$lock"
+        break
+    done
     printf '%s' "$content" > "$tmp"
     rm -f "$path"
     mv "$tmp" "$path"
+    rm -f "$lock" 2>/dev/null
     chmod 600 "$path" 2>/dev/null || true
 }
 

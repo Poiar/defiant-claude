@@ -41,10 +41,8 @@ interface AnthropicRequestBody {
     max_tokens?: number;
     temperature?: number;
     top_p?: number;
-    top_k?: number;
     stop_sequences?: string[];
     tool_choice?: unknown;
-    metadata?: Record<string, unknown>;
 }
 
 interface OpenAIToolCall {
@@ -69,10 +67,8 @@ interface OpenAIRequestBody {
     max_tokens?: number;
     temperature?: number;
     top_p?: number;
-    top_k?: number;
     stop?: string[];
     tool_choice?: unknown;
-    metadata?: Record<string, unknown>;
 }
 
 interface OpenAIChoice {
@@ -178,8 +174,8 @@ export function translateRequest(anthropicBody: AnthropicRequestBody): { openaiB
     if (anthropicBody.max_tokens !== undefined) openaiBody.max_tokens = anthropicBody.max_tokens;
     if (anthropicBody.temperature !== undefined) openaiBody.temperature = anthropicBody.temperature;
     if (anthropicBody.top_p !== undefined) openaiBody.top_p = anthropicBody.top_p;
-    if (anthropicBody.top_k !== undefined) openaiBody.top_k = anthropicBody.top_k;
-    if (anthropicBody.metadata !== undefined) openaiBody.metadata = anthropicBody.metadata;
+    // top_k and metadata are Anthropic-specific — not forwarded to OpenAI providers
+    // as they cause 400 errors on standard OpenAI-compatible endpoints.
     if (anthropicBody.stop_sequences && anthropicBody.stop_sequences.length) {
         openaiBody.stop = anthropicBody.stop_sequences;
     }
