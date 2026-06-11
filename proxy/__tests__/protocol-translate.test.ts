@@ -1007,4 +1007,78 @@ describe('createStreamTransformer', () => {
     expect(msg.id).toBeDefined();
     expect(msg.id).toMatch(/^msg_/);
   });
+
+  // -- Error propagation -------------------------------------------------------
+
+  test('upstream error event produces message_stop', () => {
+    const transformer = createStreamTransformer('sonnet');
+    const events: Array<{ event?: string; data: unknown }> = [];
+    transformer.on('data', (chunk: string | Buffer) => {
+      const str = chunk.toString();
+      const sseEvents = str.split('\n\n').filter(Boolean);
+      for (const evt of sseEvents) {
+        const lines = evt.split('\n');
+        const ev: { event?: string; data: unknown } = {};
+        for (const line of lines) {
+          if (line.startsWith('event: ')) ev.event = line.slice(7);
+          if (line.startsWith('data: ')) {
+            try { ev.data = JSON.parse(line.slice(6)); } catch (_) { ev.data = line.slice(6); }
+          }
+        }
+        if (ev.data !== undefined) events.push(ev);
+      }
+    });
+    transformer.write('data: {"error":{"type":"api_error","message":"content filter"}}\n\n');
+    transformer.end();
+    const hasError = events.some(e => e.event === 'error');
+    const hasStop = events.some(e => e.data && typeof e.data === 'object' && (e.data as Record<string,unknown>).type === 'message_stop');
+    expect(hasError).toBe(true);
+    expect(hasStop).toBe(true);
+  });
+});
+
+describe('document content block translation', () => {
+  const { translateRequest } = require('../protocol-translate');
+
+  test('document block with base64 source produces data URI and annotation', () => {
+    const body = {
+      model: 'sonnet:ds:deepseek-v4-pro',
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Analyze this PDF' },
+          { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: 'JVBERi0xLjQK' } },
+        ],
+      }],
+      max_tokens: 100,
+    };
+    const result = translateRequest(body);
+    const lastMsg = result.openaiBody.messages[result.openaiBody.messages.length - 1];
+    const content = (lastMsg as any).content as Array<Record<string, unknown>>;
+    const imageUrls = content.filter(c => c.type === 'image_url');
+    expect(imageUrls.length).toBe(1);
+    expect((imageUrls[0] as any).image_url.url).toContain('data:application/pdf;base64,');
+    const annotations = content.filter(c => c.type === 'text' && (c as any).text?.includes('[Attached document:'));
+    expect(annotations.length).toBe(1);
+  });
+
+  test('document block with URL source includes actual URL', () => {
+    const body = {
+      model: 'sonnet:ds:deepseek-v4-pro',
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Check this file' },
+          { type: 'document', source: { type: 'url', url: 'https://example.com/report.pdf', media_type: 'application/pdf' } },
+        ],
+      }],
+      max_tokens: 100,
+    };
+    const result = translateRequest(body);
+    const lastMsg = result.openaiBody.messages[result.openaiBody.messages.length - 1];
+    const content = (lastMsg as any).content as Array<Record<string, unknown>>;
+    const imageUrls = content.filter(c => c.type === 'image_url');
+    expect(imageUrls.length).toBe(1);
+    expect((imageUrls[0] as any).image_url.url).toBe('https://example.com/report.pdf');
+  });
 });

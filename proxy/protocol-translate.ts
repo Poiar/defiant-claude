@@ -252,7 +252,9 @@ function convertMessage(msg: AnthropicMessage): OpenAIMessage | OpenAIMessage[] 
                     const mediaType = block.source.media_type || 'application/octet-stream';
                     const docName = (block as any).title || (block as any).file_name || 'document';
                     if (block.source.type === 'url' && (block.source as any).url) {
+                        const docUrl = (block.source as any).url as string;
                         content.push({ type: 'text', text: '[Attached document: ' + docName + ' (' + mediaType + ')]' });
+                        content.push({ type: 'image_url', image_url: { url: docUrl } });
                     } else {
                         content.push({
                             type: 'image_url',
@@ -452,7 +454,9 @@ export function createStreamTransformer(model: string): Transform {
             const apiError = upstreamError.type === 'api_error'
                 ? { type: 'error', error: upstreamError }
                 : { type: 'error', error: { type: 'api_error', message: upstreamError.message || String(upstreamError) } };
-            return emit('error', apiError);
+            let output = emit('error', apiError);
+            output += finishStream('end_turn');
+            return output;
         }
 
         const choice = parsed.choices && parsed.choices[0];

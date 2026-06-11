@@ -77,7 +77,11 @@ export function buildFriendlyStreamEvents(lastStatus: number | null | undefined,
 
     const stopEvent = { type: 'message_stop' };
 
-    return 'event: error\ndata: ' + JSON.stringify(errorEvent) + '\n\n' +
+    const msgId = 'msg_exhausted_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+    const messageStart = { type: 'message_start', message: { id: msgId, type: 'message', role: 'assistant', model: model || 'unknown', content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 0, output_tokens: 0 } } };
+
+    return 'event: message_start\ndata: ' + JSON.stringify(messageStart) + '\n\n' +
+        'event: error\ndata: ' + JSON.stringify(errorEvent) + '\n\n' +
         'event: message_stop\ndata: ' + JSON.stringify(stopEvent) + '\n\n' +
         'data: [DONE]\n\n';
 };

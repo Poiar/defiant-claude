@@ -86,6 +86,18 @@ describe('formatError', () => {
         expect(err.error_code).toBe('E006');
     });
 
+    test('formatError(402) returns E014 BUDGET_EXCEEDED, not generic E006', () => {
+        const err = formatError(402);
+        expect(err.error_code).toBe('E014');
+        expect(err.message).toContain('Budget limit reached');
+    });
+
+    test('formatError(402) interpolates {reason} into message', () => {
+        const err = formatError(402, { reason: 'Daily cap of $5.00 reached' });
+        expect(err.message).toContain('Daily cap of $5.00 reached');
+        expect(err.error_code).toBe('E014');
+    });
+
     test('omits symbolic error code in production mode', () => {
         const err = formatError(401, null, false);
         expect(err.code).toBeUndefined();

@@ -91,11 +91,17 @@ describe('buildFriendlyStreamEvents', () => {
 
     test('has valid JSON in error event data', () => {
         const events = buildFriendlyStreamEvents(502, 'claude-sonnet-4', [{ providerKey: 'anthropic' }]);
-        const dataLine = events.match(/data: (.+)/);
-        expect(dataLine).not.toBeNull();
-        const parsed = JSON.parse(dataLine![1]);
+        // Find the error event (now preceded by message_start)
+        const dataLines = [...events.matchAll(/data: (.+)/g)];
+        expect(dataLines.length).toBeGreaterThanOrEqual(3);
+        const errorLine = dataLines.find(d => d[1].includes('"error_code"'));
+        expect(errorLine).not.toBeUndefined();
+        const parsed = JSON.parse(errorLine![1]);
         expect(parsed.type).toBe('error');
         expect(parsed.error.type).toBe('api_error');
         expect(parsed._deepclaude.error_code).toBe('E012');
+        // Verify message_start is present
+        const msgStartLine = dataLines.find(d => d[1].includes('"message_start"'));
+        expect(msgStartLine).not.toBeUndefined();
     });
 });

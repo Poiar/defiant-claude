@@ -470,16 +470,21 @@ export function tryForward(
                 });
                 proxyRes.on('end', () => {
                     let responseBody = Buffer.concat(chunks);
+                    const originalBodyBuf = responseBody; // Keep before decompression for usage extraction
                     // Decompress gzip-encoded responses if upstream ignored accept-encoding
                     if (typeof proxyRes.headers['content-encoding'] === 'string' && proxyRes.headers['content-encoding'].includes('gzip')) {
                         try {
                             responseBody = zlib.gunzipSync(responseBody);
                         } catch (_) { /* decompression failure — fall through to existing error handling */ }
                     }
+                    // Parse response once to avoid redundant JSON.parse blocking the event loop
+                    let parsedResponse: Record<string, unknown> | null = null;
+                    try { parsedResponse = JSON.parse(responseBody.toString()); } catch (_) { /* defer to translation error handling */ }
                     let translationFailed = false;
                     if (isOpenAI) {
                         try {
-                            const openaiResp = JSON.parse(responseBody.toString());
+                            if (!parsedResponse) throw new Error('Failed to parse upstream response');
+                            const openaiResp = parsedResponse;
 
                             // Extract reasoning content from OpenAI response before translation
                             try {
@@ -503,7 +508,8 @@ export function tryForward(
                         }
                     } else {
                         try {
-                            const resp = JSON.parse(responseBody.toString());
+                            if (!parsedResponse) throw new Error('Failed to parse upstream response');
+                            const resp = parsedResponse;
                             if (resp.content && Array.isArray(resp.content)) {
                                 const responseMsg = { role: 'assistant', content: resp.content };
                                 const fullMessages = parsed && parsed.messages ? [...(parsed.messages as Array<Record<string, unknown>>), responseMsg] : [responseMsg];
@@ -526,7 +532,7 @@ export function tryForward(
                     } else {
                         // Extract usage from original response body for non-streaming requests
                         try {
-                            const originalText = Buffer.concat(chunks).toString();
+                            const originalText = originalBodyBuf.toString();
                             const original = JSON.parse(originalText);
                             if (original.usage) {
                                 const pt = original.usage.prompt_tokens !== undefined ? original.usage.prompt_tokens : original.usage.input_tokens;
@@ -536,7 +542,7 @@ export function tryForward(
                                 }
                             }
                         } catch (_) { /* non-fatal */ }
-                        // Quality checks on non-streaming response
+                        // Quality checks on non-streaming response — reuse parsed objects
                         let qualityReason = '';
                         if (!qualityReason && streamUsage && streamUsage.completion_tokens > 0) {
                             try {
@@ -556,17 +562,12 @@ export function tryForward(
                             }
                         }
                         if (!qualityReason) {
-                            try {
-                                const parsed = JSON.parse(responseBody.toString());
-                                if (parsed.content && Array.isArray(parsed.content) && parsed.content.length === 0) {
-                                    qualityReason = 'Response contains no content';
-                                }
-                            } catch (_) { /* non-fatal */ }
+                            if (parsedResponse && parsedResponse.content && Array.isArray(parsedResponse.content) && parsedResponse.content.length === 0) {
+                                qualityReason = 'Response contains no content';
+                            }
                         }
                         if (!qualityReason) {
-                            try {
-                                JSON.parse(responseBody.toString());
-                            } catch (_) {
+                            if (!parsedResponse) {
                                 qualityReason = 'Response body is not valid JSON';
                             }
                         }
