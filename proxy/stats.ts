@@ -369,6 +369,9 @@ export function getFullHealthSnapshot(concurrencyStatus: unknown, rateLimiterSta
 export function isProviderHealthy(providerKey: string): boolean {
     const state = getCircuitBreakerState(providerKey);
     if (state === 'OPEN') return false;
+    // HALF_OPEN: a probe is in-flight — don't send production traffic
+    // until the probe confirms the provider is actually reachable again.
+    if (state === 'HALF_OPEN') return false;
     return true;
 };
 

@@ -172,7 +172,7 @@ describe('circuit breaker state machine', () => {
         expect(isProviderHealthy('unhealthy-open')).toBe(false);
     });
 
-    test('isProviderHealthy returns true for HALF_OPEN', () => {
+    test('isProviderHealthy returns false for HALF_OPEN (probe in-flight)', () => {
         const key = 'half-healthy';
         reg(key);
         openCircuitBreaker(key);
@@ -180,6 +180,19 @@ describe('circuit breaker state machine', () => {
         entry.openedAt = Date.now() - 120000;
         maybeStartProbe(key);
         expect(getBreakerState(key)).toBe('HALF_OPEN');
+        expect(isProviderHealthy(key)).toBe(false);  // Don't route to probing provider
+    });
+
+    test('isProviderHealthy returns true after successful probe closes breaker', () => {
+        const key = 'half-recovered';
+        reg(key);
+        openCircuitBreaker(key);
+        const entry = getBreakerEntry(key)!;
+        entry.openedAt = Date.now() - 120000;
+        maybeStartProbe(key);
+        expect(getBreakerState(key)).toBe('HALF_OPEN');
+        recordProbeResult(key, true);
+        expect(getBreakerState(key)).toBe('CLOSED');
         expect(isProviderHealthy(key)).toBe(true);
     });
 
