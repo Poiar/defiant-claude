@@ -330,16 +330,40 @@ function Test-ContextLengthError($msg) {
 
 function Write-AtomicFile($path, $json) {
     try {
+        # Advisory file lock to prevent concurrent sessions from corrupting
+        # state files (slot-overrides.json, current-routes.json, etc.)
+        $lockFile = $path + ".lock"
+        $maxRetries = 10
+        for ($retry = 0; $retry -lt $maxRetries; $retry++) {
+            try {
+                if (Test-Path $lockFile) {
+                    $lockContent = Get-Content $lockFile -Raw -ErrorAction SilentlyContinue
+                    $lockPid = 0
+                    if ($lockContent -match 'pid=(\d+)') { $lockPid = [int]$Matches[1] }
+                    # Check if locking PID is still alive on this system
+                    $stale = $true
+                    if ($lockPid -gt 0) {
+                        try { $proc = Get-Process -Id $lockPid -ErrorAction Stop; $stale = $false } catch { $stale = $true }
+                    }
+                    if ($stale) { Remove-Item $lockFile -Force -ErrorAction SilentlyContinue }
+                    else { Start-Sleep -Milliseconds 50; continue }
+                }
+                "pid=$PID`nts=$(Get-Date -Format o)" | Out-File $lockFile -Encoding utf8 -NoNewline
+                break
+            } catch { Start-Sleep -Milliseconds 50 }
+        }
         $tmpFile = $path + ".tmp"
         [System.IO.File]::WriteAllText($tmpFile, $json)
         # Use .NET Move with overwrite to avoid the Remove-Item→Move-Item race
         # window where the file doesn't exist (hot-reload sees ENOENT).
         [System.IO.File]::Move($tmpFile, $path, $true)
+        Remove-Item $lockFile -Force -ErrorAction SilentlyContinue
         # Restrict permissions on Unix — state files contain route/provider config
         if ($IsLinux -or $IsMacOS) {
             try { chmod 600 $path 2>$null } catch {}
         }
     } catch {
+        try { Remove-Item ($path + ".lock") -Force -ErrorAction SilentlyContinue } catch {}
         Write-Host "  WARNING: Failed to write $path : $_" -ForegroundColor Yellow
     }
 }

@@ -443,6 +443,7 @@ export function recordStreamMetrics(providerKey: string, metrics: StreamMetrics)
 // --- Spend tracking ---
 
 let spendFile = path.join(os.homedir(), '.deepclaude', 'spend.json');
+let spendJournalFile = spendFile + '.journal';
 let lastSpendWrite = 0;
 let spendWriteLock = false;
 const SPEND_WRITE_THROTTLE_MS = 1000;
@@ -458,6 +459,33 @@ try {
     }
   }
 } catch (_) { /* continue with zero */ }
+
+// Replay write-ahead journal to recover spend lost on crash.
+// Each line is JSON: { ts, cost, providerKey, modelName }
+// Replayed costs are added to runningTotal and today's daily accumulators.
+try {
+  if (fs.existsSync(spendJournalFile)) {
+    const journalRaw = fs.readFileSync(spendJournalFile, 'utf-8');
+    const lines = journalRaw.split('\n').filter(Boolean);
+    const today = new Date().toISOString().slice(0, 10);
+    for (const line of lines) {
+      try {
+        const entry = JSON.parse(line);
+        if (typeof entry.cost === 'number') {
+          runningTotal += entry.cost;
+          // Replay into daily accumulators so budget checks are accurate
+          const entryDate = (entry.ts || '').slice(0, 10);
+          if (entryDate === today) {
+            dailyAccumulator += entry.cost;
+            if (entry.providerKey && typeof entry.providerKey === 'string') {
+              providerDailyAccumulators[entry.providerKey] = (providerDailyAccumulators[entry.providerKey] || 0) + entry.cost;
+            }
+          }
+        }
+      } catch (_) { /* skip corrupt journal line */ }
+    }
+  }
+} catch (_) { /* non-fatal */ }
 let sessionTotal = 0;
 let dailyAccumulator = 0;
 const providerDailyAccumulators: Record<string, number> = {};
@@ -526,6 +554,13 @@ export async function recordSpend(modelName: string, usage: { prompt_tokens: num
     recordProviderSpend(providerKey, cost);
   }
 
+  // Write-ahead journal: persist cost immediately so crashes between
+  // throttle writes don't lose spend data. Replayed on startup.
+  try {
+    const journalEntry = JSON.stringify({ ts: new Date().toISOString(), cost: parseFloat(cost.toFixed(6)), providerKey: providerKey || null, modelName }) + '\n';
+    fs.appendFileSync(spendJournalFile, journalEntry, 'utf-8');
+  } catch (_) { /* non-fatal — spend tracking survives via in-memory accumulators */ }
+
   const now = Date.now();
   if (now - lastSpendWrite < SPEND_WRITE_THROTTLE_MS) return;
   if (spendWriteLock) return;
@@ -584,11 +619,12 @@ export async function recordSpend(modelName: string, usage: { prompt_tokens: num
     fs.writeFileSync(tmpFile, JSON.stringify(data) + '\n');
     fs.renameSync(tmpFile, spendFile);
 
-    // Only clear accumulators AFTER a successful write to prevent data loss
+    // Only clear accumulators and truncate journal AFTER successful write
     dailyAccumulator = 0;
     for (const pk of Object.keys(providerDailyAccumulators)) {
       delete providerDailyAccumulators[pk];
     }
+    try { fs.truncateSync(spendJournalFile, 0); } catch (_) { /* non-fatal */ }
   } catch (_) { /* non-fatal */ } finally {
     spendWriteLock = false;
   }

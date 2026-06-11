@@ -133,6 +133,7 @@ function applyProviderMetadata(routing: RoutingConfig, providersData: ProvidersD
                 fallback: def.fallback || [],
                 extraHeaders: def.extraHeaders,
                 streamUsageReporting: def.streamUsageReporting || undefined,
+                noAutoFallback: def.noAutoFallback === true,
             };
             changed = true;
             continue;
@@ -158,6 +159,9 @@ function applyProviderMetadata(routing: RoutingConfig, providersData: ProvidersD
             if (existing.streamUsageReporting !== expected) {
                 existing.streamUsageReporting = expected; changed = true;
             }
+        }
+        if ((existing as any).noAutoFallback !== (def.noAutoFallback === true)) {
+            (existing as any).noAutoFallback = def.noAutoFallback === true; changed = true;
         }
     }
 

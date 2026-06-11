@@ -284,7 +284,10 @@ export async function resolveTarget(
     // single-provider death spirals where the primary rejects a request for
     // provider-specific reasons (e.g. output token limits, payload size)
     // and the session retries the same provider endlessly.
-    if (fallbacks.length === 0 && routing.providers) {
+    // Providers with noAutoFallback:true (e.g. ds, oc, um) opt out — they
+    // are primary providers that should fail-fast rather than auto-cascading.
+    const primaryDef = routing.providers[primary.providerKey];
+    if (fallbacks.length === 0 && routing.providers && !(primaryDef && (primaryDef as any).noAutoFallback)) {
         for (const [fbKey, fb] of Object.entries(routing.providers)) {
             const fbTarget = await resolveFallback(fbKey, fb);
             if (fbTarget) fallbacks.push(fbTarget);

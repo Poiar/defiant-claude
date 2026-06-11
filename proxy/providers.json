@@ -8,7 +8,8 @@
       "authHeader": "x-api-key",
       "wireFormat": "anthropic",
       "setupUrl": "https://platform.deepseek.com/api-keys",
-      "streamUsageReporting": null
+      "streamUsageReporting": null,
+      "noAutoFallback": true
     },
     "or": {
       "displayName": "OpenRouter",
@@ -40,7 +41,8 @@
       "authHeader": "bearer",
       "wireFormat": "anthropic",
       "setupUrl": "https://opencode.ai/keys",
-      "streamUsageReporting": null
+      "streamUsageReporting": null,
+      "noAutoFallback": true
     },
     "al": {
       "displayName": "Alibaba/DashScope",
@@ -75,7 +77,8 @@
       "keyEnv": "UMANS_API_KEY",
       "authHeader": "x-api-key",
       "wireFormat": "anthropic",
-      "streamUsageReporting": null
+      "streamUsageReporting": null,
+      "noAutoFallback": true
     },
     "gr": {
       "displayName": "Groq",
