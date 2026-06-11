@@ -16,7 +16,7 @@ import { bodyHash, shouldUseCanary, recordCanaryResult, getOrCreateEntry, type C
 import { tryForward, addFallbackHeaders, sseHeaders, type ForwardHeaders, type ForwardResult } from './forward';
 import { sendProbe } from './probe';
 import type { ProbeSlot } from './probe';
-import { convertServerTools, populateToolResults, isServerToolType } from './server-tools';
+import { convertServerTools, populateToolResults } from './server-tools';
 import { isProviderHealthy, recordSpend, recordStat, recordUsage, recordRecentRequest, recordStreamMetrics, getFullHealthSnapshot, buildPrometheusMetrics, nextRequestId, checkBudget, setSessionCap, setDailyBudget, registerProviderInfo, maybeStartProbe, recordProbeResult, getRegisteredProviderKeys, getProviderInfo, setGitHash, recordFallback } from './stats';
 import { serveDashboard } from './dashboard';
 import { formatError, formatExhaustedError, scrubCredentials, isStreamingClient } from './error-codes';
@@ -689,33 +689,36 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                 try {
                     let modified = false;
 
-                    // Pre-execute web_search/web_fetch tools locally and strip
-                    // them from the request. DeepSeek doesn't support Anthropic
-                    // server-side tools, and converting to custom tools causes 400s.
-                    // Instead: execute the search locally, inject results into the
-                    // conversation, and forward without tools. The model can act on
-                    // the injected results but won't make new tool calls.
                     if (parsedBody.messages) {
-                        // 1) Pre-execute pending tool calls and populate results
                         const populated = await populateToolResults(parsedBody.messages as any[]);
                         if (populated) modified = true;
                     }
 
-                    // 2) If Anthropic server-side tools are present, strip them entirely.
-                    // The model already got search results from the pre-execution step;
-                    // stripping prevents DeepSeek from 400-ing on unrecognized tools.
+                    // Handle Anthropic server-side tools for non-Anthropic providers.
+                    // web_search / web_fetch: pre-executed locally above and STRIPPED —
+                    //   forwarding them causes 400s on DeepSeek.
+                    // text_editor / bash / code_execution / memory: CONVERTED to custom
+                    //   tools — DeepSeek typically accepts these.
                     if (parsedBody.tools && Array.isArray(parsedBody.tools)) {
-                        const serverToolCount = (parsedBody.tools as any[]).filter(
-                            (t: any) => t && typeof t.type === 'string' && isServerToolType(t.type)
-                        ).length;
-                        if (serverToolCount > 0) {
-                            // Keep only non-Anthropic tools (text_editor, bash, etc.)
+                        // Only strip web_tools; convert everything else
+                        const WEB_TOOL_PREFIXES = ['web_search_', 'web_fetch_', 'url_fetch_'];
+                        const isWebTool = (type: string) => WEB_TOOL_PREFIXES.some(p => type.startsWith(p));
+                        const hadWebTools = (parsedBody.tools as any[]).some(
+                            (t: any) => t && typeof t.type === 'string' && isWebTool(t.type)
+                        );
+                        if (hadWebTools) {
                             parsedBody.tools = (parsedBody.tools as any[]).filter(
-                                (t: any) => !(t && typeof t.type === 'string' && isServerToolType(t.type))
+                                (t: any) => !(t && typeof t.type === 'string' && isWebTool(t.type))
                             );
                             if ((parsedBody.tools as any[]).length === 0) {
                                 delete parsedBody.tools;
                             }
+                            modified = true;
+                        }
+                        // Convert remaining Anthropic tools (text_editor, bash, etc.) to custom
+                        const conv = convertServerTools(parsedBody.tools as any[]);
+                        if (conv.tools !== parsedBody.tools) {
+                            parsedBody.tools = conv.tools as any[];
                             modified = true;
                         }
                     }
