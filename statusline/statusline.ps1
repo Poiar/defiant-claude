@@ -141,4 +141,6 @@ $modelGroup = $modelParts -join $narrow
 
 $ctxGroup = if ($ctxStr) { "$bold$ctxColor$ctxStr$reset" } else { '' }
 
-@($locationGroup, $modelGroup, $ctxGroup, $spendGroup | Where-Object { $_ }) -join $wide
+$output = @($locationGroup, $modelGroup, $ctxGroup, $spendGroup | Where-Object { $_ }) -join $wide
+# Strip any bare hex UUID/tab IDs (6+ lowercase hex chars) that leaked through
+$output -replace '\b[a-f0-9]{6,}\b', '' -replace '\s+', ' ' -replace '^\s+|\s+$', ''
