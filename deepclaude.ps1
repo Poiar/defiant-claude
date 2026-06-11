@@ -92,6 +92,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Stop sharing command history with other pwsh sessions immediately.
+# PSReadLine defaults to SaveIncrementally, which writes every command
+# to a shared file — causing tab cross-contamination of Up-arrow history.
+try { Set-PSReadLineOption -HistorySaveStyle SaveAtExit -ErrorAction Stop } catch {}
+
 # Require PowerShell 7+ (uses ??, ForEach-Object -Parallel, ternary operator)
 if ($PSVersionTable.PSVersion.Major -lt 7) {
     Write-Host "ERROR: deepclaude requires PowerShell 7+. You're running $($PSVersionTable.PSVersion)." -ForegroundColor Red

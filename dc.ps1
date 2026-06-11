@@ -2,6 +2,9 @@
 # Override with: dc -b or  or  dc -b ds+oc  etc.
 param([string[]]$Args)
 
+# Stop sharing command history with other pwsh sessions immediately.
+try { Set-PSReadLineOption -HistorySaveStyle SaveAtExit -ErrorAction Stop } catch {}
+
 if ($Args.Count -eq 0) {
     # Just dc → launch with ds config
     & "$PSScriptRoot\deepclaude.ps1" -b ds
