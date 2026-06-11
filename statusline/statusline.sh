@@ -105,8 +105,9 @@ const locationGroup = [
   branch ? bold + fg(255,80,180)  + branch + reset : '',
 ].filter(Boolean).join(narrow);
 
+const displayModel = /^[a-f0-9]{6,}$/.test(modelKey) ? '' : modelKey;
 const modelGroup = [
-  (slotLabel || model) ? bold + fg(200,100,255) + slotLabel + modelKey + reset : '',
+  (slotLabel || model) ? bold + fg(200,100,255) + slotLabel + displayModel + reset : '',
   effort ? bold + effortColor + effort + reset : '',
   cbIndicator,
 ].filter(Boolean).join(narrow);
@@ -117,9 +118,12 @@ let spendTotal = null;
 try {
   const spendDir = process.env.USERPROFILE ? process.env.USERPROFILE + '/.deepclaude' : require('os').homedir() + '/.deepclaude';
   const spendData = JSON.parse(fs.readFileSync(spendDir + '/spend.json', 'utf8'));
-  if (spendData.total > 0) spendTotal = spendData.total;
+  const s = (spendData.sessions && spendData.sessions[0] && spendData.sessions[0].total)
+    ? spendData.sessions[0].total
+    : spendData.total;
+  if (s > 0) spendTotal = s;
 } catch(e) {}
-const spendGroup = spendTotal ? bold + fg(80,200,120) + '$' + Number(spendTotal).toFixed(4) + reset : '';
+const spendGroup = spendTotal ? bold + fg(80,200,120) + '$' + Number(spendTotal).toFixed(2) + reset : '';
 
 console.log([locationGroup, modelGroup, ctxGroup, spendGroup].filter(Boolean).join(wide));
 " 2>/dev/null
