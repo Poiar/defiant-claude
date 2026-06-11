@@ -125,5 +125,7 @@ try {
 } catch(e) {}
 const spendGroup = spendTotal ? bold + fg(80,200,120) + '$' + Number(spendTotal).toFixed(2) + reset : '';
 
-console.log([locationGroup, modelGroup, ctxGroup, spendGroup].filter(Boolean).join(wide));
+let output = [locationGroup, modelGroup, ctxGroup, spendGroup].filter(Boolean).join(wide);
+output = output.replace(/\b[a-f0-9]{6,}\b/g, '').replace(/\s+/g, ' ').trim();
+console.log(output);
 " 2>/dev/null
