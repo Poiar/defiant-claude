@@ -498,6 +498,7 @@ foreach ($prop in $Registry.contextLimits.PSObject.Properties) {
 $CompactionWindow = @{}
 if ($Registry.compactionWindow) {
     foreach ($prop in $Registry.compactionWindow.PSObject.Properties) {
+        if ($prop.Name.StartsWith('_')) { continue }
         $CompactionWindow[$prop.Name] = [int]$prop.Value
     }
 }
