@@ -61,19 +61,21 @@ function getStreamTimeouts(slot: string | null): {
     bodyRead: number;
 } {
     const defaultHeartbeat = parseInt(process.env.DEEPCLAUDE_STREAM_HEARTBEAT_MS || '', 10) || STREAM_HEARTBEAT_MS;
+    const defaultDeadline  = parseInt(process.env.DEEPCLAUDE_STREAM_DEADLINE_MS  || "", 10) || 300_000;
     const subagentHeartbeat = parseInt(process.env.DEEPCLAUDE_SUBAGENT_STREAM_HEARTBEAT_MS || '', 10) || 90_000;
+    const subagentDeadline  = parseInt(process.env.DEEPCLAUDE_SUBAGENT_STREAM_DEADLINE_MS  || "", 10) || 90_000;
     if (slot === 'subagent') {
         return {
             firstByte: 10_000,   // 10s — subagents shouldn't have cold-start delays
             heartbeat: subagentHeartbeat,
-            deadline: 90_000,    // 90s — matches start-proxy subagent request deadline
+            deadline: subagentDeadline,    // 90s default — matches start-proxy subagent request deadline
             bodyRead: 20_000,    // 20s — subagent responses are small (tool results)
         };
     }
     return {
         firstByte: FIRST_BYTE_TIMEOUT_MS,
         heartbeat: defaultHeartbeat,
-        deadline: 120_000,         // 120s — matches start-proxy request deadline
+        deadline: defaultDeadline,
         bodyRead: 30_000,        // 30s — default body read timeout
     };
 }
@@ -332,7 +334,7 @@ export function tryForward(
                         if (streamHeartbeat) { clearTimeout(streamHeartbeat); streamHeartbeat = null; }
                         if (streamDeadline) { clearTimeout(streamDeadline); streamDeadline = null; }
                     };
-                    const resetStreamHeartbeat = () => {
+                    const resetStreamTimers = () => {
                         if (streamHeartbeat) clearTimeout(streamHeartbeat);
                         streamHeartbeat = setTimeout(() => {
                             (proxyRes as unknown as NodeJS.ReadableStream & { destroy(err?: Error): void }).destroy(
@@ -340,17 +342,15 @@ export function tryForward(
                             );
                         }, to.heartbeat);
                         if (streamHeartbeat && typeof streamHeartbeat === 'object') (streamHeartbeat as NodeJS.Timeout).unref();
+                        if (streamDeadline) { clearTimeout(streamDeadline); streamDeadline = null; }
+                        streamDeadline = setTimeout(() => {
+                            (proxyRes as unknown as NodeJS.ReadableStream & { destroy(err?: Error): void }).destroy(
+                                new Error("Upstream stream read timeout (deadline) after " + to.deadline / 1000 + "s, received " + streamBytes + " bytes")
+                            );
+                        }, to.deadline);
+                        if (streamDeadline && typeof streamDeadline === "object") (streamDeadline as NodeJS.Timeout).unref();
                     };
-                    const elapsed = Date.now() - forwardStart;
-                    const remainingDeadline = Math.max(5000, to.deadline - elapsed);
-                    streamDeadline = setTimeout(() => {
-                        cancelStreamTimeouts();
-                        (proxyRes as unknown as NodeJS.ReadableStream & { destroy(err?: Error): void }).destroy(
-                            new Error('Upstream stream read timeout (deadline) after ' + to.deadline / 1000 + 's, received ' + streamBytes + ' bytes')
-                        );
-                    }, remainingDeadline);
-                    if (streamDeadline && typeof streamDeadline === 'object') (streamDeadline as NodeJS.Timeout).unref();
-                    resetStreamHeartbeat();
+                    resetStreamTimers();
                     sourceStream.on('data', (chunk: Buffer | string) => {
                         streamBytes += typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.length;
                         if (streamBytes > MAX_TOTAL_STREAM_BYTES) {
@@ -360,7 +360,7 @@ export function tryForward(
                             );
                             return;
                         }
-                        resetStreamHeartbeat();
+                        resetStreamTimers();
                     });
                     sourceStream.once('end', () => {
                         streamEndedNormally = true;
