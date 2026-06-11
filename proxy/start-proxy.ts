@@ -688,6 +688,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
             if (parsedBody) {
                 try {
                     let modified = false;
+                    let toolsStripped = false; // Track if we stripped tools for retry on 400
 
                     if (parsedBody.messages) {
                         const populated = await populateToolResults(parsedBody.messages as any[]);
@@ -971,8 +972,23 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                     // Success -> stop retrying
                     if (result.success) break;
 
-                    // Non-transport error (HTTP 4xx/5xx) -> stop retrying this provider
-                    if (!result.transportError) break;
+                    // Non-transport error (HTTP 4xx/5xx) -> stop retrying this provider,
+                    // UNLESS we can strip Anthropic server-side tools and retry once.
+                    // Many non-Anthropic providers (DeepSeek, etc.) reject requests that
+                    // contain tool definitions they don't support — even after conversion
+                    // to custom tools.  Stripping them lets the request succeed with the
+                    // provider using its own search/retrieval patterns.
+                    if (!result.transportError) {
+                        if (result.status === 400 && modified && !toolsStripped && parsedBody && parsedBody.tools && Array.isArray(parsedBody.tools) && parsedBody.tools.length > 0) {
+                            toolsStripped = true;
+                            parsedBody.tools = undefined;
+                            baseBody = Buffer.from(JSON.stringify(parsedBody));
+                            bodyPreprocessed = true;
+                            log.warn(reqId, target.providerKey + ' returned 400 with tools — retrying without tools');
+                            continue;
+                        }
+                        break;
+                    }
 
                     // Transport error, retries left -> backoff and retry
                     if (provAttempt < MAX_PER_PROVIDER_RETRIES) {
