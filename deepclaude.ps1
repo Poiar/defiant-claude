@@ -455,6 +455,17 @@ foreach ($prop in $Registry.contextLimits.PSObject.Properties) {
     $ModelCtx[$prop.Name] = [int]$prop.Value
 }
 
+# --- Per-model compaction window (tokens, from providers.json) ---
+# If a model has a compactionWindow, use it. Otherwise fall back to contextLimits.
+# DeepSeek models use 950K to push compaction near the context wall — compaction
+# rewrites history, invalidating the disk cache prefix (cache miss = 50x more expensive).
+$CompactionWindow = @{}
+if ($Registry.compactionWindow) {
+    foreach ($prop in $Registry.compactionWindow.PSObject.Properties) {
+        $CompactionWindow[$prop.Name] = [int]$prop.Value
+    }
+}
+
 # --- Configuration Registry (from providers.json) ---
 # Each config maps model slots to "providerKey:modelId"
 $Configs = [ordered]@{}
@@ -1784,15 +1795,26 @@ if ($Remote) {
     $env:ANTHROPIC_DEFAULT_FABLE_MODEL = & $Append1M ("fable:" + ($overrides.fable ?? $overrides._defaults.fable ?? "$($resolved.slots['fable'].provider):$($resolved.slots['fable'].model)"))
     $env:CLAUDE_CODE_SUBAGENT_MODEL = & $Append1M ("subagent:" + ($overrides.subagent ?? $overrides._defaults.subagent ?? "$($resolved.slots['subagent'].provider):$($resolved.slots['subagent'].model)"))
     $ctxModel = $resolved.slots["opus"].model -replace '\[1m\]', ''
-    $opusCtx = $ModelCtx[$ctxModel]
+    $opusCtx = $CompactionWindow[$ctxModel]
     if ($opusCtx) {
+        # Per-model compaction window (from compactionWindow in providers.json)
         if ($opusCtx -ge 1000000) {
             $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = "1000000"
-        } elseif ($opusCtx -gt 131072) {
-            $env:DISABLE_COMPACT = "1"
-            $env:CLAUDE_CODE_MAX_CONTEXT_TOKENS = "$opusCtx"
         } else {
             $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = "$opusCtx"
+        }
+    } else {
+        # Fall back to full context limit (pre-compactionWindow behavior)
+        $opusCtx = $ModelCtx[$ctxModel]
+        if ($opusCtx) {
+            if ($opusCtx -ge 1000000) {
+                $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = "1000000"
+            } elseif ($opusCtx -gt 131072) {
+                $env:DISABLE_COMPACT = "1"
+                $env:CLAUDE_CODE_MAX_CONTEXT_TOKENS = "$opusCtx"
+            } else {
+                $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = "$opusCtx"
+            }
         }
     }
     Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue

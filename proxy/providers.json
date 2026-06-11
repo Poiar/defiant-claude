@@ -163,6 +163,7 @@
     "glm": "zai/glm-4.5",
     "doubao": "byteplus/doubao-1.5-pro"
   },
+  "_comment": "contextLimits = max tokens the provider accepts. compactionWindow = CLAUDE_CODE_AUTO_COMPACT_WINDOW (compact threshold). Use ~90-95% of context for models with free unlimited disk cache (DeepSeek) to preserve cache hits — compaction rewrites history, invalidating the prefix and causing expensive cache misses.",
   "contextLimits": {
     "deepseek-v4-pro": 1048576,
     "deepseek-v4-flash": 1048576,
@@ -189,6 +190,16 @@
     "byteplus/doubao-1.5-pro": 131072,
     "siliconflow/deepseek-v4-pro": 1048576,
     "novita/deepseek-v4-pro": 1048576
+  },
+  "compactionWindow": {
+    "_comment": "Per-model compaction threshold (tokens). Overrides the auto-calculated value from contextLimits. DeepSeek has free disk cache lasting hours — pushing compaction near the wall preserves cache hits (98% of tokens at ~$0.0036/M vs $0.435/M miss). Compact only when genuinely needed.",
+    "deepseek-v4-pro": 950000,
+    "deepseek-v4-flash": 950000,
+    "deepseek/deepseek-v4-pro": 950000,
+    "deepseek/deepseek-v4-flash": 950000,
+    "accounts/fireworks/models/deepseek-v4-pro": 950000,
+    "siliconflow/deepseek-v4-pro": 950000,
+    "novita/deepseek-v4-pro": 950000
   },
   "configs": {
     "ds":    { "name": "DeepSeek V4 Pro",                         "opus": "ds:deepseek-v4-pro", "sonnet": "ds:deepseek-v4-pro", "haiku": "ds:deepseek-v4-flash", "sub": "ds:deepseek-v4-flash", "fable": "ds:deepseek-v4-pro" },
