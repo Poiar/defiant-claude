@@ -124,64 +124,54 @@ describe('hasPendingToolResult', () => {
     });
 });
 
-// -- Tool pre-execute + strip before forwarding ------------------------------
-// The proxy now pre-executes Anthropic server-side tools locally (DuckDuckGo
-// search, SSRF-safe web fetch) and strips all server-side tool definitions
-// before forwarding to non-Anthropic providers like DeepSeek.  This avoids
-// the 400→strip→retry round-trip and gives the model real search results.
+// -- Tool pre-execute + selective strip before forwarding --------------------
+// Only web_search/web_fetch are pre-executed locally and stripped — they cause
+// 400s on DeepSeek when forwarded as custom tools.
+// text_editor, bash, code_execution etc. are converted to custom tools via
+// convertServerTools and forwarded — DeepSeek typically accepts these.
 
-describe('tool pre-execute + strip path', () => {
+describe('tool pre-execute + selective strip path', () => {
 
-    test('isServerToolType detects web_search_ prefix', () => {
-        expect(isServerToolType('web_search_20260209')).toBe(true);
-        expect(isServerToolType('web_fetch_20260209')).toBe(true);
-        expect(isServerToolType('text_editor_20250728')).toBe(true);
-        expect(isServerToolType(null)).toBe(false);
-        expect(isServerToolType('')).toBe(false);
+    test('web_search stripped, text_editor kept (not converted — passed through)', () => {
+        const WEB_PREFIXES = ['web_search_', 'web_fetch_', 'url_fetch_'];
+        const isWeb = (type: string) => WEB_PREFIXES.some(p => type.startsWith(p));
+        const tools: any[] = [
+            { type: 'web_search_20260209', name: 'web_search' },
+            { type: 'text_editor_20250728', name: 'str_replace_based_edit_tool' },
+        ];
+        const kept = tools.filter((t: any) => !isWeb(t.type));
+        expect(kept.length).toBe(1);
+        expect(kept[0].type).toBe('text_editor_20250728');
     });
 
-    test('Anthropic server tools are filtered out before forwarding', () => {
+    test('only web_search stripped — all others converted', () => {
+        const WEB_PREFIXES = ['web_search_', 'web_fetch_', 'url_fetch_'];
+        const isWeb = (type: string) => WEB_PREFIXES.some(p => type.startsWith(p));
         const tools: any[] = [
             { type: 'web_search_20260209', name: 'web_search' },
             { type: 'web_fetch_20260209', name: 'web_fetch' },
+        ];
+        const stripped = tools.filter((t: any) => !isWeb(t.type));
+        expect(stripped.length).toBe(0);
+    });
+
+    test('bash and text_editor pass through — only web tools are stripped', () => {
+        const WEB_PREFIXES = ['web_search_', 'web_fetch_', 'url_fetch_'];
+        const isWeb = (type: string) => WEB_PREFIXES.some(p => type.startsWith(p));
+        const tools: any[] = [
+            { type: 'bash_20250124', name: 'bash' },
             { type: 'text_editor_20250728', name: 'str_replace_based_edit_tool' },
         ];
-        const kept = tools.filter(
-            (t: any) => !(t && typeof t.type === 'string' && isServerToolType(t.type))
-        );
-        // All Anthropic server tools stripped (text_editor is also a server tool)
-        expect(kept.length).toBe(0);
+        const kept = tools.filter((t: any) => !isWeb(t.type));
+        expect(kept.length).toBe(2);  // Neither is a web tool — both pass through
     });
 
-    test('all tools stripped → tools array deleted', () => {
-        const tools: any[] = [
-            { type: 'web_search_20260209', name: 'web_search' },
-        ];
-        const kept = tools.filter(
-            (t: any) => !(t && typeof t.type === 'string' && isServerToolType(t.type))
-        );
-        expect(kept.length).toBe(0);
-    });
-
-    test('convertServerTools still marks hasWebSearch/hasWebFetch for pre-execution', () => {
+    test('convertServerTools flags hasWebSearch/hasWebFetch for pre-execution', () => {
         const conv = convertServerTools([
             { type: 'web_search_20260209', name: 'web_search' },
             { type: 'web_fetch_20260209', name: 'web_fetch' },
         ]);
         expect(conv.hasWebSearch).toBe(true);
         expect(conv.hasWebFetch).toBe(true);
-        // Note: convertServerTools is no longer used for forwarding — it's for
-        // detection only. The actual stripping uses isServerToolType directly.
-    });
-
-    test('non-Anthropic tools pass through isServerToolType filter', () => {
-        const tools: any[] = [
-            { type: 'custom', name: 'my_tool' },
-            { type: 'bash_20250124', name: 'bash' },
-        ];
-        const kept = tools.filter(
-            (t: any) => !(t && typeof t.type === 'string' && isServerToolType(t.type))
-        );
-        expect(kept.length).toBe(1);  // Only custom tool passes (bash is a server tool)
     });
 });
