@@ -94,6 +94,7 @@ done < <(jq -r '.contextLimits | to_entries[] | [.key, .value] | @tsv' "$REGISTR
 declare -A COMPACTION_WINDOW
 if jq -e '.compactionWindow' "$REGISTRY_FILE" > /dev/null 2>&1; then
     while IFS=$'\t' read -r model limit; do
+        [[ "$model" == _* ]] && continue
         COMPACTION_WINDOW["$model"]="$limit"
     done < <(jq -r '.compactionWindow | to_entries[] | [.key, .value] | @tsv' "$REGISTRY_FILE")
 fi
