@@ -17,7 +17,7 @@ import { tryForward, addFallbackHeaders, sseHeaders, type ForwardHeaders, type F
 import { sendProbe } from './probe';
 import type { ProbeSlot } from './probe';
 import { convertServerTools, populateToolResults } from './server-tools';
-import { isProviderHealthy, recordSpend, recordStat, recordUsage, recordRecentRequest, recordStreamMetrics, getFullHealthSnapshot, nextRequestId, checkBudget, setSessionCap, setDailyBudget, registerProviderInfo, maybeStartProbe, recordProbeResult, getRegisteredProviderKeys, getProviderInfo, setGitHash } from './stats';
+import { isProviderHealthy, recordSpend, recordStat, recordUsage, recordRecentRequest, recordStreamMetrics, getFullHealthSnapshot, buildPrometheusMetrics, nextRequestId, checkBudget, setSessionCap, setDailyBudget, registerProviderInfo, maybeStartProbe, recordProbeResult, getRegisteredProviderKeys, getProviderInfo, setGitHash } from './stats';
 import { serveDashboard } from './dashboard';
 import { formatError, formatExhaustedError, scrubCredentials, isStreamingClient } from './error-codes';
 import { truncateForLog } from './truncate';
@@ -373,6 +373,14 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
     if (req.method === 'GET' && req.url === '/health') {
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(JSON.stringify(getFullHealthSnapshot(concurrency.status(), mainRateLimiter.status())));
+        return;
+    }
+
+    // --- Prometheus metrics endpoint ---
+    if (req.method === 'GET' && req.url === '/metrics') {
+        const metrics = buildPrometheusMetrics(concurrency.status(), mainRateLimiter.status());
+        res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4' });
+        res.end(metrics);
         return;
     }
 
@@ -984,7 +992,10 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
 
                     // Transport error, retries left -> backoff and retry
                     if (provAttempt < MAX_PER_PROVIDER_RETRIES) {
-                        const delay = RETRY_BASE_DELAY_MS * Math.pow(2, provAttempt);
+                        const baseDelay = RETRY_BASE_DELAY_MS * Math.pow(2, provAttempt);
+                        // Add ±25% jitter to prevent thundering herd on simultaneous failures
+                        const jitter = (Math.random() - 0.5) * baseDelay * 0.5;
+                        const delay = Math.round(baseDelay + jitter);
                         log.warn(reqId, target.providerKey + ' ' + describeTransportError(new Error(result.error)) + ', retrying in ' + delay + 'ms (' + (MAX_PER_PROVIDER_RETRIES - provAttempt) + ' left)');
                         await new Promise(r => setTimeout(r, delay));
                     }

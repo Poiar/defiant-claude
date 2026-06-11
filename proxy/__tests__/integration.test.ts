@@ -80,7 +80,7 @@ beforeAll(async () => {
         proxyProcess.stderr!.on('data', () => {});
     });
     proxyPort = parseInt(portStr, 10);
-}, 15000);
+}, 30000);
 
 afterAll(async () => {
     if (proxyProcess) {

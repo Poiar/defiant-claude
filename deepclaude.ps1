@@ -85,6 +85,7 @@ param(
     [switch]$Open,
     [switch]$LogAll,
     [switch]$SkipStartupCheck,
+    [switch]$Logs,
     [Parameter(ValueFromRemainingArguments)]
     [string[]]$ModelSpecs
 )
@@ -158,6 +159,7 @@ if ($Backend -match '^--(.+)$') {
     elseif ($flag -eq 'open')            { $Open = $true }
     elseif ($flag -eq 'log-all')         { $LogAll = $true }
     elseif ($flag -eq 'skip-startup-check') { $SkipStartupCheck = $true }
+    elseif ($flag -eq 'logs' -or $flag -eq 'tail') { $Logs = $true }
     else {
         Write-Host "ERROR: Unknown flag '--$flag'. Use --help for available flags." -ForegroundColor Red
         exit 1
@@ -186,12 +188,30 @@ if (-not (Test-Path $DeepClaudeDir)) {
 # Clean up stale .tmp files from interrupted writes
 Get-ChildItem $DeepClaudeDir -Filter "*.tmp" -ErrorAction SilentlyContinue | Remove-Item -Force
 
+# --- Tail proxy logs ---
+if ($Logs) {
+    $logPath = Join-Path $DeepClaudeDir "proxy.log"
+    if (-not (Test-Path $logPath)) {
+        Write-Host "No proxy log found at $logPath" -ForegroundColor Yellow
+        Write-Host "Start the proxy first with: deepclaude --persist" -ForegroundColor DarkGray
+        exit 1
+    }
+    Write-Host "Tailing $logPath (Ctrl+C to stop)..." -ForegroundColor Cyan
+    Write-Host "---" -ForegroundColor DarkGray
+    try {
+        Get-Content $logPath -Tail 50 -Wait
+    } catch {
+        # User pressed Ctrl+C or terminal closed
+    }
+    exit 0
+}
+
 # Gather all positional specs: first goes to $Backend, rest to $ModelSpecs
 $AllSpecs = @()
 if ($Backend) { $AllSpecs += $Backend }
 if ($ModelSpecs) { $AllSpecs += $ModelSpecs }
 
-if (-not $AllSpecs -and -not $Status -and -not $Cost -and -not $Benchmark -and -not $Help -and -not $Lint -and -not $LintConfig -and -not $FixAv -and -not $Switch -and -not $SetSlot -and -not $SubagentModel -and -not $Models -and -not $StopProxy -and -not $Version -and -not $Doctor -and -not $Stats -and -not $PSBoundParameters.ContainsKey('ProbeFile') -and -not $DryRun) {
+if (-not $AllSpecs -and -not $Status -and -not $Cost -and -not $Benchmark -and -not $Help -and -not $Lint -and -not $LintConfig -and -not $FixAv -and -not $Switch -and -not $SetSlot -and -not $SubagentModel -and -not $Models -and -not $StopProxy -and -not $Version -and -not $Doctor -and -not $Stats -and -not $PSBoundParameters.ContainsKey('ProbeFile') -and -not $DryRun -and -not $Logs) {
     $AllSpecs = @(if ($env:DEEPCLAUDE_DEFAULT_BACKEND) { $env:DEEPCLAUDE_DEFAULT_BACKEND } elseif ($env:CHEAPCLAUDE_DEFAULT_BACKEND) { $env:CHEAPCLAUDE_DEFAULT_BACKEND } else { "ds" })
 }
 
@@ -1010,6 +1030,7 @@ if ($Help) {
     Write-Host "  --lint-config   Validate providers.json configuration"
     Write-Host "  --log-all       Log all requests to ~/.deepclaude/requests.log"
     Write-Host "  --skip-startup-check  Skip the provider health check on proxy startup"
+    Write-Host "  --logs, --tail   Tail the proxy log (~/.deepclaude/proxy.log)"
     Write-Host "  --subagent-model MODEL  Set a dedicated subagent model (e.g., oc:big-pickle)"
     Write-Host "  --version       Print version and proxy path"
     Write-Host "  --effort LEVEL  Set Claude Code effort level (default: max). Values: low, medium, high, max."
@@ -1262,6 +1283,19 @@ if ($Doctor) {
             }
             Stop-RoutingProxy $testProxy
             Remove-Item $testRoutesFile -ErrorAction SilentlyContinue
+
+            # Also test provider API key validity via probe
+            Write-Host "`n  Key Validation (probe each provider):" -ForegroundColor Yellow
+            $probeRoutesJson = Build-RoutesJson $doctorResolved -IncludeAllModels
+            $probeRoutesFile = Join-Path $DeepClaudeDir "doctor-probe-routes.json"
+            Write-AtomicFile $probeRoutesFile $probeRoutesJson
+            $probeOut = & $tsxBin $proxyScript --probe $probeRoutesFile 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host $probeOut
+            } else {
+                $allOk = $false
+            }
+            Remove-Item $probeRoutesFile -ErrorAction SilentlyContinue
         } catch {
             if ($_.Exception.Message -match "not set") {
                 Write-Host "    $warn  No valid API keys configured. Skipping proxy test."

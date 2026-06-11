@@ -438,16 +438,20 @@ export async function runStartupChecks(): Promise<StartUpCheckSummary> {
         return result;
     });
 
-    // Print per-provider results
+    // Print per-provider results to stdout so the user sees them
+    console.log('Startup health check (' + STARTUP_CHECK_TIMEOUT + 'ms timeout):');
     for (const r of results) {
         if (r.errorSummary === 'NO KEY') {
             log.info(null, '  ' + r.providerKey.padEnd(4) + (r.displayName.padEnd(30)) + 'SKIP  (no API key configured)');
+            console.log('  ' + r.providerKey.padEnd(4) + (r.displayName.padEnd(30)) + 'SKIP  (no API key configured)');
         } else if (r.success) {
             const label = r.degraded ? 'SLOW' : 'OK';
             const msStr = r.latencyMs >= 1000 ? (r.latencyMs / 1000).toFixed(1) + 's' : r.latencyMs + 'ms';
             log.info(null, '  ' + r.providerKey.padEnd(4) + (r.displayName.padEnd(30)) + label + ' (stream verified)  ' + msStr);
+            console.log('  ' + r.providerKey.padEnd(4) + (r.displayName.padEnd(30)) + label + ' (stream verified)  ' + msStr);
         } else {
             log.info(null, '  ' + r.providerKey.padEnd(4) + (r.displayName.padEnd(30)) + 'FAIL  ' + (r.errorSummary || 'error'));
+            console.log('  ' + r.providerKey.padEnd(4) + (r.displayName.padEnd(30)) + 'FAIL  ' + (r.errorSummary || 'error'));
         }
     }
 
@@ -458,9 +462,10 @@ export async function runStartupChecks(): Promise<StartUpCheckSummary> {
     const allDown = healthyCount === 0 && degradedCount === 0;
     const allHealthy = downCount === 0;
 
-    // Print summary
+    // Print summary to stdout for CLI visibility
     if (allDown) {
         log.error(null, 'All providers are down. Check your API keys and network.');
+        console.log('  ⚠  All ' + providerKeys.length + ' providers unreachable — check API keys and network');
     } else if (!allHealthy) {
         const parts: string[] = [];
         parts.push(healthyCount + '/' + providerKeys.length + ' providers healthy');
@@ -468,9 +473,13 @@ export async function runStartupChecks(): Promise<StartUpCheckSummary> {
         if (downCount > 0) parts.push(downCount + ' down');
         if (noKeyCount > 0) parts.push(noKeyCount + ' no key');
         log.warn(null, 'Summary: ' + parts.join('. ') + '.');
+        const failedNames = results.filter(r => !r.success && r.errorSummary !== 'NO KEY').map(r => r.providerKey).join(', ');
+        console.log('  ⚠  ' + parts.join(', ') + (failedNames ? ' — unreachable: ' + failedNames : ''));
     } else {
         log.info(null, 'All ' + providerKeys.length + ' providers healthy.');
+        console.log('  ✓  All ' + providerKeys.length + ' providers healthy');
     }
+    console.log('');
 
     return {
         allHealthy,
