@@ -650,6 +650,7 @@ show_help() {
     echo "  --dry-run [FILE] Show resolved routing table without starting proxy"
     echo "  --dashboard     Start proxy and print health dashboard URL"
     echo "  --open          Open dashboard in browser (use with --dashboard)"
+    echo "  --logs, --tail  Tail the proxy log (~/.deepclaude/proxy.log)"
     echo "  --version       Show version and script location"
     echo "  -h, --help      This help"
     echo ""
@@ -897,6 +898,22 @@ run_doctor() {
                 all_ok=false
             fi
             rm -f "$test_routes_file"
+
+            # Also test provider API key validity via probe
+            echo ""
+            echo "  Key Validation (probe each provider):"
+            if [[ -n "$test_slot_data" ]]; then
+                local probe_routes_json probe_routes_file
+                probe_routes_json=$(echo "$test_slot_data" | build_routes_json)
+                probe_routes_file="${DEEPCLAUDE_DIR}/doctor-probe-routes.json"
+                write_atomic "$probe_routes_file" "$probe_routes_json"
+                if "$SCRIPT_DIR/node_modules/.bin/tsx" "$proxy_script" --probe "$probe_routes_file" 2>&1; then
+                    :  # output already printed by probe
+                else
+                    all_ok=false
+                fi
+                rm -f "$probe_routes_file"
+            fi
         fi
     fi
 
@@ -1211,6 +1228,8 @@ while [[ $# -gt 0 ]]; do
             DASHBOARD=true; shift ;;
         --open)
             OPEN_BROWSER=true; shift ;;
+        --logs|--tail)
+            ACTION="logs"; shift ;;
         --probe)
             ACTION="probe"
             if [[ -n "${2:-}" && "$2" != -* ]]; then
@@ -1300,6 +1319,17 @@ cleanup_proxy() {
 }
 
 case "$ACTION" in
+    logs)
+        local log_path="${DEEPCLAUDE_DIR}/proxy.log"
+        if [[ ! -f "$log_path" ]]; then
+            echo "No proxy log found at $log_path"
+            echo "Start the proxy first with: deepclaude --persist"
+            exit 1
+        fi
+        echo "Tailing $log_path (Ctrl+C to stop)..."
+        echo "---"
+        tail -f "$log_path"
+        exit 0 ;;
     status)     show_status ;;
     cost)       show_cost ;;
     benchmark)  run_benchmark ;;

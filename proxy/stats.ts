@@ -360,6 +360,93 @@ export function getFullHealthSnapshot(concurrencyStatus: unknown, rateLimiterSta
     }
     return base;
 }
+
+// Build Prometheus-format metrics. Counters and gauges for standard
+// monitoring stacks (Prometheus, Grafana, Datadog OpenMetrics, etc.).
+export function buildPrometheusMetrics(concurrencyStatus: unknown, rateLimiterStatus: unknown): string {
+    const lines: string[] = [];
+    const pf = 'deepclaude';
+    const now = Date.now();
+
+    // Uptime
+    lines.push(`# HELP ${pf}_uptime_seconds Proxy uptime in seconds`);
+    lines.push(`# TYPE ${pf}_uptime_seconds gauge`);
+    lines.push(`${pf}_uptime_seconds ${((now - startTime) / 1000).toFixed(1)}`);
+
+    // Process
+    const mem = process.memoryUsage();
+    lines.push(`# HELP ${pf}_memory_bytes Node.js process memory`);
+    lines.push(`# TYPE ${pf}_memory_bytes gauge`);
+    lines.push(`${pf}_memory_bytes{type="heapUsed"} ${mem.heapUsed}`);
+    lines.push(`${pf}_memory_bytes{type="heapTotal"} ${mem.heapTotal}`);
+    lines.push(`${pf}_memory_bytes{type="rss"} ${mem.rss}`);
+    lines.push(`# HELP ${pf}_event_loop_lag_ms Max event loop lag in last 60s`);
+    lines.push(`# TYPE ${pf}_event_loop_lag_ms gauge`);
+    lines.push(`${pf}_event_loop_lag_ms ${maxEventLoopLag}`);
+
+    // Concurrency
+    if (concurrencyStatus) {
+        const cs = concurrencyStatus as Record<string, { active: number; waiting: number; limit: number }>;
+        lines.push(`# HELP ${pf}_concurrency_active Active slots per pool`);
+        lines.push(`# TYPE ${pf}_concurrency_active gauge`);
+        for (const [pool, s] of Object.entries(cs)) {
+            lines.push(`${pf}_concurrency_active{pool="${pool}"} ${s.active}`);
+        }
+        lines.push(`# HELP ${pf}_concurrency_waiting Waiting slots per pool`);
+        lines.push(`# TYPE ${pf}_concurrency_waiting gauge`);
+        for (const [pool, s] of Object.entries(cs)) {
+            lines.push(`${pf}_concurrency_waiting{pool="${pool}"} ${s.waiting}`);
+        }
+    }
+
+    // Rate limiter
+    if (rateLimiterStatus) {
+        const rls = rateLimiterStatus as { tracked: number };
+        lines.push(`# HELP ${pf}_rate_limit_tracked Tracked IPs`);
+        lines.push(`# TYPE ${pf}_rate_limit_tracked gauge`);
+        lines.push(`${pf}_rate_limit_tracked ${rls.tracked}`);
+    }
+
+    // Providers
+    const spend = parseFloat(sessionTotal.toFixed(4));
+    lines.push(`# HELP ${pf}_spend_session_dollars Session spend in USD`);
+    lines.push(`# TYPE ${pf}_spend_session_dollars gauge`);
+    lines.push(`${pf}_spend_session_dollars ${spend}`);
+
+    for (const [k, v] of Object.entries(providerStats)) {
+        const label = `provider="${k}"`;
+        const state = getCircuitBreakerState(k);
+        lines.push(`# HELP ${pf}_requests_total Request count per provider`);
+        lines.push(`# TYPE ${pf}_requests_total counter`);
+        lines.push(`${pf}_requests_total{${label}} ${v.requests}`);
+        lines.push(`# HELP ${pf}_requests_success_total Success count per provider`);
+        lines.push(`# TYPE ${pf}_requests_success_total counter`);
+        lines.push(`${pf}_requests_success_total{${label}} ${v.successes}`);
+        lines.push(`# HELP ${pf}_requests_fail_total Failure count per provider`);
+        lines.push(`# TYPE ${pf}_requests_fail_total counter`);
+        lines.push(`${pf}_requests_fail_total{${label}} ${v.fails}`);
+        lines.push(`# HELP ${pf}_latency_avg_ms Average latency per provider`);
+        lines.push(`# TYPE ${pf}_latency_avg_ms gauge`);
+        lines.push(`${pf}_latency_avg_ms{${label}} ${v.requests ? Math.round(v.totalMs / v.requests) : 0}`);
+        lines.push(`# HELP ${pf}_circuit_breaker_state Circuit breaker (0=CLOSED, 1=OPEN, 2=HALF_OPEN)`);
+        lines.push(`# TYPE ${pf}_circuit_breaker_state gauge`);
+        lines.push(`${pf}_circuit_breaker_state{${label}} ${state === 'OPEN' ? 1 : state === 'HALF_OPEN' ? 2 : 0}`);
+
+        const acc = streamAccumulators[k];
+        if (acc) {
+            lines.push(`# HELP ${pf}_ttft_avg_ms Average time to first token`);
+            lines.push(`# TYPE ${pf}_ttft_avg_ms gauge`);
+            lines.push(`${pf}_ttft_avg_ms{${label}} ${acc.ttftCount > 0 ? Math.round(acc.totalTTFT / acc.ttftCount) : 0}`);
+        }
+    }
+
+    // Active connections
+    lines.push(`# HELP ${pf}_active_connections Current active HTTP connections`);
+    lines.push(`# TYPE ${pf}_active_connections gauge`);
+    lines.push(`${pf}_active_connections ${activeConnections}`);
+
+    return lines.join('\n') + '\n';
+}
 // Check whether a provider is healthy.
 // Requires at least 5 requests before judging. A provider is unhealthy
 // if more than a third of its requests have failed or the circuit breaker
