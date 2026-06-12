@@ -676,6 +676,10 @@ export function createAnthropicStreamInterceptor(preExecutedSearches: number = 0
     let webFetchRequests = 0;
 
     class Interceptor extends Transform {
+        private _injected = false;
+        private _seenMessageDelta = false;
+        private _seenMessageStop = false;
+
         _transform(chunk: Buffer | string, _encoding: string, callback: TransformCallback): void {
             buf += chunk.toString();
             if (buf.length > 1_048_576) { this.destroy(new Error('Anthropic SSE buffer exceeded 1MB')); return; }
@@ -693,6 +697,9 @@ export function createAnthropicStreamInterceptor(preExecutedSearches: number = 0
                     if (trimmed.includes('"name":"web_search"')) webSearchRequests++;
                     else if (trimmed.includes('"name":"web_fetch"')) webFetchRequests++;
                 }
+
+                if (trimmed.includes('"type":"message_delta"')) this._seenMessageDelta = true;
+                if (trimmed.includes('"type":"message_stop"')) this._seenMessageStop = true;
 
                 // Inject server_tool_use into message_delta usage
                 if (trimmed.includes('"type":"message_delta"') && (webSearchRequests > 0 || webFetchRequests > 0)) {
@@ -712,9 +719,28 @@ export function createAnthropicStreamInterceptor(preExecutedSearches: number = 0
                             } else {
                                 output += newDataLine + '\n\n';
                             }
+                            this._injected = true;
                             continue;
                         } catch (_) { /* fall through to passthrough */ }
                     }
+                }
+
+                // If we reach message_stop without injecting, emit a
+                // synthetic message_delta with server_tool_use before it.
+                if (trimmed.includes('"type":"message_stop"') && !this._injected && (webSearchRequests > 0 || webFetchRequests > 0)) {
+                    const syntheticDelta = JSON.stringify({
+                        type: 'message_delta',
+                        delta: { stop_reason: 'end_turn', stop_sequence: null },
+                        usage: {
+                            output_tokens: 0,
+                            server_tool_use: {
+                                web_search_requests: webSearchRequests,
+                                web_fetch_requests: webFetchRequests,
+                            },
+                        },
+                    });
+                    output += 'event: message_delta\ndata: ' + syntheticDelta + '\n\n';
+                    this._injected = true;
                 }
 
                 output += trimmed + '\n\n';
@@ -725,8 +751,8 @@ export function createAnthropicStreamInterceptor(preExecutedSearches: number = 0
 
         _flush(callback: TransformCallback): void {
             if (buf.trim()) {
-                // Final event — if it's message_delta, inject server_tool_use
                 const trimmed = buf.trim();
+                // Existing message_delta in buffer — inject server_tool_use
                 if (trimmed.includes('"type":"message_delta"') && (webSearchRequests > 0 || webFetchRequests > 0)) {
                     const dataMatch = trimmed.match(/^data: (.*)$/m);
                     if (dataMatch) {
@@ -747,6 +773,23 @@ export function createAnthropicStreamInterceptor(preExecutedSearches: number = 0
                             return;
                         } catch (_) { /* fall through */ }
                     }
+                }
+                // If buffer is message_stop and we haven't injected yet, emit
+                // synthetic message_delta right before it.
+                if (trimmed.includes('"type":"message_stop"') && !this._injected && (webSearchRequests > 0 || webFetchRequests > 0)) {
+                    const syntheticDelta = JSON.stringify({
+                        type: 'message_delta',
+                        delta: { stop_reason: 'end_turn', stop_sequence: null },
+                        usage: {
+                            output_tokens: 0,
+                            server_tool_use: {
+                                web_search_requests: webSearchRequests,
+                                web_fetch_requests: webFetchRequests,
+                            },
+                        },
+                    });
+                    callback(null, 'event: message_delta\ndata: ' + syntheticDelta + '\n\n' + trimmed + '\n\n');
+                    return;
                 }
                 callback(null, buf);
             } else {
