@@ -705,15 +705,14 @@ export function createAnthropicStreamInterceptor(preExecutedSearches: number = 0
                                 web_search_requests: webSearchRequests,
                                 web_fetch_requests: webFetchRequests,
                             };
-                                const eventLine = trimmed.match(/^(event: .*)$/m)?.[1] || '';
-                                const newDataLine = 'data: ' + JSON.stringify(parsed);
-                                if (eventLine) {
-                                    output += eventLine + '\n' + newDataLine + '\n\n';
-                                } else {
-                                    output += newDataLine + '\n\n';
-                                }
-                                continue;
+                            const eventLine = trimmed.match(/^(event: .*)$/m)?.[1] || '';
+                            const newDataLine = 'data: ' + JSON.stringify(parsed);
+                            if (eventLine) {
+                                output += eventLine + '\n' + newDataLine + '\n\n';
+                            } else {
+                                output += newDataLine + '\n\n';
                             }
+                            continue;
                         } catch (_) { /* fall through to passthrough */ }
                     }
                 }
@@ -738,15 +737,14 @@ export function createAnthropicStreamInterceptor(preExecutedSearches: number = 0
                                 web_search_requests: webSearchRequests,
                                 web_fetch_requests: webFetchRequests,
                             };
-                                const eventLine = trimmed.match(/^(event: .*)$/m)?.[1] || '';
-                                const newDataLine = 'data: ' + JSON.stringify(parsed);
-                                if (eventLine) {
-                                    callback(null, eventLine + '\n' + newDataLine + '\n\n');
-                                    return;
-                                }
-                                callback(null, newDataLine + '\n\n');
+                            const eventLine = trimmed.match(/^(event: .*)$/m)?.[1] || '';
+                            const newDataLine = 'data: ' + JSON.stringify(parsed);
+                            if (eventLine) {
+                                callback(null, eventLine + '\n' + newDataLine + '\n\n');
                                 return;
                             }
+                            callback(null, newDataLine + '\n\n');
+                            return;
                         } catch (_) { /* fall through */ }
                     }
                 }
