@@ -1245,6 +1245,11 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                 // Don't continue fallback chain for non-retryable status codes.
                 if (result.status && !FALLBACKABLE_STATUS.has(result.status)) {
                     log.warn(reqId, req.method + ' ' + (model || '-') + ' -> ' + label + ' ' + result.status + ' ' + ms + 'ms (non-retryable -- stopping)');
+                    // DEBUG: Capture body of failed requests to diagnose WebSearch/provider issues
+                    try {
+                        const debugBody = rawBody ? truncateForLog(rawBody.toString('utf-8', 0, Math.min(rawBody.length, 8192))) : '<no body>';
+                        log.warn(reqId, 'FAIL_BODY model=' + (model || '-') + ' body=' + debugBody);
+                    } catch (_) { /* best effort */ }
                     break;
                 }
 

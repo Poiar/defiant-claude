@@ -44,7 +44,6 @@ interface CachedEntry {
 
 interface ExtractResult {
     sk: string;
-    fp: string;
     firstToolCallId: string;
     reasoningContent: string;
 }
@@ -56,34 +55,10 @@ interface ReinjectResult {
 
 export { sessionKey } from './session-key';
 
-// Simple DJB2 hash -- fast, deterministic, no dependency needed.
-function hash(str: string): string {
-    let h = 5381;
-    for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0;
-    return h.toString(36);
-}
-
-// Produce a fingerprint of the last N messages so different conversation
-// branches with the same first-user-message don't poison each other's cache.
-function computeFingerprint(messages: Message[]): string {
-    if (!messages || !Array.isArray(messages) || messages.length === 0) return '';
-    const recent = messages.slice(-3);
-    const text = recent.map(m => {
-        const c = m.content;
-        return typeof c === 'string' ? c : JSON.stringify(c);
-    }).join('|');
-    return hash(text);
-}
-
-// Find the LAST assistant message that has both tool_calls and reasoning_content.
-// Returns { sk, fp, firstToolCallId, reasoningContent } or null.
 export function extractReasoningContent(messages: Message[]): ExtractResult | null {
     if (!messages || !Array.isArray(messages)) return null;
     const sk = sessionKey({ messages });
     if (!sk) return null;
-    // Exclude the last message (the current response) so the fingerprint
-    // matches what reinjectReasoningContent computes from the request messages.
-    const fp = computeFingerprint(messages.slice(0, -1));
 
     for (let i = messages.length - 1; i >= 0; i--) {
         const msg = messages[i];
@@ -92,7 +67,6 @@ export function extractReasoningContent(messages: Message[]): ExtractResult | nu
         if (typeof msg.reasoning_content !== 'string' || !msg.reasoning_content) continue;
         return {
             sk,
-            fp,
             firstToolCallId: msg.tool_calls[0].id,
             reasoningContent: msg.reasoning_content,
         };
@@ -101,19 +75,23 @@ export function extractReasoningContent(messages: Message[]): ExtractResult | nu
     return null;
 }
 
-// Cache reasoning content keyed by session key + fingerprint + first tool call ID.
-export function store(sk: string | null | undefined, firstToolCallId: string | null | undefined, reasoningContent: string | null | undefined, messageCount: number = -1, fp: string = ''): void {
+// Cache reasoning content keyed by session key + first tool call ID.
+// The first tool call ID is a UUID (unique per call), so the conversation
+// fingerprint is redundant. Dropping it fixes the same cache-miss bug
+// fixed in thinking-cache.ts: extraction and injection computed different
+// fingerprints because the last-3-messages window shifts between turns.
+export function store(sk: string | null | undefined, firstToolCallId: string | null | undefined, reasoningContent: string | null | undefined, messageCount: number = -1): void {
     if (!sk || !firstToolCallId || !reasoningContent) return;
-    cache.set(`${sk}:${fp}:${firstToolCallId}`, {
+    cache.set(`${sk}:${firstToolCallId}`, {
         reasoningContent,
         messageCount,
     });
 }
 
 // Retrieve cached reasoning content.
-function retrieve(sk: string | null | undefined, firstToolCallId: string | null | undefined, currentMsgCount: number = -1, fp: string = ''): string | undefined {
+function retrieve(sk: string | null | undefined, firstToolCallId: string | null | undefined, currentMsgCount: number = -1): string | undefined {
     if (!sk || !firstToolCallId) return undefined;
-    const entry = cache.get(`${sk}:${fp}:${firstToolCallId}`);
+    const entry = cache.get(`${sk}:${firstToolCallId}`);
     if (!entry) return undefined;
     if (entry.messageCount > 0 && currentMsgCount >= 0 && entry.messageCount !== currentMsgCount) return undefined;
     return entry.reasoningContent;
@@ -128,7 +106,6 @@ export function reinjectReasoningContent(messages: Message[]): ReinjectResult {
     const sk = sessionKey({ messages });
     if (!sk) return { modified: false, messages };
 
-    const fp = computeFingerprint(messages);
     let modified = false;
 
     for (const msg of messages) {
@@ -137,7 +114,7 @@ export function reinjectReasoningContent(messages: Message[]): ReinjectResult {
         if (msg.reasoning_content) continue;
 
         const firstToolCallId = msg.tool_calls[0].id;
-        const cached = retrieve(sk, firstToolCallId, messages.length, fp);
+        const cached = retrieve(sk, firstToolCallId, messages.length);
         if (cached) {
             msg.reasoning_content = cached;
             modified = true;
