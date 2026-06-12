@@ -516,6 +516,31 @@ export function hasPendingToolResult(messages: Message[]): PendingToolResult {
     }
     return { needsPopulation: emptyResults.length > 0, emptyResults };
 }
+
+// Extract a web search query from a request if it follows CC's web search pattern.
+// Returns the query string or null.
+export function extractSearchQuery(messages: Message[]): string | null {
+    if (!messages || !Array.isArray(messages)) return null;
+    // Scan backward for the last user message asking for a web search
+    for (let i = messages.length - 1; i >= 0; i--) {
+        const msg = messages[i];
+        if (msg.role !== 'user') continue;
+        const content = msg.content;
+        if (typeof content === 'string') {
+            const m = content.match(/Perform a web search for the query:\s*(.+)/i);
+            if (m) return m[1].trim();
+        } else if (Array.isArray(content)) {
+            for (const block of content) {
+                if (block.type === 'text' && typeof block.text === 'string') {
+                    const m = block.text.match(/Perform a web search for the query:\s*(.+)/i);
+                    if (m) return m[1].trim();
+                }
+            }
+        }
+    }
+    return null;
+}
+
 export async function populateToolResults(messages: Message[]): Promise<boolean> {
     const { emptyResults } = hasPendingToolResult(messages);
     if (!emptyResults || emptyResults.length === 0) return false;
