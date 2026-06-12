@@ -2,6 +2,7 @@
 
 import http from 'http';
 import https from 'https';
+import crypto from 'crypto';
 import { pipeline, Transform } from 'stream';
 import fs from 'fs';
 
@@ -784,36 +785,35 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                         const searchQuery = extractSearchQuery(messages as any[]);
                         if (searchQuery) {
                             preExecutedSearches++;
-                            log.info(reqId, 'web search pre-execute: ' + truncateForLog(searchQuery));
+                            log.info(reqId, 'web search direct: ' + truncateForLog(searchQuery));
                             const searchResults = await webSearch(searchQuery);
-                            // Replace the last user message content with one that includes results.
-                            // Find the last user message and inject search results
-                            for (let i = messages.length - 1; i >= 0; i--) {
-                                const msg = messages[i];
-                                if (msg.role !== 'user') continue;
-                                const content = msg.content;
-                                if (typeof content === 'string') {
-                                    msg.content = 'Search results for "' + searchQuery + '":\n\n' + searchResults + '\n\nSummarize these results.';
-                                } else if (Array.isArray(content)) {
-                                    // Replace text blocks with search results
-                                    const newContent: Array<Record<string, unknown>> = [{
-                                        type: 'text',
-                                        text: 'Search results for "' + searchQuery + '":\n\n' + searchResults + '\n\nSummarize these results.',
-                                    }];
-                                    msg.content = newContent;
-                                }
-                                modified = true;
-                                break;
-                            }
-                            // Remove web_search tools since we already executed the search
-                            if (parsedBody.tools && Array.isArray(parsedBody.tools)) {
-                                type ToolItem = Record<string, unknown>;
-                                parsedBody.tools = (parsedBody.tools as ToolItem[]).filter(
-                                    t => !(t && (t.name === 'web_search' || t.name === 'web_fetch' || (typeof t.type === 'string' && t.type.startsWith('web_search_'))))
-                                );
-                                if ((parsedBody.tools as ToolItem[]).length === 0) {
-                                    delete parsedBody.tools;
-                                }
+
+                            // Return search results directly — bypass DeepSeek entirely.
+                            // This avoids tool-call issues with flash models AND guarantees
+                            // server_tool_use is correct without SSE interception.
+                            if (!res.headersSent && !res.destroyed) {
+                                const responseId = 'msg_' + crypto.randomUUID();
+                                const responseBody = JSON.stringify({
+                                    id: responseId,
+                                    type: 'message',
+                                    model: model || '',
+                                    role: 'assistant',
+                                    content: [{ type: 'text', text: searchResults }],
+                                    stop_reason: 'end_turn',
+                                    stop_sequence: null,
+                                    usage: {
+                                        input_tokens: 0,
+                                        output_tokens: 0,
+                                        server_tool_use: {
+                                            web_search_requests: 1,
+                                            web_fetch_requests: 0,
+                                        },
+                                    },
+                                });
+                                res.writeHead(200, { 'content-type': 'application/json' });
+                                res.end(responseBody);
+                                log.info(reqId, 'web search direct response sent, size=' + responseBody.length);
+                                return; // Skip forwarding to provider entirely
                             }
                         }
                     } catch (e) {
