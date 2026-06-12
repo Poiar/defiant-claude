@@ -16,6 +16,7 @@
     "doctor": "pwsh deepclaude.ps1 --doctor",
     "start": "npx tsx proxy/start-proxy.ts",
     "start:ts": "npx tsx proxy/start-proxy.ts",
+    "build:readme": "npx tsx scripts/build-readme.ts",
     "prepare": "husky"
   },
   "repository": {
