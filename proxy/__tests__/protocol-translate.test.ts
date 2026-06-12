@@ -365,6 +365,14 @@ describe('translateRequest', () => {
     });
   });
 
+  test('translates tool_choice none to "none"', () => {
+    const { openaiBody } = translateRequest({
+      ...minimalBody(),
+      tool_choice: { type: 'none' },
+    });
+    expect(openaiBody.tool_choice).toBe('none');
+  });
+
   test('defaults tool_choice to auto when unrecognized', () => {
     const { openaiBody } = translateRequest({
       ...minimalBody(),
