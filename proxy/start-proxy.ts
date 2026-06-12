@@ -1037,6 +1037,9 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                         // web_search/web_fetch tool counts are injected into usage.
                         if (reqParsed.stream && !streamTransformer) {
                             streamTransformer = createAnthropicStreamInterceptor(preExecutedSearches);
+                            log.info(reqId, 'created AnthropicStreamInterceptor preExec=' + preExecutedSearches);
+                        } else if (!reqParsed.stream) {
+                            log.info(reqId, 'skipping interceptor: stream=' + reqParsed.stream + ' preExec=' + preExecutedSearches);
                         }
                     } catch (e) {
                         log.error(reqId, 'thinking injection error: ' + truncateForLog((e as Error).message));
@@ -1250,6 +1253,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                                     existing.web_search_requests = (existing.web_search_requests || 0) + preExecutedSearches;
                                     u.server_tool_use = existing;
                                     finalBody = JSON.stringify(rb);
+                                    log.info(reqId, 'non-streaming injected server_tool_use preExec=' + preExecutedSearches);
                                 } catch (_) { /* best effort */ }
                             }
                             res.end(finalBody);
