@@ -741,6 +741,7 @@ export function createAnthropicStreamInterceptor(preExecutedSearches: number = 0
                 // If we reach message_stop without injecting, emit a
                 // synthetic message_delta with server_tool_use before it.
                 if (trimmed.includes('"type":"message_stop"') && !this._injected && (webSearchRequests > 0 || webFetchRequests > 0)) {
+                    log.info(null, '[dbg-interceptor] INJECT synthetic msg_delta at msg_stop ws=' + webSearchRequests + ' wf=' + webFetchRequests + ' seenDelta=' + this._seenMessageDelta);
                     const syntheticDelta = JSON.stringify({
                         type: 'message_delta',
                         delta: { stop_reason: 'end_turn', stop_sequence: null },
