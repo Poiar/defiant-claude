@@ -664,23 +664,15 @@ export function createStreamTransformer(model: string, preExecutedSearches: numb
 }
 
 // --- Anthropic-format SSE interceptor ---
-// Lightweight Transform that passes through all SSE events unchanged, but counts
-// web_search/web_fetch tool_use blocks and injects server_tool_use into the
-// message_delta event's usage. DeepSeek always reports web_search_requests: 0
-// in its Anthropic-format response; this overrides that with the actual count
-// so Claude Code's "Did N searches" display is correct.
+// Lightweight Transform that passes through all SSE events unchanged.
+// Web search requests are now handled by the direct response path in
+// start-proxy.ts (pre-execute → return results immediately), so the
+// interceptor no longer needs to inject server_tool_use counts.
 
-export function createAnthropicStreamInterceptor(preExecutedSearches: number = 0): Transform {
+export function createAnthropicStreamInterceptor(_preExecutedSearches: number = 0): Transform {
     let buf = '';
-    let webSearchRequests = preExecutedSearches;
-    let webFetchRequests = 0;
-    let _eventCount = 0;
 
     class Interceptor extends Transform {
-        private _injected = false;
-        private _seenMessageDelta = false;
-        private _seenMessageStop = false;
-
         _transform(chunk: Buffer | string, _encoding: string, callback: TransformCallback): void {
             buf += chunk.toString();
             if (buf.length > 1_048_576) { this.destroy(new Error('Anthropic SSE buffer exceeded 1MB')); return; }
@@ -692,90 +684,6 @@ export function createAnthropicStreamInterceptor(preExecutedSearches: number = 0
             for (const part of parts) {
                 const trimmed = part.trim();
                 if (!trimmed) { output += '\n\n'; continue; }
-
-                // DEBUG: log all SSE event types to trace what DeepSeek emits
-                _eventCount++;
-                {
-                    const dm = trimmed.match(/^data: (.*)$/m);
-                    if (dm) {
-                        try {
-                            const d = JSON.parse(dm[1]);
-                            log.info(null, '[dbg-interceptor] evt#' + _eventCount + ' type=' + (d.type || d.object || '?') + ' ws=' + webSearchRequests + ' wf=' + webFetchRequests);
-                        } catch (_) { /* raw event */ }
-                    }
-                }
-
-                // Count web_search/web_fetch content_block_start events
-                if (trimmed.includes('"type":"content_block_start"')) {
-                    if (trimmed.includes('"name":"web_search"')) webSearchRequests++;
-                    else if (trimmed.includes('"name":"web_fetch"')) webFetchRequests++;
-                }
-
-                const isMessageDelta = trimmed.includes('"type":"message_delta"') || trimmed.includes('event: message_delta');
-                const isMessageStop = trimmed.includes('"type":"message_stop"') || trimmed.includes('event: message_stop');
-
-                if (isMessageDelta) this._seenMessageDelta = true;
-                if (isMessageStop) this._seenMessageStop = true;
-
-                // Inject server_tool_use into message_delta usage
-                if (isMessageDelta && (webSearchRequests > 0 || webFetchRequests > 0)) {
-                    const dataMatch = trimmed.match(/^data: (.*)$/m);
-                    log.info(null, '[dbg-interceptor] msg_delta raw=' + trimmed.substring(0, 300));
-                    log.info(null, '[dbg-interceptor] msg_delta injecting ws=' + webSearchRequests + ' injected=' + this._injected);
-                    const serverToolUse = {
-                        web_search_requests: webSearchRequests,
-                        web_fetch_requests: webFetchRequests,
-                    };
-                    if (dataMatch) {
-                        // Existing data payload — inject server_tool_use into usage
-                        try {
-                            const parsed = JSON.parse(dataMatch[1]);
-                            if (!parsed.usage) parsed.usage = {};
-                            parsed.usage.server_tool_use = serverToolUse;
-                            const eventLine = trimmed.match(/^(event: .*)$/m)?.[1] || '';
-                            const newDataLine = 'data: ' + JSON.stringify(parsed);
-                            if (eventLine) {
-                                output += eventLine + '\n' + newDataLine + '\n\n';
-                            } else {
-                                output += newDataLine + '\n\n';
-                            }
-                            this._injected = true;
-                            continue;
-                        } catch (_) { /* fall through to passthrough */ }
-                    } else {
-                        // Bare event with no data payload — create synthetic data line
-                        log.info(null, '[dbg-interceptor] BARE event — creating synthetic data');
-                        const syntheticData = JSON.stringify({
-                            type: 'message_delta',
-                            delta: { stop_reason: 'end_turn', stop_sequence: null },
-                            usage: { output_tokens: 0, server_tool_use: serverToolUse },
-                        });
-                        output += 'event: message_delta\ndata: ' + syntheticData + '\n\n';
-                        log.info(null, '[dbg-interceptor] emitted synthetic msg_delta: ' + syntheticData.substring(0, 200));
-                        this._injected = true;
-                        continue;
-                    }
-                }
-
-                // If we reach message_stop without injecting, emit a
-                // synthetic message_delta with server_tool_use before it.
-                if (isMessageStop && !this._injected && (webSearchRequests > 0 || webFetchRequests > 0)) {
-                    log.info(null, '[dbg-interceptor] INJECT synthetic msg_delta at msg_stop ws=' + webSearchRequests + ' wf=' + webFetchRequests + ' seenDelta=' + this._seenMessageDelta);
-                    this._injected = true;
-                    const syntheticDelta = JSON.stringify({
-                        type: 'message_delta',
-                        delta: { stop_reason: 'end_turn', stop_sequence: null },
-                        usage: {
-                            output_tokens: 0,
-                            server_tool_use: {
-                                web_search_requests: webSearchRequests,
-                                web_fetch_requests: webFetchRequests,
-                            },
-                        },
-                    });
-                    output += 'event: message_delta\ndata: ' + syntheticDelta + '\n\n';
-                }
-
                 output += trimmed + '\n\n';
             }
 
@@ -784,51 +692,6 @@ export function createAnthropicStreamInterceptor(preExecutedSearches: number = 0
 
         _flush(callback: TransformCallback): void {
             if (buf.trim()) {
-                const trimmed = buf.trim();
-                const isMsgDelta = trimmed.includes('"type":"message_delta"') || trimmed.includes('event: message_delta');
-                const isMsgStop = trimmed.includes('"type":"message_stop"') || trimmed.includes('event: message_stop');
-                const hasCount = webSearchRequests > 0 || webFetchRequests > 0;
-                const serverToolUse = { web_search_requests: webSearchRequests, web_fetch_requests: webFetchRequests };
-
-                // Existing message_delta in buffer — inject server_tool_use
-                if (isMsgDelta && hasCount) {
-                    const dataMatch = trimmed.match(/^data: (.*)$/m);
-                    if (dataMatch) {
-                        try {
-                            const parsed = JSON.parse(dataMatch[1]);
-                            if (!parsed.usage) parsed.usage = {};
-                            parsed.usage.server_tool_use = serverToolUse;
-                            const eventLine = trimmed.match(/^(event: .*)$/m)?.[1] || '';
-                            const newDataLine = 'data: ' + JSON.stringify(parsed);
-                            if (eventLine) {
-                                callback(null, eventLine + '\n' + newDataLine + '\n\n');
-                                return;
-                            }
-                            callback(null, newDataLine + '\n\n');
-                            return;
-                        } catch (_) { /* fall through */ }
-                    } else {
-                        // Bare event with no data — create synthetic data
-                        const syntheticData = JSON.stringify({
-                            type: 'message_delta',
-                            delta: { stop_reason: 'end_turn', stop_sequence: null },
-                            usage: { output_tokens: 0, server_tool_use: serverToolUse },
-                        });
-                        callback(null, 'event: message_delta\ndata: ' + syntheticData + '\n\n' + trimmed + '\n\n');
-                        return;
-                    }
-                }
-                // If buffer is message_stop and we haven't injected yet, emit
-                // synthetic message_delta right before it.
-                if (isMsgStop && !this._injected && hasCount) {
-                    const syntheticDelta = JSON.stringify({
-                        type: 'message_delta',
-                        delta: { stop_reason: 'end_turn', stop_sequence: null },
-                        usage: { output_tokens: 0, server_tool_use: serverToolUse },
-                    });
-                    callback(null, 'event: message_delta\ndata: ' + syntheticDelta + '\n\n' + trimmed + '\n\n');
-                    return;
-                }
                 callback(null, buf);
             } else {
                 callback(null, '');
