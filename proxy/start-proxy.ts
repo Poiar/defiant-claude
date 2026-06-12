@@ -493,6 +493,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
             await checkReload(state, parsed);
             let model: string | null = null;
             let parsedBody: Record<string, unknown> | null = null;
+            let preExecutedSearches = 0;
             try {
                 const parsed = JSON.parse(rawBody.toString()) as Record<string, unknown>;
                 if (typeof parsed.model !== 'string' || parsed.model.length === 0) {
@@ -876,7 +877,6 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
             let lastStatus: number | null = null;
             let lastRawBody: string | null = null;
             let lastQualityReason: string | null = null;
-            let preExecutedSearches = 0;
             let fallbackFromModel: string | null = null;
             const attemptedProviders: Array<{ providerKey: string }> = [];
             let lastAttemptMs = 0;
