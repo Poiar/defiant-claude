@@ -55,7 +55,7 @@ DeepClaude runs a local HTTP routing proxy that intercepts Claude Code's Anthrop
 
 ### Data-driven provider registry
 
-The proxy, the launcher scripts, and `statusline.mjs` all read from a single `proxy/providers.json` file. Config resolution, route construction, and context-limit lookups are centralized in `proxy/launcher.mjs` — a zero-dependency Node.js module shared by both `deepclaude.ps1` and `deepclaude.sh`. This eliminates duplicated provider, config, and context-limit definitions across languages and guarantees behavioral parity.
+The proxy and launcher scripts read from `proxy/providers.json`. The launcher (`proxy/launcher.mjs`) generates `~/.deepclaude/current-routes.json` from it, which the proxy and `statusline.mjs` load at runtime. Config resolution, route construction, and context-limit lookups are centralized in `proxy/launcher.mjs` — a zero-dependency Node.js module shared by both `deepclaude.ps1` and `deepclaude.sh`. This eliminates duplicated provider, config, and context-limit definitions across languages and guarantees behavioral parity.
 
 <!-- AUTO:providers-schema -->
 ```
@@ -141,14 +141,24 @@ deepclaude -b anthropic     # Normal Claude Code
 
 ### Ad-hoc positional configs
 
-Pass 1–5 `providerKey:modelId` specs, mapped to opus/sonnet/haiku/subagent/fable:
+Pass 1–5 `providerKey:modelId` specs. Each spec is assigned to consecutive slots:
+
+| Specs | Opus | Sonnet | Haiku | Subagent | Fable |
+|-------|------|--------|-------|----------|-------|
+| 1 spec | spec 1 | spec 1 | spec 1 | spec 1 | spec 1 |
+| 2 specs | spec 1 | spec 1 | spec 1 | spec 2 | spec 2 |
+| 3 specs | spec 1 | spec 2 | spec 2 | spec 2 | spec 3 |
+| 4 specs | spec 1 | spec 2 | spec 3 | spec 4 | spec 4 |
+| 5 specs | spec 1 | spec 2 | spec 3 | spec 4 | spec 5 |
+
+Slot order: opus, sonnet, haiku, subagent, fable. When you provide fewer specs than slots, the last spec fills all remaining slots.
 
 ```
 deepclaude ds:deepseek-v4-pro                                              # 1 spec → all 5 slots
-deepclaude ds:deepseek-v4-pro oc:big-pickle                                # 2 specs → first 3 / last 2
-deepclaude ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free       # 3 specs → opus, rest=second, sub/fable=third
+deepclaude ds:deepseek-v4-pro oc:big-pickle                                # 2 specs → opus/sonnet/haiku=ds, sub/fable=oc
+deepclaude ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free       # 3 specs → opus=ds, sonnet/haiku/sub=oc, fable=or
 deepclaude ds:deepseek-v4-pro ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free  # 4 specs → sub/fable share last
-deepclaude ds:deepseek-v4-pro ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free mm:mimo-v2.5-pro  # 5 specs → direct
+deepclaude ds:deepseek-v4-pro ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free mm:mimo-v2.5-pro  # 5 specs → direct 1:1
 ```
 
 ### Flags
@@ -163,7 +173,7 @@ deepclaude ds:deepseek-v4-pro ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-a
 --models        List all available model IDs (for /model in CC)
 --remote        Browser-based remote control (starts proxy automatically)
 --persist       Keep proxy alive after CC exits
---switch CONFIG  Switch a running persistent proxy to a different config
+--switch CONFIG  Switch a running persistent proxy to a different config (use with --persist)
 --set-slot SLOT MODEL  Override a slot (opus/sonnet/haiku/subagent/fable)
 --subagent-model MODEL  Set a dedicated subagent model (e.g., oc:big-pickle)
 --stop-proxy    Kill the persistent proxy

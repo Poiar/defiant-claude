@@ -247,9 +247,7 @@ function isPrivateIPv4(host: string): boolean {
 }
 // Internal implementation without concurrency slot management.
 // Recursive redirect calls skip the slot to avoid deadlock.
-async function webFetchImpl(url: string, _depth?: number, _visited?: Set<string>): Promise<string> {
-    _depth = _depth || 0;
-    _visited = _visited || new Set();
+async function webFetchImpl(url: string, depth: number = 0, visited: Set<string> = new Set()): Promise<string> {
 
     try {
         const parsed = new URL(url);
@@ -259,16 +257,16 @@ async function webFetchImpl(url: string, _depth?: number, _visited?: Set<string>
         }
     } catch (_e) { return 'Error: Invalid URL.'; }
 
-    if (_depth > 5 || _visited.has(url)) return 'Too many redirects fetching: ' + url;
+    if (depth > 5 || visited.has(url)) return 'Too many redirects fetching: ' + url;
     // Normalize URL for dedup to catch equivalent-form redirects
     // (trailing slashes, case differences, fragments)
     try {
         const norm = new URL(url);
         norm.hash = '';
         norm.pathname = norm.pathname.replace(/\/+$/, '') || '/';
-        _visited.add(norm.href.toLowerCase());
+        visited.add(norm.href.toLowerCase());
     } catch (_) {
-        _visited.add(url);
+        visited.add(url);
     }
 
     // FIX 4: Use shared validateUrl from ssrf.ts as the primary SSRF check
@@ -338,7 +336,12 @@ async function webFetchImpl(url: string, _depth?: number, _visited?: Set<string>
 
         const req = transport.request(requestOptions, (res) => {
             if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-                webFetchImpl(new URL(res.headers.location, url).href, _depth! + 1, _visited).then(resolve);
+                // Drain the redirect response stream to prevent unhandled error
+                // events.  The response body for 3xx is typically empty, but
+                // destroying ensures we don't leak a dangling stream.
+                res.resume();
+                res.on('error', () => { /* suppress — redirect already in progress */ });
+                webFetchImpl(new URL(res.headers.location, url).href, depth + 1, visited).then(resolve);
                 return;
             }
             let data = '';
@@ -374,10 +377,10 @@ async function webFetchImpl(url: string, _depth?: number, _visited?: Set<string>
 // Public webFetch with concurrency limiting.
 // Only the top-level call (depth 0) acquires a slot; recursive redirects
 // call webFetchImpl directly, bypassing the slot to avoid deadlock.
-export async function webFetch(url: string, _depth?: number, _visited?: Set<string>): Promise<string> {
+export async function webFetch(url: string, depth: number = 0, visited: Set<string> = new Set()): Promise<string> {
     await acquireFetchSlot();
     try {
-        return await webFetchImpl(url, _depth, _visited);
+        return await webFetchImpl(url, depth, visited);
     } finally {
         releaseFetchSlot();
     }
