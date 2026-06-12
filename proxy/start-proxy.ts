@@ -878,12 +878,16 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                         const reqParsed = JSON.parse(forwardedBody.toString());
                         const { openaiBody } = translateRequest(reqParsed);
                         // Inject thinking mode for OpenAI-format providers (DeepSeek reasoning).
-                        // DeepSeek's OpenAI API uses "thinking": { "type": "enabled", "reasoning_effort": "high" }.
+                        // Derive reasoning_effort from budget_tokens so the user's --effort
+                        // flag (low/medium/high/max) is honored instead of hardcoded to "high".
+                        // Priority: Claude Code's request thinking > providers.json config.
                         const effectiveOAITinking = getEffectiveThinkingConfig(state.thinkingConfig || {}, state.thinkingOverridesFile);
                         {
                             const thinkingCfg = matchThinkingModel(upstreamModel, effectiveOAITinking);
                             if (thinkingCfg && !openaiBody.thinking) {
-                                openaiBody.thinking = { type: thinkingCfg.type, reasoning_effort: 'high' };
+                                const budgetTokens = reqParsed.thinking?.budget_tokens ?? thinkingCfg.budget_tokens ?? 32000;
+                                const reasoningEffort = budgetTokens <= 4096 ? 'low' : budgetTokens <= 16000 ? 'medium' : 'high';
+                                openaiBody.thinking = { type: thinkingCfg.type, reasoning_effort: reasoningEffort };
                             }
                         }
                         forwardedBody = Buffer.from(JSON.stringify(openaiBody));
