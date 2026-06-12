@@ -782,6 +782,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                         const messages = parsedBody.messages as Array<Record<string, unknown>>;
                         const searchQuery = extractSearchQuery(messages as any[]);
                         if (searchQuery) {
+                            preExecutedSearches++;
                             log.info(reqId, 'web search pre-execute: ' + truncateForLog(searchQuery));
                             const searchResults = await webSearch(searchQuery);
                             // Replace the last user message content with one that includes results.
@@ -875,6 +876,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
             let lastStatus: number | null = null;
             let lastRawBody: string | null = null;
             let lastQualityReason: string | null = null;
+            let preExecutedSearches = 0;
             let fallbackFromModel: string | null = null;
             const attemptedProviders: Array<{ providerKey: string }> = [];
             let lastAttemptMs = 0;
@@ -950,7 +952,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                         forwardedBody = Buffer.from(JSON.stringify(openaiBody));
                         if (reqParsed.stream) {
                             const transformerModel = target.rewriteModel || model || reqParsed.model;
-                            streamTransformer = createStreamTransformer(transformerModel);
+                            streamTransformer = createStreamTransformer(transformerModel, preExecutedSearches);
                         }
                     } catch (e) {
                         log.error(reqId, 'protocol translation error: ' + truncateForLog((e as Error).message));
@@ -1034,7 +1036,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                         // Attach Anthropic SSE interceptor for streaming requests so
                         // web_search/web_fetch tool counts are injected into usage.
                         if (reqParsed.stream && !streamTransformer) {
-                            streamTransformer = createAnthropicStreamInterceptor();
+                            streamTransformer = createAnthropicStreamInterceptor(preExecutedSearches);
                         }
                     } catch (e) {
                         log.error(reqId, 'thinking injection error: ' + truncateForLog((e as Error).message));
@@ -1236,7 +1238,21 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                     if (!res.headersSent && !res.destroyed) {
                         res.writeHead(result.status || 200, outHeaders as Record<string, string | number>);
                         if (result.body) {
-                            res.end(result.body);
+                            // Inject pre-executed search count so Claude Code
+                            // shows "Did N searches" instead of "Did 0 searches".
+                            let finalBody = result.body;
+                            if (preExecutedSearches > 0) {
+                                try {
+                                    const rb = typeof finalBody === 'string' ? JSON.parse(finalBody) : finalBody;
+                                    if (!rb.usage) rb.usage = {};
+                                    const u = rb.usage as Record<string, unknown>;
+                                    const existing = (u.server_tool_use as Record<string, number>) || { web_search_requests: 0, web_fetch_requests: 0 };
+                                    existing.web_search_requests = (existing.web_search_requests || 0) + preExecutedSearches;
+                                    u.server_tool_use = existing;
+                                    finalBody = JSON.stringify(rb);
+                                } catch (_) { /* best effort */ }
+                            }
+                            res.end(finalBody);
                             if (result.streamMetrics) {
                                 recordStreamMetrics(target.providerKey, result.streamMetrics);
                             }
