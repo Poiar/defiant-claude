@@ -884,7 +884,8 @@ function Start-RoutingProxy {
         $null = Invoke-RestMethod -Uri "http://127.0.0.1:$port/health" -TimeoutSec 3
     } catch {
         Write-Host "WARNING: Proxy port $port is not responding. Windows Defender may have blocked it." -ForegroundColor Yellow
-        Write-Host "Run: deepclaude --fix-av" -ForegroundColor Yellow
+        Write-Host "Run this in an admin PowerShell: $FixAvBatchFile" -ForegroundColor White
+        Write-Host "(That file survives AV deletion of the deepclaude directory.)" -ForegroundColor DarkGray
     }
 
     return @{ Port = $port; Process = $proc; Persist = $Persist.IsPresent }
@@ -1513,6 +1514,10 @@ if ($FixAv) {
     $myPath = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
     $proxyDir = Join-Path $myPath "proxy"
 
+    # Always write the standalone rescue script so it exists even if
+    # deepclaude itself gets quarantined after this run.
+    Write-FixAvBatch
+
     Write-Host "`n  deepclaude -- AV Exclusion Helper`n" -ForegroundColor Cyan
 
     Write-Host "  The multi-provider proxy is at:" -ForegroundColor Yellow
@@ -1543,6 +1548,10 @@ if ($FixAv) {
     } catch {
         Write-Host "  (Cannot check current exclusions — run as admin to verify)" -ForegroundColor DarkGray
     }
+    Write-Host ""
+    Write-Host "  If deepclaude itself was deleted by AV, a standalone fix script" -ForegroundColor Yellow
+    Write-Host "  was written to: $FixAvBatchFile" -ForegroundColor White
+    Write-Host "  Run it as admin, then re-clone or re-install deepclaude." -ForegroundColor Yellow
     Write-Host ""
     exit 0
 }
