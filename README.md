@@ -345,11 +345,13 @@ Tip: `deepclaude --install-statusline` automates the manual setup above.
 | `DEEPCLAUDE_LOG_LEVEL` | Set log level (`debug` for verbose output; defaults to `info`) |
 | `DEEPCLAUDE_LOG_ALL_REQUESTS` | Log all requests to `~/.deepclaude/requests.log` (`true` to enable) |
 | `DEEPCLAUDE_SKIP_STARTUP_CHECK` | Skip provider health checks on proxy startup (`true` to skip) |
-| `DEEPCLAUDE_WATCHDOG` | Enable the proxy watchdog process (`true` to enable; off by default) |
 | `DEEPCLAUDE_MAX_CONCURRENT` | Max concurrent upstream requests for main slots (default: `25`) |
 | `DEEPCLAUDE_SUBAGENT_MAX_CONCURRENT` | Max concurrent upstream requests for subagent slots (default: `8`) |
 | `DEEPCLAUDE_STREAM_HEARTBEAT_MS` | Stream silence timeout in ms before heartbeat triggers (default: `180000`) |
+| `DEEPCLAUDE_STREAM_DEADLINE_MS` | Hard wall-clock cap on total streaming duration in ms (default: `300000`) |
 | `DEEPCLAUDE_SUBAGENT_STREAM_HEARTBEAT_MS` | Subagent stream heartbeat timeout in ms (default: `90000`) |
+| `DEEPCLAUDE_SUBAGENT_STREAM_DEADLINE_MS` | Hard wall-clock cap on subagent streaming duration in ms (default: `90000`) |
+| `DEEPCLAUDE_BUDGET_WARNING` | Fraction of daily budget at which to emit warnings (default: unset) |
 | `DEEPCLAUDE_DASHBOARD_KEY` | Shared secret for `/dashboard` and `/health/stream` endpoints (unset = no auth) |
 | `DEEPCLAUDE_NO_PID_LOCK` | Skip PID file locking at startup (`1` to skip; used by integration tests) |
 
