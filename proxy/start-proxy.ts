@@ -797,37 +797,41 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                             log.info(reqId, 'web search direct: ' + truncateForLog(searchQuery));
                             const searchResults = await webSearch(searchQuery);
 
-                            // Return search results directly — bypass DeepSeek entirely.
-                            // Emit Anthropic SSE format because CC sends stream:true.
+                            // Return results directly — bypass DeepSeek.
                             if (!res.headersSent && !res.destroyed) {
+                                const isStream = parsedBody.stream === true;
+                                log.info(reqId, 'web search stream=' + isStream);
                                 const responseId = 'msg_' + crypto.randomUUID();
                                 const serverToolUse = { web_search_requests: 1, web_fetch_requests: 0 };
-                                const msg = {
-                                    id: responseId,
-                                    type: 'message',
-                                    model: model || '',
-                                    role: 'assistant',
-                                    content: [],
-                                    stop_reason: null,
-                                    stop_sequence: null,
-                                    usage: { input_tokens: 1, output_tokens: 1, server_tool_use: serverToolUse },
-                                };
-                                // SSE events: message_start → content_block_start → text deltas → content_block_stop → message_delta (with server_tool_use) → message_stop
-                                const se = (e: string, d: unknown) => 'event: ' + e + '\ndata: ' + JSON.stringify(d) + '\n\n';
-                                let sse = '';
-                                sse += se('message_start', { type: 'message_start', message: msg });
-                                sse += se('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } });
-                                sse += se('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: searchResults } });
-                                sse += se('content_block_stop', { type: 'content_block_stop', index: 0 });
-                                sse += se('message_delta', {
-                                    type: 'message_delta',
-                                    delta: { stop_reason: 'end_turn', stop_sequence: null },
-                                    usage: { output_tokens: 1, server_tool_use: serverToolUse },
-                                });
-                                sse += se('message_stop', { type: 'message_stop' });
-                                res.writeHead(200, { 'content-type': 'text/event-stream' });
-                                res.end(sse);
-                                log.info(reqId, 'web search direct SSE sent, size=' + sse.length);
+
+                                if (isStream) {
+                                    // Anthropic SSE format
+                                    const se = (e: string, d: unknown) => 'event: ' + e + '\ndata: ' + JSON.stringify(d) + '\n\n';
+                                    let sse = '';
+                                    sse += se('message_start', { type: 'message_start', message: {
+                                        id: responseId, type: 'message', model: model || '', role: 'assistant',
+                                        content: [], stop_reason: null, stop_sequence: null,
+                                        usage: { input_tokens: 1, output_tokens: 1, server_tool_use: serverToolUse },
+                                    }});
+                                    sse += se('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } });
+                                    sse += se('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: searchResults } });
+                                    sse += se('content_block_stop', { type: 'content_block_stop', index: 0 });
+                                    sse += se('message_delta', { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 1, server_tool_use: serverToolUse } });
+                                    sse += se('message_stop', { type: 'message_stop' });
+                                    res.writeHead(200, { 'content-type': 'text/event-stream' });
+                                    res.end(sse);
+                                } else {
+                                    // Non-streaming Anthropic JSON format
+                                    const body = JSON.stringify({
+                                        id: responseId, type: 'message', model: model || '', role: 'assistant',
+                                        content: [{ type: 'text', text: searchResults }],
+                                        stop_reason: 'end_turn', stop_sequence: null,
+                                        usage: { input_tokens: 1, output_tokens: 1, server_tool_use: serverToolUse },
+                                    });
+                                    res.writeHead(200, { 'content-type': 'application/json' });
+                                    res.end(body);
+                                }
+                                log.info(reqId, 'web search direct server_tool_use sent, stream=' + isStream);
                                 return;
                             }
                         }
