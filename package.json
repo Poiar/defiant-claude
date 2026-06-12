@@ -35,8 +35,11 @@
   ],
   "lint-staged": {
     "*.ts": ["npx eslint --max-warnings 0"],
-    "*.mjs": ["node -c"],
-    "*.json": ["node -e \"JSON.parse(require('fs').readFileSync(process.argv[1], 'utf-8'))\""]
+    "*.mjs": ["node --check"],
+    "*.json": ["node --eval \"JSON.parse(require('node:fs').readFileSync(process.argv.at(-1), 'utf-8'))\""],
+    "*.ps1": ["pwsh -NoProfile -Command \"& { $err=0; foreach($f in $args) { $r=Invoke-ScriptAnalyzer -Path $f -Severity Error -ErrorAction SilentlyContinue; if($r) { $r | Out-String | Write-Host -ForegroundColor Red; $err=1 } }; exit $err }\""],
+    "*.sh": ["bash -n"],
+    "*.yml": ["node --eval \"require('node:fs').readFileSync(process.argv.at(-1), 'utf-8').trim() || process.exit(1)\""]
   },
   "jest": {
     "transform": {
