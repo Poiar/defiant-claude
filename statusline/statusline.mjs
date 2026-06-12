@@ -198,13 +198,16 @@ async function main() {
         (spendData.daily && spendData.daily[todayKey] && spendData.daily[todayKey].total)
           ? spendData.daily[todayKey].total : 0;
 
-      // Always show today's spend as primary. Session spend is shown as secondary
-      // when it differs meaningfully from today's total (e.g., proxy restarted mid-day).
-      if (todaySpend > 0) {
+      // Session spend (yellow, left) — resets on proxy restart.
+      // Today's spend (grey, right) — resets at midnight local time.
+      // These are independent; show whichever is available.
+      if (sessionSpend > 0 || todaySpend > 0) {
         const parts = [];
-        parts.push(bold + fg(255, 210, 80) + '$' + Number(todaySpend).toFixed(2) + reset);
-        if (Math.abs(sessionSpend - todaySpend) > 0.001) {
-          parts.push(fg(120, 120, 120) + '$' + Number(sessionSpend).toFixed(2) + reset);
+        if (sessionSpend > 0) {
+          parts.push(bold + fg(255, 210, 80) + '$' + Number(sessionSpend).toFixed(2) + reset);
+        }
+        if (todaySpend > 0) {
+          parts.push(fg(120, 120, 120) + '$' + Number(todaySpend).toFixed(2) + reset);
         }
         spendGroup = parts.join(' ');
       }
