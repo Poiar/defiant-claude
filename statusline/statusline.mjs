@@ -118,15 +118,28 @@ async function main() {
     : fg(80, 200, 120);
 
   // ── Health check (fire now, await later) ───────────────────
+  let proxyPort = 0;
   let healthPromise = Promise.resolve(null);
   try {
-    const proxyPath = join(deepclaudeDir, 'proxy.json');
-    if (existsSync(proxyPath)) {
-      const proxyCfg = JSON.parse(readFileSync(proxyPath, 'utf8'));
-      if (proxyCfg.port > 0) {
-        healthPromise = new Promise((resolve) => {
-          const req = get(
-            `http://127.0.0.1:${proxyCfg.port}/health`,
+    const proxyJsonPath = join(deepclaudeDir, 'proxy.json');
+    const proxyPidPath = join(deepclaudeDir, 'proxy.pid');
+    let proxyCfg = null;
+    if (existsSync(proxyJsonPath)) {
+      proxyCfg = JSON.parse(readFileSync(proxyJsonPath, 'utf8'));
+    } else if (existsSync(proxyPidPath)) {
+      const raw = readFileSync(proxyPidPath, 'utf8').trim();
+      const parts = raw.split(':');
+      if (parts.length >= 2 && parts[1]) {
+        const pid = parseInt(parts[0], 10);
+        const port = parseInt(parts[1], 10);
+        if (pid > 0 && port > 0) proxyCfg = { pid, port };
+      }
+    }
+    if (proxyCfg && proxyCfg.port > 0) {
+      proxyPort = proxyCfg.port;
+      healthPromise = new Promise((resolve) => {
+        const req = get(
+          `http://127.0.0.1:${proxyCfg.port}/health`,
             { timeout: 1000 },
             (res) => {
               let data = '';
@@ -140,7 +153,6 @@ async function main() {
           req.on('timeout', () => { req.destroy(); resolve(null); });
         });
       }
-    }
   } catch (_) {}
 
   // ── Spend data (while health check is in-flight) ───────────
@@ -192,6 +204,9 @@ async function main() {
         }
         spendGroup = parts.join(' ');
       }
+      if (proxyPort > 0) spendGroup = spendGroup
+        ? spendGroup + ' ' + fg(90, 90, 90) + proxyPort + reset
+        : fg(90, 90, 90) + proxyPort + reset;
     }
   } catch (_) {}
 

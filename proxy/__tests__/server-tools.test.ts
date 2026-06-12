@@ -42,7 +42,7 @@ describe('convertServerTools', () => {
         ]);
         expect(hasWebSearch).toBe(true);
         expect(hasWebFetch).toBe(false);
-        expect(tools[0].type).toBe('custom');
+        expect(tools[0].type).toBeUndefined();
         expect(tools[0].name).toBe('web_search');
         expect(tools[0].input_schema).toBeDefined();
     });
@@ -54,8 +54,10 @@ describe('convertServerTools', () => {
         ]);
         expect(hasWebSearch).toBe(false);
         expect(hasWebFetch).toBe(true);
-        expect(tools[0].type).toBe('custom');
-        expect(tools[1].type).toBe('custom');
+        expect(tools[0].type).toBeUndefined();
+        expect(tools[0].name).toBe('web_fetch');
+        expect(tools[1].type).toBeUndefined();
+        expect(tools[1].name).toBe('web_fetch');
     });
 
     test('passes through non-server tools unchanged', () => {
