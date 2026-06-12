@@ -711,22 +711,27 @@ export function createAnthropicStreamInterceptor(preExecutedSearches: number = 0
                     else if (trimmed.includes('"name":"web_fetch"')) webFetchRequests++;
                 }
 
-                if (trimmed.includes('"type":"message_delta"')) this._seenMessageDelta = true;
-                if (trimmed.includes('"type":"message_stop"')) this._seenMessageStop = true;
+                const isMessageDelta = trimmed.includes('"type":"message_delta"') || trimmed.includes('event: message_delta');
+                const isMessageStop = trimmed.includes('"type":"message_stop"') || trimmed.includes('event: message_stop');
+
+                if (isMessageDelta) this._seenMessageDelta = true;
+                if (isMessageStop) this._seenMessageStop = true;
 
                 // Inject server_tool_use into message_delta usage
-                if (trimmed.includes('"type":"message_delta"') && (webSearchRequests > 0 || webFetchRequests > 0)) {
+                if (isMessageDelta && (webSearchRequests > 0 || webFetchRequests > 0)) {
                     const dataMatch = trimmed.match(/^data: (.*)$/m);
                     log.info(null, '[dbg-interceptor] msg_delta raw=' + trimmed.substring(0, 300));
                     log.info(null, '[dbg-interceptor] msg_delta injecting ws=' + webSearchRequests + ' injected=' + this._injected);
+                    const serverToolUse = {
+                        web_search_requests: webSearchRequests,
+                        web_fetch_requests: webFetchRequests,
+                    };
                     if (dataMatch) {
+                        // Existing data payload — inject server_tool_use into usage
                         try {
                             const parsed = JSON.parse(dataMatch[1]);
                             if (!parsed.usage) parsed.usage = {};
-                            parsed.usage.server_tool_use = {
-                                web_search_requests: webSearchRequests,
-                                web_fetch_requests: webFetchRequests,
-                            };
+                            parsed.usage.server_tool_use = serverToolUse;
                             const eventLine = trimmed.match(/^(event: .*)$/m)?.[1] || '';
                             const newDataLine = 'data: ' + JSON.stringify(parsed);
                             if (eventLine) {
@@ -737,13 +742,24 @@ export function createAnthropicStreamInterceptor(preExecutedSearches: number = 0
                             this._injected = true;
                             continue;
                         } catch (_) { /* fall through to passthrough */ }
+                    } else {
+                        // Bare event with no data payload — create synthetic data line
+                        const syntheticData = JSON.stringify({
+                            type: 'message_delta',
+                            delta: { stop_reason: 'end_turn', stop_sequence: null },
+                            usage: { output_tokens: 0, server_tool_use: serverToolUse },
+                        });
+                        output += 'event: message_delta\ndata: ' + syntheticData + '\n\n';
+                        this._injected = true;
+                        continue;
                     }
                 }
 
                 // If we reach message_stop without injecting, emit a
                 // synthetic message_delta with server_tool_use before it.
-                if (trimmed.includes('"type":"message_stop"') && !this._injected && (webSearchRequests > 0 || webFetchRequests > 0)) {
+                if (isMessageStop && !this._injected && (webSearchRequests > 0 || webFetchRequests > 0)) {
                     log.info(null, '[dbg-interceptor] INJECT synthetic msg_delta at msg_stop ws=' + webSearchRequests + ' wf=' + webFetchRequests + ' seenDelta=' + this._seenMessageDelta);
+                    this._injected = true;
                     const syntheticDelta = JSON.stringify({
                         type: 'message_delta',
                         delta: { stop_reason: 'end_turn', stop_sequence: null },
@@ -756,7 +772,6 @@ export function createAnthropicStreamInterceptor(preExecutedSearches: number = 0
                         },
                     });
                     output += 'event: message_delta\ndata: ' + syntheticDelta + '\n\n';
-                    this._injected = true;
                 }
 
                 output += trimmed + '\n\n';
@@ -768,17 +783,19 @@ export function createAnthropicStreamInterceptor(preExecutedSearches: number = 0
         _flush(callback: TransformCallback): void {
             if (buf.trim()) {
                 const trimmed = buf.trim();
+                const isMsgDelta = trimmed.includes('"type":"message_delta"') || trimmed.includes('event: message_delta');
+                const isMsgStop = trimmed.includes('"type":"message_stop"') || trimmed.includes('event: message_stop');
+                const hasCount = webSearchRequests > 0 || webFetchRequests > 0;
+                const serverToolUse = { web_search_requests: webSearchRequests, web_fetch_requests: webFetchRequests };
+
                 // Existing message_delta in buffer — inject server_tool_use
-                if (trimmed.includes('"type":"message_delta"') && (webSearchRequests > 0 || webFetchRequests > 0)) {
+                if (isMsgDelta && hasCount) {
                     const dataMatch = trimmed.match(/^data: (.*)$/m);
                     if (dataMatch) {
                         try {
                             const parsed = JSON.parse(dataMatch[1]);
                             if (!parsed.usage) parsed.usage = {};
-                            parsed.usage.server_tool_use = {
-                                web_search_requests: webSearchRequests,
-                                web_fetch_requests: webFetchRequests,
-                            };
+                            parsed.usage.server_tool_use = serverToolUse;
                             const eventLine = trimmed.match(/^(event: .*)$/m)?.[1] || '';
                             const newDataLine = 'data: ' + JSON.stringify(parsed);
                             if (eventLine) {
@@ -788,21 +805,24 @@ export function createAnthropicStreamInterceptor(preExecutedSearches: number = 0
                             callback(null, newDataLine + '\n\n');
                             return;
                         } catch (_) { /* fall through */ }
+                    } else {
+                        // Bare event with no data — create synthetic data
+                        const syntheticData = JSON.stringify({
+                            type: 'message_delta',
+                            delta: { stop_reason: 'end_turn', stop_sequence: null },
+                            usage: { output_tokens: 0, server_tool_use: serverToolUse },
+                        });
+                        callback(null, 'event: message_delta\ndata: ' + syntheticData + '\n\n' + trimmed + '\n\n');
+                        return;
                     }
                 }
                 // If buffer is message_stop and we haven't injected yet, emit
                 // synthetic message_delta right before it.
-                if (trimmed.includes('"type":"message_stop"') && !this._injected && (webSearchRequests > 0 || webFetchRequests > 0)) {
+                if (isMsgStop && !this._injected && hasCount) {
                     const syntheticDelta = JSON.stringify({
                         type: 'message_delta',
                         delta: { stop_reason: 'end_turn', stop_sequence: null },
-                        usage: {
-                            output_tokens: 0,
-                            server_tool_use: {
-                                web_search_requests: webSearchRequests,
-                                web_fetch_requests: webFetchRequests,
-                            },
-                        },
+                        usage: { output_tokens: 0, server_tool_use: serverToolUse },
                     });
                     callback(null, 'event: message_delta\ndata: ' + syntheticDelta + '\n\n' + trimmed + '\n\n');
                     return;
