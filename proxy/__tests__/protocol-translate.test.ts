@@ -427,6 +427,27 @@ describe('translateRequest', () => {
     });
     expect(openaiBody.messages).toEqual([]);
   });
+
+  // -- Thinking passthrough ---------------------------------------------------
+
+  // thinking is NOT passed through to openaiBody by translateRequest.
+  // start-proxy.ts reads budget_tokens from the original Anthropic request
+  // body and derives the correct reasoning_effort for the target provider.
+
+  test('does not pass thinking through to openaiBody', () => {
+    const { openaiBody } = translateRequest({
+      ...minimalBody(),
+      thinking: { type: 'enabled', budget_tokens: 32000 },
+    });
+    // translateRequest deliberately omits thinking — start-proxy.ts
+    // injects it with the correctly mapped reasoning_effort.
+    expect(openaiBody.thinking).toBeUndefined();
+  });
+
+  test('omits thinking when not present in request', () => {
+    const { openaiBody } = translateRequest(minimalBody());
+    expect(openaiBody.thinking).toBeUndefined();
+  });
 });
 
 // ===========================================================================

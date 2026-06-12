@@ -166,14 +166,18 @@ describe('Proxy integration tests', () => {
         }
     });
 
-    test('POST /v1/messages with valid JSON but no model returns 502', async () => {
+    test('POST /v1/messages with valid JSON but no model returns 400', async () => {
         const res = await request('POST', '/v1/messages', {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({}),
         });
 
-        expect(res.status).toBe(502);
-        expect((res.body as Record<string, unknown>).type).toBe('api_error');
+        expect(res.status).toBe(400);
+        const body = res.body as Record<string, unknown>;
+        expect(body.type).toBe('error');
+        const err = body.error as Record<string, unknown>;
+        expect(err.type).toBe('invalid_request_error');
+        expect(err.message).toContain('model');
     });
 
     test('GET /health uptime increases between calls', async () => {

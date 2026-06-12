@@ -45,6 +45,7 @@ interface AnthropicRequestBody {
     top_p?: number;
     stop_sequences?: string[];
     tool_choice?: unknown;
+    thinking?: { type: string; budget_tokens?: number };
 }
 
 interface OpenAIToolCall {
@@ -194,6 +195,12 @@ export function translateRequest(anthropicBody: AnthropicRequestBody): { openaiB
     if (openaiBody.stream) {
         openaiBody.stream_options = { include_usage: true };
     }
+
+    // Note: thinking is NOT passed through to openaiBody here.
+    // start-proxy.ts reads budget_tokens from the original Anthropic request
+    // body and derives the correct reasoning_effort for the target provider.
+    // Passing it here would prevent start-proxy.ts from applying the mapping
+    // (the !openaiBody.thinking guard would short-circuit).
 
     return { openaiBody, model };
 }
