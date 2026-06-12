@@ -674,6 +674,7 @@ export function createAnthropicStreamInterceptor(preExecutedSearches: number = 0
     let buf = '';
     let webSearchRequests = preExecutedSearches;
     let webFetchRequests = 0;
+    let _eventCount = 0;
 
     class Interceptor extends Transform {
         private _injected = false;
@@ -691,6 +692,18 @@ export function createAnthropicStreamInterceptor(preExecutedSearches: number = 0
             for (const part of parts) {
                 const trimmed = part.trim();
                 if (!trimmed) { output += '\n\n'; continue; }
+
+                // DEBUG: log first 10 SSE event types to trace what DeepSeek emits
+                _eventCount++;
+                if (_eventCount <= 10) {
+                    const dm = trimmed.match(/^data: (.*)$/m);
+                    if (dm) {
+                        try {
+                            const d = JSON.parse(dm[1]);
+                            log.info(null, '[dbg-interceptor] evt#' + _eventCount + ' type=' + (d.type || d.object || '?') + ' ws=' + webSearchRequests + ' wf=' + webFetchRequests);
+                        } catch (_) { /* raw event */ }
+                    }
+                }
 
                 // Count web_search/web_fetch content_block_start events
                 if (trimmed.includes('"type":"content_block_start"')) {
