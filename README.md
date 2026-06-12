@@ -108,8 +108,6 @@ deepclaude                                    # Launch with DeepSeek V4 Pro
 ```
 deepclaude                  # ds (default) — DeepSeek V4 Pro
 deepclaude -b or            # OpenRouter (DeepSeek)
-deepclaude -b or2           # OpenRouter (DeepSeek)
-deepclaude -b or3           # OpenRouter (best free)
 deepclaude -b fw            # Fireworks AI
 deepclaude -b oc            # OpenCode Zen
 deepclaude -b km            # Kimi K2.6
@@ -123,7 +121,6 @@ deepclaude -b bp            # BytePlus Doubao 1.5 Pro
 deepclaude -b sf            # SiliconFlow (DeepSeek V4 Pro)
 deepclaude -b nv            # Novita (DeepSeek V4 Pro)
 deepclaude -b ds+oc         # DeepSeek main + OpenCode subs
-deepclaude -b ds+or         # DeepSeek main + OpenRouter subs
 deepclaude -b anthropic     # Normal Claude Code
 ```
 
@@ -164,6 +161,8 @@ deepclaude ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free  # 3 specs 
 --stats               Show proxy request stats and provider health
 --lint-config         Validate providers.json configuration
 --skip-startup-check  Skip provider health checks on proxy startup
+--no-thinking        Disable extended thinking for all models (save cost)
+--thinking-budget N  Set thinking budget in tokens (e.g. 64000 for deep reasoning)
 --what-if             Alias for --dry-run
 ```
 
@@ -208,8 +207,6 @@ Fallbacks are configured per-provider and transparent to Claude Code. Max 3 atte
 ```
 ds     opus=ds:deepseek-v4-pro     sonnet=ds:deepseek-v4-pro     haiku=ds:deepseek-v4-flash    sub=ds:deepseek-v4-flash
 or     opus=or:deepseek/deepseek-v4-pro  sonnet=or:deepseek/deepseek-v4-pro  haiku=or:deepseek/deepseek-v4-flash  sub=or:deepseek/deepseek-v4-flash
-or2    opus=or:deepseek/deepseek-v4-pro  sonnet=or:deepseek/deepseek-v4-pro  haiku=or:deepseek/deepseek-v4-flash  sub=or:deepseek/deepseek-v4-flash
-or3    opus=or:openai/gpt-oss-120b:free  sonnet=or:poolside/laguna-m.1:free  haiku=or:z-ai/glm-4.5-air:free  sub=or:liquid/lfm-2.5-1.2b-instruct:free
 fw     opus=fw:accounts/fireworks/models/deepseek-v4-pro  (all slots same)
 oc     opus=oc:big-pickle  (all slots same)
 km     opus=km:kimi-k2.6  (all slots same)
@@ -223,7 +220,6 @@ bp     opus=bp:byteplus/doubao-1.5-pro  (all slots same)
 sf     opus=sf:siliconflow/deepseek-v4-pro  (all slots same)
 nv     opus=nv:novita/deepseek-v4-pro  (all slots same)
 ds+oc  opus=ds:deepseek-v4-pro  sonnet=ds:deepseek-v4-pro  haiku=oc:big-pickle  sub=oc:big-pickle
-ds+or  opus=ds:deepseek-v4-pro  sonnet=ds:deepseek-v4-pro  haiku=or:z-ai/glm-4.5-air:free  sub=or:z-ai/glm-4.5-air:free
 ```
 
 Note: `al` (Alibaba/DashScope) is only available via ad-hoc config and fallback, not as a named `-b al` config.
@@ -280,7 +276,6 @@ The proxy routes each model name to the right provider. It runs on `127.0.0.1` w
 deepclaude -b ds+oc --persist      # Start with proxy, keep it alive after exit
 
 # Mid-session, from another terminal or within CC via /model:
-deepclaude --switch ds+or          # Switch all slots to DeepSeek + OpenRouter
 deepclaude --switch fw             # Switch everything to Fireworks
 deepclaude --set-slot haiku oc:big-pickle  # Change just the haiku slot
 
@@ -293,6 +288,7 @@ State files live in `~/.deepclaude/`:
 - `proxy.pid` — PID lock file (prevents dual-instance state corruption)
 - `current-routes.json` — active routing table (reloaded on every request)
 - `slot-overrides.json` — per-slot model overrides
+- `thinking-overrides.json` — thinking mode overrides (--no-thinking / --thinking-budget)
 - `spend.json` — daily and total spend tracking (atomic write via .tmp + rename)
 - `subagent-model.json` — dedicated subagent model setting
 - `requests.log` — opt-in request logs (JSONL, timestamped rotation, 5 backups)

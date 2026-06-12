@@ -6,12 +6,10 @@
     # Named configs (via -b)
     deepclaude                      # DeepSeek V4 Pro (default)
     deepclaude -b or                # OpenRouter (DeepSeek)
-    deepclaude -b or2               # OpenRouter (DeepSeek)
-    deepclaude -b or3               # OpenRouter (best free)
     deepclaude -b fw                # Fireworks AI (fastest)
     deepclaude -b oc                # OpenCode Zen
     deepclaude -b ds+oc             # DeepSeek main + OpenCode subs
-    deepclaude -b ds+or             # DeepSeek main + OpenRouter subs
+    deepclaude -b ds+oc             # DeepSeek main + OpenCode subs
     deepclaude -b anthropic         # Normal Claude Code
 
     # Model aliases: sonnet, opus, haiku, v4, flash (short names resolve to full model IDs)
@@ -30,7 +28,7 @@
 
     # Persistent proxy + mid-session switching
     deepclaude --persist -b ds+oc    # Keep proxy alive after CC exits
-    deepclaude --switch ds+or        # Switch running proxy to different config
+    deepclaude --switch ds+oc        # Switch running proxy to different config
     deepclaude --switch ds:deepseek-v4-pro oc:big-pickle  # Switch to ad-hoc config
     deepclaude --models              # List all available model IDs
     deepclaude --stop-proxy          # Kill the persistent proxy
@@ -1145,7 +1143,7 @@ if ($Help) {
     Write-Host ""
     Write-Host "  Session switching workflow:"
     Write-Host "    1. deepclaude -b ds+oc --persist     # Start with proxy"
-    Write-Host "    2. deepclaude --switch ds+or          # Switch configs (from within CC)"
+    Write-Host "    2. deepclaude --switch ds+oc          # Switch configs (from within CC)"
     Write-Host "    3. /model or:model-id                 # Switch opus model (in CC)"
     Write-Host "    4. deepclaude --set-slot haiku oc:big-pickle  # Switch haiku model"
     Write-Host "    5. deepclaude --stop-proxy            # Clean up when done"
@@ -1503,7 +1501,7 @@ if ($Benchmark) {
     Write-Host "  ==================" -ForegroundColor DarkGray
 
     # Pre-resolve configs (can't call script functions in -Parallel runspaces)
-    $benchJobs = foreach ($id in @("ds","or","or2","or3","fw","oc","km","mm","um","gr","mt","mx","za","bp","sf","nv")) {
+    $benchJobs = foreach ($id in @("ds","or","fw","oc","km","mm","um","gr","mt","mx","za","bp","sf","nv")) {
         try {
             $r = Resolve-Config $id
             if (-not $r) { continue }
