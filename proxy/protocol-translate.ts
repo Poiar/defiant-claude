@@ -700,11 +700,11 @@ export function createAnthropicStreamInterceptor(preExecutedSearches: number = 0
                     if (dataMatch) {
                         try {
                             const parsed = JSON.parse(dataMatch[1]);
-                            if (parsed.usage) {
-                                parsed.usage.server_tool_use = {
-                                    web_search_requests: webSearchRequests,
-                                    web_fetch_requests: webFetchRequests,
-                                };
+                            if (!parsed.usage) parsed.usage = {};
+                            parsed.usage.server_tool_use = {
+                                web_search_requests: webSearchRequests,
+                                web_fetch_requests: webFetchRequests,
+                            };
                                 const eventLine = trimmed.match(/^(event: .*)$/m)?.[1] || '';
                                 const newDataLine = 'data: ' + JSON.stringify(parsed);
                                 if (eventLine) {
@@ -733,11 +733,11 @@ export function createAnthropicStreamInterceptor(preExecutedSearches: number = 0
                     if (dataMatch) {
                         try {
                             const parsed = JSON.parse(dataMatch[1]);
-                            if (parsed.usage) {
-                                parsed.usage.server_tool_use = {
-                                    web_search_requests: webSearchRequests,
-                                    web_fetch_requests: webFetchRequests,
-                                };
+                            if (!parsed.usage) parsed.usage = {};
+                            parsed.usage.server_tool_use = {
+                                web_search_requests: webSearchRequests,
+                                web_fetch_requests: webFetchRequests,
+                            };
                                 const eventLine = trimmed.match(/^(event: .*)$/m)?.[1] || '';
                                 const newDataLine = 'data: ' + JSON.stringify(parsed);
                                 if (eventLine) {
