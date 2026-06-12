@@ -9,7 +9,7 @@ import { translateRequest, createStreamTransformer } from './protocol-translate'
 import { injectThinkingBlocks } from './thinking-cache';
 import { reinjectReasoningContent } from './reasoning-cache';
 import { deduplicatePath, buildSafeHeaders } from './util';
-import { parseArgs, loadConfig, checkReload, validateConfig, resolveKey } from './config';
+import { parseArgs, loadConfig, checkReload, validateConfig, resolveKey, getEffectiveThinkingConfig } from './config';
 import { resolveTarget, ResolvedTarget } from './routing';
 import { classifyRequest, resolvePromptRoute } from './prompt-router';
 import { bodyHash, shouldUseCanary, recordCanaryResult, getOrCreateEntry, type CanaryEntry, type CanaryConfig } from './canary';
@@ -848,12 +848,16 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                 }
 
                 // Inject thinking mode configuration for models that support it.
-                // Look up the upstream model name in the thinking config from providers.json
-                // and add the Anthropic-format thinking parameter. DeepSeek V4 supports
-                // extended thinking via the /anthropic endpoint with thinking { type, budget_tokens }.
+                // Look up the upstream model name in the effective thinking config
+                // (providers.json base + thinking-overrides.json overlay) and add the
+                // Anthropic-format thinking parameter. DeepSeek V4 supports extended
+                // thinking via the /anthropic endpoint with thinking { type, budget_tokens }.
+                // The --no-thinking flag disables thinking by removing the model entry;
+                // --thinking-budget N overrides the budget_tokens.
                 const upstreamModel = target.rewriteModel || model;
-                if (upstreamModel && state.thinkingConfig && target.format === 'anthropic') {
-                    const thinkingCfg = matchThinkingModel(upstreamModel, state.thinkingConfig);
+                const effectiveThinking = getEffectiveThinkingConfig(state.thinkingConfig || {}, state.thinkingOverridesFile);
+                if (upstreamModel && target.format === 'anthropic') {
+                    const thinkingCfg = matchThinkingModel(upstreamModel, effectiveThinking);
                     if (thinkingCfg) {
                         try {
                             const p = JSON.parse(forwardedBody.toString());
@@ -875,8 +879,9 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                         const { openaiBody } = translateRequest(reqParsed);
                         // Inject thinking mode for OpenAI-format providers (DeepSeek reasoning).
                         // DeepSeek's OpenAI API uses "thinking": { "type": "enabled", "reasoning_effort": "high" }.
-                        if (upstreamModel && state.thinkingConfig) {
-                            const thinkingCfg = matchThinkingModel(upstreamModel, state.thinkingConfig);
+                        const effectiveOAITinking = getEffectiveThinkingConfig(state.thinkingConfig || {}, state.thinkingOverridesFile);
+                        {
+                            const thinkingCfg = matchThinkingModel(upstreamModel, effectiveOAITinking);
                             if (thinkingCfg && !openaiBody.thinking) {
                                 openaiBody.thinking = { type: thinkingCfg.type, reasoning_effort: 'high' };
                             }
