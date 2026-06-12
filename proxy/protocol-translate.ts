@@ -717,6 +717,8 @@ export function createAnthropicStreamInterceptor(preExecutedSearches: number = 0
                 // Inject server_tool_use into message_delta usage
                 if (trimmed.includes('"type":"message_delta"') && (webSearchRequests > 0 || webFetchRequests > 0)) {
                     const dataMatch = trimmed.match(/^data: (.*)$/m);
+                    log.info(null, '[dbg-interceptor] msg_delta raw=' + trimmed.substring(0, 300));
+                    log.info(null, '[dbg-interceptor] msg_delta injecting ws=' + webSearchRequests + ' injected=' + this._injected);
                     if (dataMatch) {
                         try {
                             const parsed = JSON.parse(dataMatch[1]);
