@@ -2,9 +2,14 @@
 
 import crypto from 'node:crypto';
 
+// Per-startup random salt scopes momentum/cache entries to a single proxy
+// process lifetime, preventing cross-contamination between independent
+// conversations that happen to share the same first user message + system prompt.
+const STARTUP_SALT = crypto.randomBytes(8).toString('hex');
+
 // Session key -- same algorithm used across thinking-cache, reasoning-cache,
 // and momentum modules. Hashes the first user message content plus a truncated
-// system prompt hint via SHA-256.
+// system prompt hint via SHA-256, salted with a per-process random value.
 export function sessionKey(reqBody: Record<string, unknown> | null | undefined): string | null {
     if (!reqBody || !reqBody.messages) return null;
     const messages = reqBody.messages as Array<Record<string, unknown>>;
@@ -24,6 +29,8 @@ export function sessionKey(reqBody: Record<string, unknown> | null | undefined):
           ).slice(0, 500)
         : '';
     return crypto.createHash('sha256')
+        .update(STARTUP_SALT)
+        .update('\x00')
         .update(content)
         .update('\x00')
         .update(systemHint)

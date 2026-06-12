@@ -8,6 +8,9 @@ import { URL } from 'url';
 import fs from 'fs';
 import path from 'path';
 import { isProviderHealthy } from './stats';
+import { createLogger } from './log';
+
+const log = createLogger('routing');
 import { resolveKey, resolveAlias } from './config';
 
 // --- Types ---
@@ -88,7 +91,10 @@ export function resolveSubagentModel(): { providerKey: string; modelId: string }
             return subagentModelCache.model;
         }
         return null;
-    } catch {
+    } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+            log.warn(null, 'subagent-model.json read error: ' + ((e as Error).message || String(e)));
+        }
         return null;
     }
 }
@@ -143,6 +149,11 @@ export async function resolveTarget(
     //   2. Dedicated subagent model (--subagent-model)
     //   3. Routes table fallback (from config)
     //   4. Default provider fallback
+    //
+    // NOTE: Slot prefixes (sonnet|opus|haiku|subagent|fable) take priority over
+    // provider-key prefixes.  Do not name a provider with one of these reserved
+    // words — the slot regex will capture it first and provider-prefix routing
+    // for that key will silently break.  config-lint.ts enforces this.
     const slotMatch = model && model.match(/^(sonnet|opus|haiku|subagent|fable):(.+)$/);
     let resolvedModel = model;
     if (slotMatch) {
@@ -286,9 +297,17 @@ export async function resolveTarget(
     // and the session retries the same provider endlessly.
     // Providers with noAutoFallback:true (e.g. ds, oc, um) opt out — they
     // are primary providers that should fail-fast rather than auto-cascading.
-    const primaryDef = routing.providers[primary.providerKey];
-    if (fallbacks.length === 0 && routing.providers && !(primaryDef && (primaryDef as any).noAutoFallback)) {
+    // When the providers.json metadata wasn't loaded (--routes-only mode),
+    // fall back to a hardcoded set of well-known noAutoFallback providers.
+    const HARDCODED_NO_AUTO_FALLBACK = new Set(['ds', 'oc', 'um']);
+    const primaryDef = routing.providers?.[primary.providerKey];
+    const hasNoAutoFallback = (primaryDef && (primaryDef as any).noAutoFallback) || HARDCODED_NO_AUTO_FALLBACK.has(primary.providerKey);
+    if (fallbacks.length === 0 && routing.providers && !hasNoAutoFallback) {
         for (const [fbKey, fb] of Object.entries(routing.providers)) {
+            // Skip circuit-broken providers — no point resolving keys for
+            // providers that won't be used.  This also prevents wasted
+            // encrypted-key decryption attempts on unreachable providers.
+            if (!isProviderHealthy(fbKey)) continue;
             const fbTarget = await resolveFallback(fbKey, fb);
             if (fbTarget) fallbacks.push(fbTarget);
         }

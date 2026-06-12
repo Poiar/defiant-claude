@@ -47,7 +47,8 @@ const sweepTimer = setInterval(() => {
 }, SWEEP_INTERVAL_MS);
 sweepTimer.unref();
 
-export function getOrCreateEntry(slot: string, config: CanaryConfig): CanaryEntry {
+export function getOrCreateEntry(slot: string, config: CanaryConfig): CanaryEntry | null {
+  if (!config.enabled) return null;
   let entry = entries.get(slot);
   if (!entry) {
     entry = {
@@ -90,7 +91,12 @@ export function shouldUseCanary(hash: number, state: CanaryState, config: Canary
   if (!config.enabled) return false;
   if (state.phase === 'COLD') return false;
   if (state.phase === 'ACTIVE') return true;
-  return (hash % 100) < config.warmupPercent;
+  // Clamp warmupPercent to valid range [0, 100].  Values <= 0 are treated as
+  // COLD (no canary traffic); values >= 100 are treated as ACTIVE (all traffic).
+  const pct = Math.max(0, Math.min(100, config.warmupPercent));
+  if (pct <= 0) return false;
+  if (pct >= 100) return true;
+  return (hash % 100) < pct;
 }
 
 // Check whether the canary should be rolled back due to error spikes.
@@ -104,6 +110,7 @@ export function shouldRollback(state: CanaryState, config: CanaryConfig): boolea
 // Record the outcome of a canary request and potentially transition state.
 // Mutates the state in-place.
 export function recordCanaryResult(success: boolean, state: CanaryState, config: CanaryConfig): void {
+  if (!config.enabled) return;
   state.lastUpdated = Date.now();
   state.recentRequests++;
 

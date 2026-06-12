@@ -694,12 +694,15 @@ describe('createStreamTransformer', () => {
     ]);
     const events = parseSSE(output);
 
-    expect(events).toHaveLength(6);
+    expect(events).toHaveLength(7);
     expect(events[1].data.content_block.type).toBe('thinking');
     expect(events[1].data.content_block.thinking).toBe('');
+    expect(events[1].data.content_block.signature).toBe('');
     expect(events[2].event).toBe('content_block_delta');
     expect(events[2].data.delta.type).toBe('thinking_delta');
     expect(events[2].data.delta.thinking).toBe('Let me think...');
+    // signature_delta at events[3], content_block_stop at events[4]
+    expect(events[3].data.delta.type).toBe('signature_delta');
   });
 
   test('produces correct events for reasoning then text in the same chunk', async () => {
@@ -713,17 +716,19 @@ describe('createStreamTransformer', () => {
     ]);
     const events = parseSSE(output);
 
-    expect(events).toHaveLength(9);
+    expect(events).toHaveLength(10);
 
     expect(events[1].data.content_block.type).toBe('thinking');
     expect(events[2].data.delta.thinking).toBe('think...');
-    expect(events[3].event).toBe('content_block_stop');
+    // signature_delta at events[3]
+    expect(events[3].data.delta.type).toBe('signature_delta');
+    expect(events[4].event).toBe('content_block_stop');
 
-    expect(events[4].data.content_block.type).toBe('text');
-    expect(events[5].data.delta.text).toBe('answer');
-    expect(events[6].event).toBe('content_block_stop');
+    expect(events[5].data.content_block.type).toBe('text');
+    expect(events[6].data.delta.text).toBe('answer');
+    expect(events[7].event).toBe('content_block_stop');
 
-    expect(events[7].data.delta.stop_reason).toBe('end_turn');
+    expect(events[8].data.delta.stop_reason).toBe('end_turn');
   });
 
   test('produces correct events for reasoning then text in separate chunks', async () => {
@@ -733,18 +738,20 @@ describe('createStreamTransformer', () => {
     ]);
     const events = parseSSE(output);
 
-    expect(events).toHaveLength(9);
+    expect(events).toHaveLength(10);
 
     expect(events[0].event).toBe('message_start');
     expect(events[1].data.content_block.type).toBe('thinking');
     expect(events[2].data.delta.thinking).toBe('think...');
 
-    expect(events[3].event).toBe('content_block_stop');
-    expect(events[4].data.content_block.type).toBe('text');
-    expect(events[5].data.delta.text).toBe('answer');
-    expect(events[6].event).toBe('content_block_stop');
-    expect(events[7].event).toBe('message_delta');
-    expect(events[8].event).toBe('message_stop');
+    // signature_delta at events[3]
+    expect(events[3].data.delta.type).toBe('signature_delta');
+    expect(events[4].event).toBe('content_block_stop');
+    expect(events[5].data.content_block.type).toBe('text');
+    expect(events[6].data.delta.text).toBe('answer');
+    expect(events[7].event).toBe('content_block_stop');
+    expect(events[8].event).toBe('message_delta');
+    expect(events[9].event).toBe('message_stop');
   });
 
   // -- Tool call streaming --------------------------------------------------
@@ -837,10 +844,11 @@ describe('createStreamTransformer', () => {
     ]);
     const events = parseSSE(output);
 
-    expect(events).toHaveLength(2);
-    expect(events[0].event).toBe('message_delta');
-    expect(events[0].data.delta.stop_reason).toBe('end_turn');
-    expect(events[1].event).toBe('message_stop');
+    expect(events).toHaveLength(3);
+    expect(events[0].event).toBe('message_start');
+    expect(events[1].event).toBe('message_delta');
+    expect(events[1].data.delta.stop_reason).toBe('end_turn');
+    expect(events[2].event).toBe('message_stop');
   });
 
   test('ignores data after stream is finished', async () => {
@@ -868,7 +876,7 @@ describe('createStreamTransformer', () => {
     const events = parseSSE(output);
 
     const msgDelta = events.find(e => e.event === 'message_delta');
-    expect(msgDelta!.data.usage).toEqual({ input_tokens: 10, output_tokens: 5 });
+    expect(msgDelta!.data.usage).toEqual({ output_tokens: 5 });
   });
 
   test('handles partial usage info (missing fields default to 0)', async () => {
@@ -880,7 +888,8 @@ describe('createStreamTransformer', () => {
     ]);
     const events = parseSSE(output);
     const msgDelta = events.find(e => e.event === 'message_delta');
-    expect(msgDelta!.data.usage.input_tokens).toBe(7);
+    // message_delta only includes output_tokens per Anthropic spec
+    expect(msgDelta!.data.usage.input_tokens).toBeUndefined();
     expect(msgDelta!.data.usage.output_tokens).toBe(0);
   });
 

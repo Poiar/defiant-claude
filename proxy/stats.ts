@@ -4,6 +4,9 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import type { StreamMetrics } from './stream-metrics';
+import { createLogger } from './log';
+
+const log = createLogger('stats');
 
 // Provider stats tracking with non-fatal recording.
 // Every stat write is wrapped so a recording failure never crashes a request.
@@ -164,6 +167,8 @@ interface ProviderStat {
     lastRequest?: number;
     inputTokens: number;
     outputTokens: number;
+    cacheHitTokens: number;
+    cacheMissTokens: number;
 }
 const providerStats: Record<string, ProviderStat> = {};
 export const startTime: number = Date.now();
@@ -282,7 +287,7 @@ export function getFullHealthSnapshot(concurrencyStatus: unknown, rateLimiterSta
                 const raw = fs.readFileSync(spendFile, 'utf-8');
                 const data = JSON.parse(raw);
                 const rawDaily = data.daily as Record<string, unknown> || {};
-                const today = new Date().toISOString().slice(0, 10);
+                const today = new Date().toLocaleDateString('en-CA');
                 spendByProvider = {};
                 for (const [date, value] of Object.entries(rawDaily)) {
                     if (typeof value === 'object' && value !== null) {
@@ -497,9 +502,12 @@ export function isProviderHealthy(providerKey: string): boolean {
 export function getCircuitBreakerState(providerKey: string): string {
     const entry = circuitBreakers[providerKey];
     if (entry) return entry.state;
+    // Only the circuit breaker state machine (opened by recordStat when the
+    // failure threshold is crossed) controls OPEN/HALF_OPEN.  Providers
+    // without an explicit breaker entry are CLOSED until the breaker trips.
     const s = providerStats[providerKey];
     if (!s || s.requests === 0) return 'UNTESTED';
-    return isFailureRateAboveThreshold(s.fails, s.requests) ? 'OPEN' : 'CLOSED';
+    return 'CLOSED';
 }
 
 // --- Recent request ring buffer ---
@@ -587,7 +595,7 @@ try {
   if (fs.existsSync(spendJournalFile)) {
     const journalRaw = fs.readFileSync(spendJournalFile, 'utf-8');
     const lines = journalRaw.split('\n').filter(Boolean);
-    const today = new Date().toISOString().slice(0, 10);
+    const today = new Date().toLocaleDateString('en-CA');
     for (const line of lines) {
       try {
         const entry = JSON.parse(line);
@@ -664,7 +672,10 @@ export function recordProviderSpend(providerKey: string, amount: number): void {
 
 export async function recordSpend(modelName: string, usage: { prompt_tokens: number; completion_tokens: number; cache_hit_tokens?: number; cache_miss_tokens?: number }, providerKey?: string): Promise<void> {
   const price = lookupPrice(modelName);
-  if (!price) return;
+  if (!price) {
+      log.warn(null, 'recordSpend: no pricing entry for model "' + modelName + '" — spend not tracked');
+      return;
+  }
 
   let cost: number;
   // Use granular cache hit/miss pricing when both the pricing entry and usage data support it
@@ -722,7 +733,7 @@ export async function recordSpend(modelName: string, usage: { prompt_tokens: num
         if (parsed.daily) existing.daily = parsed.daily;
       } catch (_) { /* ignore corrupt file */ }
     }
-    const today = new Date().toISOString().slice(0, 10);
+    const today = new Date().toLocaleDateString('en-CA');
 
     // Normalize daily entries (handle legacy number format and new object format)
     const rawDaily = (existing.daily as Record<string, unknown>) || {};
@@ -792,7 +803,7 @@ export function getDailySpend(): number {
     }
     const raw = fs.readFileSync(spendFile, 'utf-8');
     const data = JSON.parse(raw);
-    const today = new Date().toISOString().slice(0, 10);
+    const today = new Date().toLocaleDateString('en-CA');
     const daily = data.daily as Record<string, unknown> | undefined;
     // Handle both legacy number format and new { total, byProvider } format
     let dailyTotal = 0;
@@ -812,13 +823,21 @@ export function getDailySpend(): number {
   }
 }
 
+// Budget checks use a 95% threshold to leave headroom for concurrent requests
+// that may have already passed the check but haven't recorded their spend yet.
+const BUDGET_BUFFER_RATIO = 0.95;
+
 export function checkBudget(): string | null {
-  if (sessionCap > 0 && sessionTotal >= sessionCap) {
-    return 'Session cap of $' + sessionCap.toFixed(2) + ' exceeded ($' + sessionTotal.toFixed(2) + ' spent this session)';
+  if (sessionCap > 0) {
+    const effectiveCap = sessionCap * BUDGET_BUFFER_RATIO;
+    if (sessionTotal >= effectiveCap) {
+      return 'Session cap of $' + sessionCap.toFixed(2) + ' exceeded ($' + sessionTotal.toFixed(2) + ' spent this session)';
+    }
   }
   if (sessionDailyBudget > 0) {
     const dailySpend = getDailySpend();
-    if (dailySpend >= sessionDailyBudget) {
+    const effectiveDaily = sessionDailyBudget * BUDGET_BUFFER_RATIO;
+    if (dailySpend >= effectiveDaily) {
       return 'Daily budget of $' + sessionDailyBudget.toFixed(2) + ' exceeded ($' + dailySpend.toFixed(2) + ' spent today)';
     }
   }

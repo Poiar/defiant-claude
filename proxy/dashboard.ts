@@ -6,13 +6,21 @@ import { getFullHealthSnapshot } from './stats';
 
 let activeSseConnections = 0;
 
-// Optional dashboard authentication via shared secret.
-// If DEEPCLAUDE_DASHBOARD_KEY is set, the X-Dashboard-Key header must
-// match it using a timing-safe comparison to prevent side-channel attacks.
-// Without the env var, all local requests are allowed.
+// Dashboard authentication via shared secret.
+// If DEEPCLAUDE_DASHBOARD_KEY is set, use it.  Otherwise, generate a
+// random per-startup key to prevent unauthenticated access to health
+// data (spend amounts, provider status, recent requests, etc.).
+let _dashboardKey: string | null = null;
+
+export function getDashboardKey(): string {
+    if (!_dashboardKey) {
+        _dashboardKey = process.env.DEEPCLAUDE_DASHBOARD_KEY || crypto.randomBytes(16).toString('hex');
+    }
+    return _dashboardKey;
+}
+
 function checkDashboardAuth(req: http.IncomingMessage, res: http.ServerResponse): boolean {
-    const key = process.env.DEEPCLAUDE_DASHBOARD_KEY;
-    if (!key) return true; // not configured, allow all
+    const key = getDashboardKey();
     const provided = req.headers['x-dashboard-key'];
 
     // Length check before timing-safe compare prevents variable-time

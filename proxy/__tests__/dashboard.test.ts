@@ -1,8 +1,12 @@
 'use strict';
 
 import http from 'http';
-import { serveDashboard, buildDashboardHtml } from '../dashboard';
+import { serveDashboard, buildDashboardHtml, getDashboardKey } from '../dashboard';
 import { recordRecentRequest, getFullHealthSnapshot } from '../stats';
+
+// Dashboard now requires authentication.  Use a fixed key for tests.
+const TEST_DASHBOARD_KEY = 'test-dashboard-key';
+process.env.DEEPCLAUDE_DASHBOARD_KEY = TEST_DASHBOARD_KEY;
 
 describe('buildDashboardHtml', () => {
     test('returns HTML containing key elements', () => {
@@ -69,6 +73,7 @@ describe('serveDashboard route handling', () => {
                 path: urlPath,
                 method: 'GET',
                 agent: false,
+                headers: { 'x-dashboard-key': TEST_DASHBOARD_KEY },
             }, (res: http.IncomingMessage) => {
                 let body = '';
                 res.on('data', (chunk: Buffer) => { body += chunk.toString(); });
@@ -96,6 +101,7 @@ describe('serveDashboard route handling', () => {
                 path: urlPath,
                 method: 'GET',
                 agent: false,
+                headers: { 'x-dashboard-key': TEST_DASHBOARD_KEY },
             }, (res: http.IncomingMessage) => {
                 let data = '';
                 const onData = (chunk: Buffer) => {

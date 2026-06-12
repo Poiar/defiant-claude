@@ -46,9 +46,10 @@ export function recordFirstToken(timings: StreamTimings): void {
 export function recordChunk(timings: StreamTimings): void {
   const now = Date.now();
   timings.lastChunkTime = now;
+  // Ring-buffer style: keep the last 500 chunk timestamps without O(n) shift.
   timings.lastChunkTimes.push(now);
   if (timings.lastChunkTimes.length > 500) {
-    timings.lastChunkTimes.shift();
+    timings.lastChunkTimes = timings.lastChunkTimes.slice(timings.lastChunkTimes.length - 500);
   }
 }
 
