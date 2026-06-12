@@ -494,7 +494,6 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
             await checkReload(state, parsed);
             let model: string | null = null;
             let parsedBody: Record<string, unknown> | null = null;
-            let preExecutedSearches = 0;
             try {
                 const parsed = JSON.parse(rawBody.toString()) as Record<string, unknown>;
                 if (typeof parsed.model !== 'string' || parsed.model.length === 0) {
@@ -784,36 +783,43 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                         const messages = parsedBody.messages as Array<Record<string, unknown>>;
                         const searchQuery = extractSearchQuery(messages as any[]);
                         if (searchQuery) {
-                            preExecutedSearches++;
                             log.info(reqId, 'web search direct: ' + truncateForLog(searchQuery));
                             const searchResults = await webSearch(searchQuery);
 
                             // Return search results directly — bypass DeepSeek entirely.
-                            // This avoids tool-call issues with flash models AND guarantees
-                            // server_tool_use is correct without SSE interception.
+                            // Emit Anthropic SSE format because CC sends stream:true.
                             if (!res.headersSent && !res.destroyed) {
                                 const responseId = 'msg_' + crypto.randomUUID();
-                                const responseBody = JSON.stringify({
+                                const msg = {
                                     id: responseId,
                                     type: 'message',
                                     model: model || '',
                                     role: 'assistant',
-                                    content: [{ type: 'text', text: searchResults }],
-                                    stop_reason: 'end_turn',
+                                    content: [{ type: 'text', text: '' }],
+                                    stop_reason: null,
                                     stop_sequence: null,
+                                    usage: { input_tokens: 0, output_tokens: 0 },
+                                };
+                                // SSE events: message_start → content_block_start → text deltas → content_block_stop → message_delta (with server_tool_use) → message_stop
+                                const se = (e: string, d: unknown) => 'event: ' + e + '\ndata: ' + JSON.stringify(d) + '\n\n';
+                                let sse = '';
+                                sse += se('message_start', { type: 'message_start', message: msg });
+                                sse += se('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } });
+                                sse += se('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: searchResults } });
+                                sse += se('content_block_stop', { type: 'content_block_stop', index: 0 });
+                                sse += se('message_delta', {
+                                    type: 'message_delta',
+                                    delta: { stop_reason: 'end_turn', stop_sequence: null },
                                     usage: {
-                                        input_tokens: 0,
                                         output_tokens: 0,
-                                        server_tool_use: {
-                                            web_search_requests: 1,
-                                            web_fetch_requests: 0,
-                                        },
+                                        server_tool_use: { web_search_requests: 1, web_fetch_requests: 0 },
                                     },
                                 });
-                                res.writeHead(200, { 'content-type': 'application/json' });
-                                res.end(responseBody);
-                                log.info(reqId, 'web search direct response sent, size=' + responseBody.length);
-                                return; // Skip forwarding to provider entirely
+                                sse += se('message_stop', { type: 'message_stop' });
+                                res.writeHead(200, { 'content-type': 'text/event-stream' });
+                                res.end(sse);
+                                log.info(reqId, 'web search direct SSE sent, size=' + sse.length);
+                                return;
                             }
                         }
                     } catch (e) {
@@ -952,7 +958,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                         forwardedBody = Buffer.from(JSON.stringify(openaiBody));
                         if (reqParsed.stream) {
                             const transformerModel = target.rewriteModel || model || reqParsed.model;
-                            streamTransformer = createStreamTransformer(transformerModel, preExecutedSearches);
+                            streamTransformer = createStreamTransformer(transformerModel);
                         }
                     } catch (e) {
                         log.error(reqId, 'protocol translation error: ' + truncateForLog((e as Error).message));
@@ -1036,10 +1042,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                         // Attach Anthropic SSE interceptor for streaming requests so
                         // web_search/web_fetch tool counts are injected into usage.
                         if (reqParsed.stream && !streamTransformer) {
-                            streamTransformer = createAnthropicStreamInterceptor(preExecutedSearches);
-                            log.info(reqId, 'created AnthropicStreamInterceptor preExec=' + preExecutedSearches);
-                        } else if (!reqParsed.stream) {
-                            log.info(reqId, 'skipping interceptor: stream=' + reqParsed.stream + ' preExec=' + preExecutedSearches);
+                            streamTransformer = createAnthropicStreamInterceptor();
                         }
                     } catch (e) {
                         log.error(reqId, 'thinking injection error: ' + truncateForLog((e as Error).message));
@@ -1241,22 +1244,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                     if (!res.headersSent && !res.destroyed) {
                         res.writeHead(result.status || 200, outHeaders as Record<string, string | number>);
                         if (result.body) {
-                            // Inject pre-executed search count so Claude Code
-                            // shows "Did N searches" instead of "Did 0 searches".
-                            let finalBody = result.body;
-                            if (preExecutedSearches > 0) {
-                                try {
-                                    const rb = typeof finalBody === 'string' ? JSON.parse(finalBody) : finalBody;
-                                    if (!rb.usage) rb.usage = {};
-                                    const u = rb.usage as Record<string, unknown>;
-                                    const existing = (u.server_tool_use as Record<string, number>) || { web_search_requests: 0, web_fetch_requests: 0 };
-                                    existing.web_search_requests = (existing.web_search_requests || 0) + preExecutedSearches;
-                                    u.server_tool_use = existing;
-                                    finalBody = JSON.stringify(rb);
-                                    log.info(reqId, 'non-streaming injected server_tool_use preExec=' + preExecutedSearches);
-                                } catch (_) { /* best effort */ }
-                            }
-                            res.end(finalBody);
+                            res.end(result.body);
                             if (result.streamMetrics) {
                                 recordStreamMetrics(target.providerKey, result.streamMetrics);
                             }
