@@ -783,39 +783,33 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                         }
                     }
 
-                // Web search: extract query, run DDG Lite, inject results,
-                // then forward to DeepSeek for summarization.
                 if (parsedBody.messages) {
                     try {
                         const messages = parsedBody.messages as Array<Record<string, unknown>>;
-                        // First, handle follow-up turns: populate empty tool_results
-                        // from a prior web_search tool_use with DDG Lite results.
+                        // Populate empty tool_results from prior web_search calls
                         const populated = await populateToolResults(messages as any[]);
                         if (populated) modified = true;
-                        // Also pre-execute fresh searches: extract query from
-                        // CC's "Perform a web search for the query: X" pattern.
+                        // Pre-execute: extract query, run DDG Lite, inject results
                         const searchQuery = extractSearchQuery(messages as any[]);
                         if (searchQuery) {
                             log.info(reqId, 'web search: ' + truncateForLog(searchQuery));
                             const searchResults = await webSearch(searchQuery);
-                            for (let i = messages.length - 1; i >= 0; i--) {
-                                const msg = messages[i];
-                                if (msg.role !== 'user') continue;
-                                if (typeof msg.content === 'string') {
-                                    msg.content = 'Search results:\n\n' + searchResults + '\n\nSummarize.';
-                                } else if (Array.isArray(msg.content)) {
-                                    (msg as Record<string, unknown>).content = [{ type: 'text', text: 'Search results:\n\n' + searchResults + '\n\nSummarize.' }];
-                                }
-                                modified = true;
-                                break;
-                            }
-                            // Remove web_search tools
-                            if (parsedBody.tools && Array.isArray(parsedBody.tools)) {
-                                type ToolItem = Record<string, unknown>;
-                                parsedBody.tools = (parsedBody.tools as ToolItem[]).filter(
-                                    t => !(t && (t.name === 'web_search' || (typeof t.type === 'string' && t.type.startsWith('web_search_'))))
-                                );
-                                if ((parsedBody.tools as ToolItem[]).length === 0) delete parsedBody.tools;
+
+                            // Return SSE with server_tool_use in message_delta.usage
+                            // (CC reads it there for the "Did N searches" counter)
+                            if (!res.headersSent && !res.destroyed) {
+                                const se = (e: string, d: unknown) => 'event: ' + e + '\ndata: ' + JSON.stringify(d) + '\n\n';
+                                let sse = '';
+                                sse += se('message_start', { type: 'message_start', message: { id: 'msg_search', type: 'message', role: 'assistant', model: model || '', content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 0, output_tokens: 0 } } });
+                                sse += se('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } });
+                                sse += se('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: searchResults } });
+                                sse += se('content_block_stop', { type: 'content_block_stop', index: 0 });
+                                sse += se('message_delta', { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 100, server_tool_use: { web_search_requests: 1, web_fetch_requests: 0 } } });
+                                sse += 'event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n';
+                                res.writeHead(200, { 'content-type': 'text/event-stream' });
+                                res.end(sse);
+                                log.info(reqId, 'web search SSE sent');
+                                return;
                             }
                         }
                     } catch (e) {
