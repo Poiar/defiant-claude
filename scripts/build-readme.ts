@@ -471,6 +471,7 @@ function build(templatePath: string, outputPath: string): void {
 
 const templatePath = path.join(ROOT, 'README.template.md');
 const outputPath = path.join(ROOT, 'README.md');
+const doApply = process.argv.includes('--apply');
 
 if (!fs.existsSync(templatePath)) {
   console.error('ERROR: README.template.md not found at', templatePath);
@@ -478,3 +479,19 @@ if (!fs.existsSync(templatePath)) {
 }
 
 build(templatePath, outputPath);
+
+if (doApply) {
+  // Check if README.md changed and commit if it did.
+  try {
+    const diff = execSync('git diff --name-only README.md', { cwd: ROOT, encoding: 'utf-8' }).trim();
+    if (diff) {
+      execSync('git add README.md', { cwd: ROOT });
+      execSync('git commit -m "Docs: auto-update README.md from template"', { cwd: ROOT });
+      console.log('Committed README.md changes.');
+    } else {
+      console.log('README.md is already up to date.');
+    }
+  } catch (e: unknown) {
+    console.error('Failed to commit README changes:', (e as Error).message || String(e));
+  }
+}

@@ -17,6 +17,7 @@
     "start": "npx tsx proxy/start-proxy.ts",
     "start:ts": "npx tsx proxy/start-proxy.ts",
     "build:readme": "npx tsx scripts/build-readme.ts",
+    "build:readme:apply": "npx tsx scripts/build-readme.ts --apply",
     "build": "npx tsc",
     "prepare": "husky"
   },

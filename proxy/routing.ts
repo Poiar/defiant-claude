@@ -38,6 +38,7 @@ export interface ProviderEntry {
     fallback?: string[];
     extraHeaders?: Record<string, string>;
     streamUsageReporting?: string;
+    noAutoFallback?: boolean;
 }
 
 export interface RoutingConfig {
@@ -301,7 +302,7 @@ export async function resolveTarget(
     // fall back to a hardcoded set of well-known noAutoFallback providers.
     const HARDCODED_NO_AUTO_FALLBACK = new Set(['ds', 'oc', 'um']);
     const primaryDef = routing.providers?.[primary.providerKey];
-    const hasNoAutoFallback = (primaryDef && (primaryDef as any).noAutoFallback) || HARDCODED_NO_AUTO_FALLBACK.has(primary.providerKey);
+    const hasNoAutoFallback = (primaryDef?.noAutoFallback) || HARDCODED_NO_AUTO_FALLBACK.has(primary.providerKey);
     if (fallbacks.length === 0 && routing.providers && !hasNoAutoFallback) {
         for (const [fbKey, fb] of Object.entries(routing.providers)) {
             // Skip circuit-broken providers — no point resolving keys for
