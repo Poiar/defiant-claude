@@ -2,7 +2,6 @@
 
 import http from 'http';
 import https from 'https';
-import crypto from 'crypto';
 import { pipeline, Transform } from 'stream';
 import fs from 'fs';
 
@@ -786,36 +785,42 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
 
                     // Pre-processing step: intercept web search requests.
                 // Extract the search query from CC's "Perform a web search"
-                // pattern, execute DDG Lite, and inject results directly.
-                // This bypasses the tool-calling flow entirely, which DeepSeek
-                // flash models don't reliably handle.
+                // Pre-execute: extract search query, run DDG Lite, inject results
+                // into the user message, then forward to DeepSeek for summarization.
+                // The "Did N searches" counter is cosmetic — results are delivered.
                 if (parsedBody.messages) {
                     try {
                         const messages = parsedBody.messages as Array<Record<string, unknown>>;
                         const searchQuery = extractSearchQuery(messages as any[]);
                         if (searchQuery) {
-                            log.info(reqId, 'web search direct: ' + truncateForLog(searchQuery));
+                            log.info(reqId, 'web search: ' + truncateForLog(searchQuery));
                             const searchResults = await webSearch(searchQuery);
-
-                            // Return results directly — bypass DeepSeek.
-                            if (!res.headersSent && !res.destroyed) {
-                                const serverToolUse = { web_search_requests: 1, web_fetch_requests: 0 };
-                                const responseId = 'msg_' + crypto.randomUUID();
-
-                                const body = JSON.stringify({
-                                    id: responseId, type: 'message', model: model || '', role: 'assistant',
-                                    content: [{ type: 'text', text: searchResults }],
-                                    stop_reason: 'end_turn', stop_sequence: null,
-                                    usage: { input_tokens: 1, output_tokens: 1, server_tool_use: serverToolUse },
-                                });
-                                res.writeHead(200, { 'content-type': 'application/json' });
-                                res.end(body);
-                                log.info(reqId, 'web search direct JSON sent');
-                                return;
+                            for (let i = messages.length - 1; i >= 0; i--) {
+                                const msg = messages[i];
+                                if (msg.role !== 'user') continue;
+                                const content = msg.content;
+                                if (typeof content === 'string') {
+                                    msg.content = 'Search results for "' + searchQuery + '":\n\n' + searchResults + '\n\nSummarize these results.';
+                                } else if (Array.isArray(content)) {
+                                    (msg as Record<string, unknown>).content = [{
+                                        type: 'text',
+                                        text: 'Search results for "' + searchQuery + '":\n\n' + searchResults + '\n\nSummarize these results.',
+                                    }];
+                                }
+                                modified = true;
+                                break;
+                            }
+                            // Remove web_search tools — search already executed
+                            if (parsedBody.tools && Array.isArray(parsedBody.tools)) {
+                                type ToolItem = Record<string, unknown>;
+                                parsedBody.tools = (parsedBody.tools as ToolItem[]).filter(
+                                    t => !(t && (t.name === 'web_search' || t.name === 'web_fetch' || (typeof t.type === 'string' && t.type.startsWith('web_search_'))))
+                                );
+                                if ((parsedBody.tools as ToolItem[]).length === 0) delete parsedBody.tools;
                             }
                         }
                     } catch (e) {
-                        log.error(reqId, 'web search pre-exec error: ' + truncateForLog((e as Error).message));
+                        log.error(reqId, 'web search error: ' + truncateForLog((e as Error).message));
                     }
                 }
 
