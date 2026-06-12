@@ -805,7 +805,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                                 sse += se('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: searchResults } });
                                 sse += se('content_block_stop', { type: 'content_block_stop', index: 0 });
                                 sse += se('message_delta', { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 100, server_tool_use: { web_search_requests: 1, web_fetch_requests: 0 } } });
-                                sse += 'event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n';
+                                sse += se('message_stop', { type: 'message_stop' });
                                 res.writeHead(200, { 'content-type': 'text/event-stream' });
                                 res.end(sse);
                                 log.info(reqId, 'web search SSE sent');
