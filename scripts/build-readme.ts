@@ -346,6 +346,7 @@ function genStateFiles(): string {
     ['`thinking-overrides.json`', 'thinking mode overrides (--no-thinking / --thinking-budget)'],
     ['`spend.json`', 'daily and total spend tracking (atomic write via .tmp + rename)'],
     ['`subagent-model.json`', 'dedicated subagent model setting'],
+    ['`fix-av.cmd`', 'standalone AV exclusion script (survives Defender quarantine of proxy files)'],
     ['`requests.log`', 'opt-in request logs (JSONL, timestamped rotation, 5 backups)'],
   ];
   return files.map(([f, d]) => `- ${f} — ${d}`).join('\n');

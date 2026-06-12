@@ -307,6 +307,7 @@ State files live in `~/.deepclaude/`:
 - `thinking-overrides.json` — thinking mode overrides (--no-thinking / --thinking-budget)
 - `spend.json` — daily and total spend tracking (atomic write via .tmp + rename)
 - `subagent-model.json` — dedicated subagent model setting
+- `fix-av.cmd` — standalone AV exclusion script (survives Defender quarantine of proxy files)
 - `requests.log` — opt-in request logs (JSONL, timestamped rotation, 5 backups)
 <!-- /AUTO:state-files -->
 
@@ -379,13 +380,22 @@ All provider API key env vars (see [Providers table](#providers-and-api-keys)) a
 
 ## Windows Defender
 
-The proxy starts a local HTTP server and forwards requests — Windows Defender often flags this as suspicious behavior. If the proxy gets blocked:
+The proxy starts a local HTTP server and forwards requests — Windows Defender often flags this as suspicious behavior and may **delete or quarantine** the proxy files. This is a catch-22: if deepclaude is deleted, you can't run `deepclaude --fix-av`.
+
+**deepclaude writes a standalone rescue script on every launch:** `~/.deepclaude/fix-av.cmd`. Even if AV deletes the entire deepclaude directory, this file survives (it lives in your home directory, not near any executables). Run it as **administrator**:
 
 ```
-deepclaude --fix-av       # Prints the exact exclusion commands to run
+~/.deepclaude/fix-av.cmd
 ```
 
-Then run the printed commands in an **admin** PowerShell window. You'll need to exclude both the `proxy/` directory and potentially `node.exe`.
+Alternatively, run these commands manually in an admin PowerShell window:
+
+```
+Add-MpPreference -ExclusionPath "C:\path\to\deepclaude\proxy"
+Add-MpPreference -ExclusionProcess "node.exe"
+```
+
+After adding exclusions, re-clone or re-install deepclaude if files were quarantined.
 
 ## Troubleshooting
 
@@ -399,7 +409,7 @@ Run `npm install` from the project root. The proxy uses tsx to run TypeScript di
 Run `npm test` to check for type errors.
 
 **Proxy fails to start on Windows (port not responding)**
-Windows Defender may be blocking the proxy. Run `deepclaude --fix-av` and execute the printed commands in an admin PowerShell window.
+Windows Defender may be blocking the proxy. Run `~/.deepclaude/fix-av.cmd` as admin (this file is written on every launch and survives AV deletion of the deepclaude directory).
 
 **"command not found: deepclaude"**
 The deepclaude directory is not on your PATH. Run `npm install -g .` from the repo directory, or add the repo directory to your PATH manually.
