@@ -5,7 +5,7 @@ import https from 'https';
 import { pipeline, Transform } from 'stream';
 import fs from 'fs';
 
-import { translateRequest, createStreamTransformer } from './protocol-translate';
+import { translateRequest, createStreamTransformer, createAnthropicStreamInterceptor } from './protocol-translate';
 import { injectThinkingBlocks } from './thinking-cache';
 import { reinjectReasoningContent } from './reasoning-cache';
 import { deduplicatePath, buildSafeHeaders } from './util';
@@ -976,6 +976,11 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                         if (reqParsed.messages) {
                             injectThinkingBlocks(reqParsed.messages as any[]);
                             forwardedBody = Buffer.from(JSON.stringify(reqParsed));
+                        }
+                        // Attach Anthropic SSE interceptor for streaming requests so
+                        // web_search/web_fetch tool counts are injected into usage.
+                        if (reqParsed.stream && !streamTransformer) {
+                            streamTransformer = createAnthropicStreamInterceptor();
                         }
                     } catch (e) {
                         log.error(reqId, 'thinking injection error: ' + truncateForLog((e as Error).message));
