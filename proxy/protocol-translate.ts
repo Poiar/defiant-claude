@@ -381,6 +381,11 @@ export function translateResponse(openaiBody: OpenAIResponseBody, model: string)
         }
     }
 
+    // Map cache tokens from OpenAI field names (prompt_cache_hit/miss) to
+    // Anthropic field names (cache_read/cache_creation_input_tokens) when present.
+    const usageAny = usage as any;
+    const hasCache = typeof usageAny.prompt_cache_hit_tokens === 'number';
+
     return {
         id: openaiBody.id || `msg_${crypto.randomUUID()}`,
         type: 'message',
@@ -392,6 +397,10 @@ export function translateResponse(openaiBody: OpenAIResponseBody, model: string)
         usage: {
             input_tokens: usage.prompt_tokens || 0,
             output_tokens: usage.completion_tokens || 0,
+            ...(hasCache ? {
+                cache_read_input_tokens: usageAny.prompt_cache_hit_tokens,
+                cache_creation_input_tokens: usageAny.prompt_cache_miss_tokens || 0,
+            } : {}),
             ...(webSearchRequests > 0 || webFetchRequests > 0 ? {
                 server_tool_use: { web_search_requests: webSearchRequests, web_fetch_requests: webFetchRequests },
             } : {}),
@@ -410,7 +419,7 @@ interface TransformerState {
     lastToolUseIdx: number;
     messageId: string;
     model: string;
-    usage: { input_tokens: number; output_tokens: number };
+    usage: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number };
     serverToolUse: { web_search_requests: number; web_fetch_requests: number };
 }
 
@@ -485,11 +494,16 @@ export function createStreamTransformer(model: string): Transform {
         let output = closeBlock();
         const srv = state.serverToolUse;
         const hasServerTools = srv.web_search_requests > 0 || srv.web_fetch_requests > 0;
+        const hasCache = typeof state.usage.cache_read_input_tokens === 'number';
         output += emit('message_delta', {
             type: 'message_delta',
             delta: { stop_reason: stopReason, stop_sequence: null },
             usage: {
                 output_tokens: state.usage.output_tokens,
+                ...(hasCache ? {
+                    cache_read_input_tokens: state.usage.cache_read_input_tokens,
+                    cache_creation_input_tokens: state.usage.cache_creation_input_tokens,
+                } : {}),
                 ...(hasServerTools ? { server_tool_use: srv } : {}),
             },
         });
@@ -535,10 +549,17 @@ export function createStreamTransformer(model: string): Transform {
         }
 
         if (parsed.usage) {
+            const usageAny = parsed.usage as any;
             state.usage = {
                 input_tokens: parsed.usage.prompt_tokens || 0,
                 output_tokens: parsed.usage.completion_tokens || 0,
             };
+            // Map cache tokens from OpenAI field names (prompt_cache_hit/miss) to
+            // Anthropic field names (cache_read/cache_creation_input_tokens).
+            if (typeof usageAny.prompt_cache_hit_tokens === 'number') {
+                state.usage.cache_read_input_tokens = usageAny.prompt_cache_hit_tokens;
+                state.usage.cache_creation_input_tokens = usageAny.prompt_cache_miss_tokens || 0;
+            }
         }
 
         if (delta.reasoning_content !== undefined && delta.reasoning_content !== null) {

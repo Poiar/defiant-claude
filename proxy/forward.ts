@@ -388,9 +388,14 @@ export function tryForward(
                                             if (pt !== undefined || ct !== undefined) {
                                                 streamUsage.prompt_tokens = pt || 0; streamUsage.completion_tokens = ct || 0;
                                             }
+                                            // Cache tokens: support both OpenAI field names (prompt_cache_hit/miss)
+                                            // and Anthropic field names (cache_read/cache_creation_input_tokens).
                                             if (typeof parsedFinal.usage.prompt_cache_hit_tokens === 'number') {
                                                 streamUsage.cache_hit_tokens = parsedFinal.usage.prompt_cache_hit_tokens;
                                                 streamUsage.cache_miss_tokens = (parsedFinal.usage.prompt_cache_miss_tokens as number) || 0;
+                                            } else if (typeof parsedFinal.usage.cache_read_input_tokens === 'number') {
+                                                streamUsage.cache_hit_tokens = parsedFinal.usage.cache_read_input_tokens;
+                                                streamUsage.cache_miss_tokens = (parsedFinal.usage.cache_creation_input_tokens as number) || 0;
                                             }
                                         }
                                         // Final content_block_stop if pending
@@ -489,10 +494,15 @@ export function tryForward(
                                     if (pt !== undefined || ct !== undefined) {
                                         streamUsage.prompt_tokens = pt || 0; streamUsage.completion_tokens = ct || 0;
                                     }
-                                    // Capture cache hit/miss breakdown for providers that report it (DeepSeek)
+                                    // Capture cache hit/miss breakdown for providers that report it (DeepSeek).
+                                    // Support both OpenAI field names (prompt_cache_hit/miss) and
+                                    // Anthropic field names (cache_read/cache_creation_input_tokens).
                                     if (typeof parsedPayload.usage.prompt_cache_hit_tokens === 'number') {
                                         streamUsage.cache_hit_tokens = parsedPayload.usage.prompt_cache_hit_tokens;
                                         streamUsage.cache_miss_tokens = (parsedPayload.usage.prompt_cache_miss_tokens as number) || 0;
+                                    } else if (typeof parsedPayload.usage.cache_read_input_tokens === 'number') {
+                                        streamUsage.cache_hit_tokens = parsedPayload.usage.cache_read_input_tokens;
+                                        streamUsage.cache_miss_tokens = (parsedPayload.usage.cache_creation_input_tokens as number) || 0;
                                     }
                                 }
                             } catch (_) { /* non-fatal */ }
@@ -626,6 +636,9 @@ export function tryForward(
                         try {
                             if (!parsedResponse) throw new Error('Failed to parse upstream response');
                             const resp = parsedResponse;
+                            let respModified = false;
+
+                            // Extract and cache thinking blocks
                             if (resp.content && Array.isArray(resp.content)) {
                                 const responseMsg = { role: 'assistant', content: resp.content };
                                 const fullMessages = parsed && parsed.messages ? [...(parsed.messages as Array<Record<string, unknown>>), responseMsg] : [responseMsg];
@@ -635,8 +648,30 @@ export function tryForward(
                                     resp.content = resp.content.filter(
                                         (b: { type: string }) => b.type !== 'thinking' && b.type !== 'redacted_thinking'
                                     );
-                                    responseBody = Buffer.from(JSON.stringify(resp));
+                                    respModified = true;
                                 }
+                            }
+
+                            // Inject server_tool_use count for "Did N searches" display.
+                            // Claude Code reads usage.server_tool_use from the response to set
+                            // searchCount in toolUseResult. Without this the display shows 0.
+                            if (resp.content && Array.isArray(resp.content)) {
+                                let ws = 0, wf = 0;
+                                for (const block of resp.content as Array<{ type: string; name?: string }>) {
+                                    if (block.type === 'tool_use') {
+                                        if (block.name === 'web_search') ws++;
+                                        else if (block.name === 'web_fetch') wf++;
+                                    }
+                                }
+                                if (ws > 0 || wf > 0) {
+                                    if (!resp.usage) (resp as any).usage = {};
+                                    (resp.usage as any).server_tool_use = { web_search_requests: ws, web_fetch_requests: wf };
+                                    respModified = true;
+                                }
+                            }
+
+                            if (respModified) {
+                                responseBody = Buffer.from(JSON.stringify(resp));
                             }
                         } catch (e) {
                             log.error(reqId, 'thinking extraction error: ' + truncateForLog((e as Error).message));
@@ -656,9 +691,13 @@ export function tryForward(
                                 if (pt !== undefined || ct !== undefined) {
                                     streamUsage.prompt_tokens = pt || 0; streamUsage.completion_tokens = ct || 0;
                                 }
+                                // Cache tokens: support both OpenAI and Anthropic field names
                                 if (typeof original.usage.prompt_cache_hit_tokens === 'number') {
                                     streamUsage.cache_hit_tokens = original.usage.prompt_cache_hit_tokens;
                                     streamUsage.cache_miss_tokens = (original.usage.prompt_cache_miss_tokens as number) || 0;
+                                } else if (typeof original.usage.cache_read_input_tokens === 'number') {
+                                    streamUsage.cache_hit_tokens = original.usage.cache_read_input_tokens;
+                                    streamUsage.cache_miss_tokens = (original.usage.cache_creation_input_tokens as number) || 0;
                                 }
                             }
                         } catch (_) { /* non-fatal */ }
