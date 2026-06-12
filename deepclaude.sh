@@ -6,12 +6,9 @@
 # Named configs (via -b):
 #   deepclaude                  # ds (default) — DeepSeek V4 Pro
 #   deepclaude -b or            # OpenRouter (DeepSeek)
-#   deepclaude -b or2           # OpenRouter (DeepSeek)
-#   deepclaude -b or3           # OpenRouter (best free)
 #   deepclaude -b fw            # Fireworks AI
 #   deepclaude -b oc            # OpenCode Zen
 #   deepclaude -b ds+oc         # DeepSeek main + OpenCode subs
-#   deepclaude -b ds+or         # DeepSeek main + OpenRouter subs
 #   deepclaude -b anthropic     # Normal Claude Code
 #
 # Model aliases: sonnet, opus, haiku, v4, flash (short names resolve to full model IDs)
@@ -555,7 +552,7 @@ show_status() {
     echo "    NOVITA_API_KEY:               $(mask_key "$NOVITA_KEY")"
     echo ""
     echo "  Configurations:"
-    for cfg in ds or or2 or3 fw oc km mm um gr mt mx za bp sf nv "ds+oc" "ds+or"; do
+    for cfg in ds or fw oc km mm um gr mt mx za bp sf nv "ds+oc"; do
         local label=""
         [[ "$cfg" == "ds" ]] && label=" (default)"
         local provs=()
@@ -651,7 +648,7 @@ show_help() {
     echo "    deepclaude -b ds+oc                            (named mixed config)"
     echo "    deepclaude -b or                               (named config)"
     echo ""
-    echo "  Named configs: ds, or, or2, or3, fw, oc, km, mm, um, gr, mt, mx, za, bp, sf, nv, ds+oc, ds+or, anthropic"
+    echo "  Named configs: ds, or, fw, oc, km, mm, um, gr, mt, mx, za, bp, sf, nv, ds+oc, anthropic"
     echo "  --status        Show keys, configs, and active slot mapping"
     echo "  --doctor        System health check (prereqs, keys, proxy test)"
     echo "  --cost          Pricing comparison"
@@ -889,7 +886,7 @@ run_doctor() {
         local test_slot_data=""
         test_slot_data=$(resolve_config "$test_config" 2>/dev/null | tail -n +2) || true
         if [[ -z "$test_slot_data" ]]; then
-            for cfg in ds or or2 or3 fw oc km mm um gr mt mx za bp sf nv ds+oc ds+or anthropic; do
+            for cfg in ds or fw oc km mm um gr mt mx za bp sf nv ds+oc anthropic; do
                 test_slot_data=$(resolve_config "$cfg" 2>/dev/null | tail -n +2) || true
                 [[ -n "$test_slot_data" ]] && break
             done
@@ -956,7 +953,7 @@ run_benchmark() {
     echo "  Latency Benchmark"
     echo "  =================="
 
-    local configs="ds or or2 or3 fw oc km mm um gr mt mx za bp sf nv"
+    local configs="ds or fw oc km mm um gr mt mx za bp sf nv"
     local results_dir
     results_dir=$(mktemp -d "${TMPDIR:-/tmp}/deepclaude.XXXXXX")
     trap "rm -rf \"$results_dir\"" EXIT
