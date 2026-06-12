@@ -105,8 +105,8 @@ export function formatExhaustedError(lastStatus: number | null | undefined, last
 type CredentialPattern = [RegExp, string];
 
 const CREDENTIAL_PATTERNS: CredentialPattern[] = [
-    // Anthropic API keys: sk-ant-..., sk-...
-    [/(?:sk-(?:ant-)?)[a-zA-Z0-9_-]{20,}/g, '[redacted]'],
+    // Anthropic API keys: sk-ant-api03-..., sk-ant-..., sk-...
+    [/(?:sk-ant-api\d{2}-)?(?:sk-ant-)?sk-[a-zA-Z0-9_-]{12,}/g, '[redacted]'],
     // OpenAI / generic keys: sk-...
     [/\bsk-[a-zA-Z0-9_-]{20,}\b/g, '[redacted]'],
     // Bearer tokens in headers or logs
@@ -125,8 +125,8 @@ const CREDENTIAL_PATTERNS: CredentialPattern[] = [
     [/\bsk-or-[a-zA-Z0-9_-]{20,}\b/g, '[redacted]'],
     // Hugging Face tokens (hf_ prefix)
     [/\bhf_[a-zA-Z0-9_-]{20,}\b/g, '[redacted]'],
-    // Keys embedded in JSON string values (api_key, apiKey, secret, token, apikey)
-    [/"(api_key|apiKey|apikey|secret|token)"\s*:\s*"[a-zA-Z0-9_-]{20,}"/gi, '"$1": "[redacted]"'],
+    // Keys embedded in JSON string values (api_key, apiKey, api-key, secret, token, apikey)
+    [/"(api_key|apiKey|api-key|apikey|secret|token)"\s*:\s*"[a-zA-Z0-9_-]{20,}"/gi, '"$1": "[redacted]"'],
     // Authorization headers with non-Bearer schemes (Basic, ApiKey, Token)
     [/\b(Authorization|Proxy-Authorization):\s*(Basic|ApiKey|Token)\s+\S+/gi, '$1: $2 [redacted]'],
     // URL-encoded secrets in query strings (secret=, token=, api_key=, apikey=, api-key=)

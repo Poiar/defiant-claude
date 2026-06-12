@@ -8,7 +8,14 @@ function normalizeUrlPath(rawPath: string): string {
     const segments = rawPath.split('/');
     const resolved: string[] = [];
     for (const seg of segments) {
-        const decoded = decodeURIComponent(seg);
+        // Loop decodeURIComponent until stable to defeat double-encoding
+        // attacks (e.g. %252e%252e → %2e%2e → ..).
+        let decoded = seg;
+        let prev = '';
+        while (decoded !== prev && /%[0-9a-fA-F]{2}/.test(decoded)) {
+            prev = decoded;
+            try { decoded = decodeURIComponent(decoded); } catch { break; }
+        }
         if (decoded === '' || decoded === '.') continue;
         if (decoded === '..') {
             resolved.pop();

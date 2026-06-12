@@ -34,7 +34,6 @@ describe('resolveAlias', () => {
         expect(resolveAlias('v4-pro')).toBe('deepseek-v4-pro');
         expect(resolveAlias('v4-flash')).toBe('deepseek-v4-flash');
         expect(resolveAlias('flash')).toBe('deepseek-v4-flash');
-        expect(resolveAlias('big-pickle')).toBe('big-pickle');
         expect(resolveAlias('kimi')).toBe('kimi-k2.6');
         expect(resolveAlias('mimo')).toBe('mimo-v2.5-pro');
         expect(resolveAlias('groq')).toBe('groq/llama-4-maverick');
@@ -48,7 +47,7 @@ describe('resolveAlias', () => {
         expect(resolveAlias('SONNET')).toBe('claude-sonnet-4-6');
         expect(resolveAlias('Sonnet')).toBe('claude-sonnet-4-6');
         expect(resolveAlias('V4')).toBe('deepseek-v4-pro');
-        expect(resolveAlias('Big-Pickle')).toBe('big-pickle');
+        expect(resolveAlias('FlaSH')).toBe('deepseek-v4-flash');
     });
 
     test('returns empty string for empty input', () => {

@@ -11,7 +11,7 @@ const log = createLogger('protocol-translate');
 interface ContentBlock {
     type: string;
     text?: string;
-    source?: { type?: string; media_type?: string; data?: string };
+    source?: { type?: string; media_type?: string; data?: string; url?: string };
     name?: string;
     id?: string;
     input?: Record<string, unknown>;
@@ -19,6 +19,8 @@ interface ContentBlock {
     signature?: string;
     content?: string | ContentBlock[];
     tool_use_id?: string;
+    title?: string;
+    file_name?: string;
 }
 
 interface AnthropicMessage {
@@ -145,8 +147,11 @@ export function translateRequest(anthropicBody: AnthropicRequestBody): { openaiB
         if (typeof anthropicBody.system === 'string') {
             systemContent = anthropicBody.system;
         } else if (Array.isArray(anthropicBody.system)) {
-            systemContent = anthropicBody.system
-                .filter((b: ContentBlock) => b.type === 'text')
+            const textBlocks = anthropicBody.system.filter((b: ContentBlock) => b.type === 'text');
+            if (textBlocks.length < anthropicBody.system.length) {
+                log.warn(null, 'system prompt: ' + (anthropicBody.system.length - textBlocks.length) + ' non-text block(s) filtered out (only text blocks are forwarded to OpenAI-compatible providers)');
+            }
+            systemContent = textBlocks
                 .map((b: ContentBlock) => b.text)
                 .join('\n');
         }
@@ -204,6 +209,9 @@ function convertMessage(msg: AnthropicMessage): OpenAIMessage | OpenAIMessage[] 
             // Filter out tool results without a valid tool_use_id to avoid
             // OpenAI API 400 errors from an empty tool_call_id string.
             const validToolResults = toolResults.filter(block => block.tool_use_id);
+            if (validToolResults.length < toolResults.length) {
+                log.warn(null, 'dropping ' + (toolResults.length - validToolResults.length) + ' tool_result(s) with missing tool_use_id');
+            }
             const result: OpenAIMessage[] = validToolResults.map(block => {
                 // Normalize content before stringifyContent: null → '', string → pass,
                 // array → pass. Avoids producing the string "null" for undefined content.
@@ -230,10 +238,10 @@ function convertMessage(msg: AnthropicMessage): OpenAIMessage | OpenAIMessage[] 
                 } else if (block.type === 'image' && block.source) {
                     // Anthropic supports both 'base64' and 'url' source types.
                     // URL sources pass the URL directly; base64 sources construct a data URI.
-                    if (block.source.type === 'url' && (block.source as any).url) {
+                    if (block.source.type === 'url' && block.source.url) {
                         content.push({
                             type: 'image_url',
-                            image_url: { url: (block.source as any).url as string },
+                            image_url: { url: block.source.url as string },
                         });
                     } else {
                         content.push({
@@ -246,9 +254,9 @@ function convertMessage(msg: AnthropicMessage): OpenAIMessage | OpenAIMessage[] 
                     // OpenAI Chat Completions doesn't have a standard document content part,
                     // so we emit a text annotation AND a data URI for providers that support it.
                     const mediaType = block.source.media_type || 'application/octet-stream';
-                    const docName = (block as any).title || (block as any).file_name || 'document';
-                    if (block.source.type === 'url' && (block.source as any).url) {
-                        const docUrl = (block.source as any).url as string;
+                    const docName = block.title || block.file_name || 'document';
+                    if (block.source.type === 'url' && block.source.url) {
+                        const docUrl = block.source.url as string;
                         content.push({ type: 'text', text: '[Attached document: ' + docName + ' (' + mediaType + ')]' });
                         content.push({ type: 'image_url', image_url: { url: docUrl } });
                     } else {
@@ -304,6 +312,7 @@ function translateToolChoice(tc: unknown): unknown {
     }
     if (tc && typeof tc === 'object') {
         const obj = tc as { type?: string; name?: string };
+        if (obj.type === 'auto') return 'auto';
         // { type: 'any' } → 'required' (same as string 'any' shortcut)
         if (obj.type === 'any') return 'required';
         if (obj.type === 'tool' && obj.name) {
@@ -325,7 +334,7 @@ export function translateResponse(openaiBody: OpenAIResponseBody, model: string)
 
     // Emit thinking block for non-streaming reasoning_content (DeepSeek R1, etc.)
     if (message && message.reasoning_content && message.reasoning_content.length > 0) {
-        content.push({ type: 'thinking', thinking: message.reasoning_content });
+        content.push({ type: 'thinking', thinking: message.reasoning_content, signature: '' });
     }
 
     if (message && message.content != null) {
@@ -400,8 +409,17 @@ export function createStreamTransformer(model: string): Transform {
     function closeBlock(): string {
         if (!state.currentBlockType) return '';
         const idx = state.blockIndex - 1;
+        const blockType = state.currentBlockType;
         state.currentBlockType = null;
-        return emit('content_block_stop', { type: 'content_block_stop', index: idx });
+        let output = '';
+        if (blockType === 'thinking') {
+            output += emit('content_block_delta', {
+                type: 'content_block_delta', index: idx,
+                delta: { type: 'signature_delta', signature: '' },
+            });
+        }
+        output += emit('content_block_stop', { type: 'content_block_stop', index: idx });
+        return output;
     }
 
     function openBlock(type: string, contentBlock: Record<string, unknown>): string {
@@ -420,12 +438,29 @@ export function createStreamTransformer(model: string): Transform {
         });
     }
 
+    function emitMessageStart(): string {
+        state.started = true;
+        return emit('message_start', {
+            type: 'message_start',
+            message: {
+                id: state.messageId,
+                type: 'message',
+                role: 'assistant',
+                content: [],
+                model: state.model,
+                stop_reason: null,
+                stop_sequence: null,
+                usage: { input_tokens: 0, output_tokens: 0 },
+            },
+        });
+    }
+
     function finishStream(stopReason: string): string {
         let output = closeBlock();
         output += emit('message_delta', {
             type: 'message_delta',
             delta: { stop_reason: stopReason, stop_sequence: null },
-            usage: state.usage,
+            usage: { output_tokens: state.usage.output_tokens },
         });
         output += emit('message_stop', { type: 'message_stop' });
         state.finished = true;
@@ -438,7 +473,9 @@ export function createStreamTransformer(model: string): Transform {
         const payload = dataLines.map(m => m[1]).join('\n');
 
         if (payload === '[DONE]') {
-            return finishStream('end_turn');
+            let output = '';
+            if (!state.started) output += emitMessageStart();
+            return output + finishStream('end_turn');
         }
 
         let parsed: OpenAIResponseBody;
@@ -451,6 +488,7 @@ export function createStreamTransformer(model: string): Transform {
                 ? { type: 'error', error: upstreamError }
                 : { type: 'error', error: { type: 'api_error', message: upstreamError.message || String(upstreamError) } };
             let output = emit('error', apiError);
+            if (!state.started) output += emitMessageStart();
             output += finishStream('end_turn');
             return output;
         }
@@ -462,20 +500,7 @@ export function createStreamTransformer(model: string): Transform {
         let output = '';
 
         if (!state.started) {
-            state.started = true;
-            output += emit('message_start', {
-                type: 'message_start',
-                message: {
-                    id: state.messageId,
-                    type: 'message',
-                    role: 'assistant',
-                    content: [],
-                    model: state.model,
-                    stop_reason: null,
-                    stop_sequence: null,
-                    usage: { input_tokens: 0, output_tokens: 0 },
-                },
-            });
+            output += emitMessageStart();
         }
 
         if (parsed.usage) {
@@ -485,9 +510,9 @@ export function createStreamTransformer(model: string): Transform {
             };
         }
 
-        if (delta.reasoning_content) {
+        if (delta.reasoning_content !== undefined && delta.reasoning_content !== null) {
             if (state.currentBlockType && state.currentBlockType !== 'thinking') output += closeBlock();
-            if (state.currentBlockType !== 'thinking') output += openBlock('thinking', { type: 'thinking', thinking: '' });
+            if (state.currentBlockType !== 'thinking') output += openBlock('thinking', { type: 'thinking', thinking: '', signature: '' });
             output += appendBlock('thinking_delta', { thinking: delta.reasoning_content });
         }
 

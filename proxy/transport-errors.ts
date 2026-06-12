@@ -24,7 +24,7 @@ const FAILURE_SIGNATURES: FailureSignature[] = [
     [/CERT_|UNABLE_TO_VERIFY|self.signed|certificate|EPROTO|SSL|TLS/i, 'TLS connection failed', 502],
 
     // Timeouts
-    [/ETIMEDOUT|timed?[\s_-]?out/i, 'Upstream connection timed out', 504],
+    [/ETIMEDOUT|timed?\s*out/i, 'Upstream connection timed out', 504],
 
     // Stream stalled (connection established, but no data received)
     [/stream read timeout/i, 'Upstream stream stalled (no data received)', 502],
