@@ -12,7 +12,7 @@ const cache = new LruCache<CachedEntry>({ ttlMs: TTL_MS, maxEntries: MAX_ENTRIES
 
 // --- Types ---
 
-interface MessageBlock {
+export interface MessageBlock {
     type: string;
     text?: string;
     id?: string;
@@ -120,7 +120,11 @@ export function extractThinkingBlocks(messages: Message[]): ExtractResult | null
     // matches what injectThinkingBlocks computes from the request messages.
     const fp = computeFingerprint(messages.slice(0, -1));
 
-    for (const msg of messages) {
+    // Scan backward — the LAST assistant message with both thinking and
+    // tool_use is the most recent response and the one we need to cache.
+    // This matches the behavior of reasoning-cache's extractReasoningContent.
+    for (let i = messages.length - 1; i >= 0; i--) {
+        const msg = messages[i];
         if (msg.role !== 'assistant') continue;
         if (typeof msg.content === 'string') continue;
         if (!Array.isArray(msg.content)) continue;

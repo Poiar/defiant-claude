@@ -9,7 +9,7 @@ import { pipeline, Transform } from 'stream';
 import { buildSafeHeaders } from './util';
 import { translateResponse } from './protocol-translate';
 import { extractThinkingBlocks, store } from './thinking-cache';
-import type { Message as ThinkingMessage } from './thinking-cache';
+import type { Message as ThinkingMessage, MessageBlock } from './thinking-cache';
 import { extractReasoningContent, store as storeReasoning } from './reasoning-cache';
 import type { Message as ReasoningMessage } from './reasoning-cache';
 import { describe as describeTransportError } from './transport-errors';
@@ -334,7 +334,8 @@ export function tryForward(
                         if (streamHeartbeat) { clearTimeout(streamHeartbeat); streamHeartbeat = null; }
                         if (streamDeadline) { clearTimeout(streamDeadline); streamDeadline = null; }
                     };
-                    const resetStreamTimers = () => {
+                    // Heartbeat: reset on every data chunk to detect silent stalls.
+                    const resetHeartbeat = () => {
                         if (streamHeartbeat) clearTimeout(streamHeartbeat);
                         streamHeartbeat = setTimeout(() => {
                             (proxyRes as unknown as NodeJS.ReadableStream & { destroy(err?: Error): void }).destroy(
@@ -342,7 +343,12 @@ export function tryForward(
                             );
                         }, to.heartbeat);
                         if (streamHeartbeat && typeof streamHeartbeat === 'object') (streamHeartbeat as NodeJS.Timeout).unref();
-                        if (streamDeadline) { clearTimeout(streamDeadline); streamDeadline = null; }
+                    };
+                    // Deadline: set ONCE at stream start, never reset.  This is a hard
+                    // wall-clock cap on total streaming duration — unlike the heartbeat,
+                    // it is not extended by new data.
+                    const startStreamDeadline = () => {
+                        if (streamDeadline) clearTimeout(streamDeadline);
                         streamDeadline = setTimeout(() => {
                             (proxyRes as unknown as NodeJS.ReadableStream & { destroy(err?: Error): void }).destroy(
                                 new Error("Upstream stream read timeout (deadline) after " + to.deadline / 1000 + "s, received " + streamBytes + " bytes")
@@ -350,7 +356,8 @@ export function tryForward(
                         }, to.deadline);
                         if (streamDeadline && typeof streamDeadline === "object") (streamDeadline as NodeJS.Timeout).unref();
                     };
-                    resetStreamTimers();
+                    resetHeartbeat();
+                    startStreamDeadline();
                     sourceStream.on('data', (chunk: Buffer | string) => {
                         streamBytes += typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.length;
                         if (streamBytes > MAX_TOTAL_STREAM_BYTES) {
@@ -360,14 +367,59 @@ export function tryForward(
                             );
                             return;
                         }
-                        resetStreamTimers();
+                        resetHeartbeat();
                     });
                     sourceStream.once('end', () => {
                         streamEndedNormally = true;
                         cancelStreamTimeouts();
+
+                        // Flush any remaining partial SSE event in the usage buffer
+                        // (the last received chunk may not end with \n\n).
+                        if (rawUsageBuf.trim()) {
+                            try {
+                                const dataLines = [...rawUsageBuf.matchAll(/^data: ?(.*)$/gm)];
+                                if (dataLines.length) {
+                                    const payload = dataLines.map(m => m[1]).join('\n');
+                                    if (payload !== '[DONE]') {
+                                        const parsedFinal = JSON.parse(payload);
+                                        if (parsedFinal.usage) {
+                                            const pt = parsedFinal.usage.prompt_tokens !== undefined ? parsedFinal.usage.prompt_tokens : parsedFinal.usage.input_tokens;
+                                            const ct = parsedFinal.usage.completion_tokens !== undefined ? parsedFinal.usage.completion_tokens : parsedFinal.usage.output_tokens;
+                                            if (pt !== undefined || ct !== undefined) {
+                                                streamUsage.prompt_tokens = pt || 0; streamUsage.completion_tokens = ct || 0;
+                                            }
+                                            if (typeof parsedFinal.usage.prompt_cache_hit_tokens === 'number') {
+                                                streamUsage.cache_hit_tokens = parsedFinal.usage.prompt_cache_hit_tokens;
+                                                streamUsage.cache_miss_tokens = (parsedFinal.usage.prompt_cache_miss_tokens as number) || 0;
+                                            }
+                                        }
+                                        // Final content_block_stop if pending
+                                        if (parsedFinal.type === 'content_block_stop') pushAccumulatedBlock();
+                                    }
+                                }
+                            } catch (_) { /* non-fatal */ }
+                        }
+
+                        // For Anthropic-format providers: extract thinking blocks from
+                        // the accumulated streaming response and cache them for the next
+                        // turn's injectThinkingBlocks call in start-proxy.ts. This is
+                        // the streaming equivalent of the non-streaming path at line ~530.
+                        if (!isOpenAI && accumulatedBlocks.length > 0 && parsed && parsed.messages) {
+                            try {
+                                const responseMsg = { role: 'assistant', content: accumulatedBlocks };
+                                const fullMessages = [...(parsed.messages as Array<Record<string, unknown>>), responseMsg];
+                                const tc = extractThinkingBlocks(fullMessages as ThinkingMessage[]);
+                                if (tc) {
+                                    store(tc.sk, tc.firstToolUseId, tc.blocks, undefined, tc.fp);
+                                }
+                            } catch (e) {
+                                log.error(reqId, 'streaming thinking extraction error: ' + truncateForLog((e as Error).message));
+                            }
+                        }
                     });
                     sourceStream.once('error', cancelStreamTimeouts);
                     sourceStream.once('close', () => {
+                        cancelStreamTimeouts();
                         if (streamEndedNormally) {
                             log.info(reqId, 'Stream completed normally, total bytes received: ' + streamBytes);
                         }
@@ -386,6 +438,23 @@ export function tryForward(
                     }
                     // Extract token usage from raw upstream SSE data.
                     let rawUsageBuf = '';
+                    // For Anthropic-format providers: accumulate response content blocks
+                    // from SSE events so we can extract & cache thinking blocks for
+                    // multi-turn tool conversations. The non-streaming path does this in
+                    // one shot below; the streaming path must reconstruct the blocks.
+                    const accumulatedBlocks: MessageBlock[] = [];
+                    let blockAccumulator: Record<string, unknown> | null = null;
+                    function pushAccumulatedBlock(): void {
+                        if (!blockAccumulator) return;
+                        const block = blockAccumulator as any;
+                        // Parse accumulated input JSON for tool_use blocks
+                        if (block.type === 'tool_use' && block._partialInput) {
+                            try { block.input = JSON.parse(block._partialInput); } catch (_) { /* best-effort */ }
+                            delete block._partialInput;
+                        }
+                        accumulatedBlocks.push(block as MessageBlock);
+                        blockAccumulator = null;
+                    }
                     sourceStream.on('data', (chunk: Buffer | string) => {
                         if (timings) {
                             recordFirstToken(timings);
@@ -393,6 +462,7 @@ export function tryForward(
                         }
                         rawUsageBuf += typeof chunk === 'string' ? chunk : chunk.toString();
                         if (rawUsageBuf.length > MAX_SSE_BUFFER) {
+                            log.warn(reqId, 'usage buffer exceeded 1MB — discarding accumulated SSE data to prevent unbounded memory growth (possible upstream stream missing SSE delimiters)');
                             // Malformed upstream stream (missing SSE delimiters) — discard
                             // usage buffer to prevent unbounded memory growth, same guard
                             // as the outStream SSE buffer below, but preserve trailing partial event.
@@ -426,6 +496,47 @@ export function tryForward(
                                     }
                                 }
                             } catch (_) { /* non-fatal */ }
+
+                            // --- Accumulate content blocks for thinking cache ---
+                            // For Anthropic-format providers, reconstruct the response
+                            // content blocks from SSE events so thinking blocks can be
+                            // extracted and cached for multi-turn tool conversations.
+                            // This mirrors what the non-streaming path does with the
+                            // already-parsed response body.
+                            if (!isOpenAI && parsed && parsed.messages) {
+                                try {
+                                    if (parsedPayload.type === 'content_block_start' && parsedPayload.content_block) {
+                                        pushAccumulatedBlock();
+                                        const cb = parsedPayload.content_block as Record<string, unknown>;
+                                        blockAccumulator = { type: cb.type };
+                                        if (cb.type === 'thinking') {
+                                            blockAccumulator.thinking = (cb.thinking as string) || '';
+                                            blockAccumulator.signature = (cb.signature as string) || '';
+                                        } else if (cb.type === 'text') {
+                                            blockAccumulator.text = (cb.text as string) || '';
+                                        } else if (cb.type === 'tool_use') {
+                                            blockAccumulator.id = cb.id;
+                                            blockAccumulator.name = cb.name;
+                                            blockAccumulator.input = cb.input || {};
+                                        } else {
+                                            // Unknown block type — keep minimal tracking
+                                        }
+                                    } else if (parsedPayload.type === 'content_block_delta' && parsedPayload.delta && blockAccumulator) {
+                                        const delta = parsedPayload.delta as Record<string, unknown>;
+                                        if (delta.type === 'thinking_delta' && typeof delta.thinking === 'string') {
+                                            blockAccumulator.thinking = ((blockAccumulator.thinking as string) || '') + delta.thinking;
+                                        } else if (delta.type === 'signature_delta' && typeof delta.signature === 'string') {
+                                            blockAccumulator.signature = delta.signature;
+                                        } else if (delta.type === 'text_delta' && typeof delta.text === 'string') {
+                                            blockAccumulator.text = ((blockAccumulator.text as string) || '') + delta.text;
+                                        } else if (delta.type === 'input_json_delta' && typeof delta.partial_json === 'string') {
+                                            (blockAccumulator as any)._partialInput = ((blockAccumulator as any)._partialInput || '') + delta.partial_json;
+                                        }
+                                    } else if (parsedPayload.type === 'content_block_stop') {
+                                        pushAccumulatedBlock();
+                                    }
+                                } catch (_) { /* non-fatal */ }
+                            }
                         }
                     }
                     );
@@ -440,14 +551,14 @@ export function tryForward(
                             if (evt.length > MAX_SSE_BUFFER) {
                                 log.error(reqId, 'SSE event exceeded 1MB limit -- aborting stream');
                                 const s = outStream as NodeJS.ReadableStream & { destroy(err?: Error): void };
-                                process.nextTick(() => s.destroy(new Error('SSE event too large')));
+                                s.destroy(new Error('SSE event too large'));
                                 return;
                             }
                         }
                         if (sseBuf.length > MAX_SSE_BUFFER) {
                             log.error(reqId, 'SSE event exceeded 1MB limit -- aborting stream');
                             const s = outStream as NodeJS.ReadableStream & { destroy(err?: Error): void };
-                            process.nextTick(() => s.destroy(new Error('SSE event too large')));
+                            s.destroy(new Error('SSE event too large'));
                             return;
                         }
                     }
@@ -502,7 +613,7 @@ export function tryForward(
                                         reasoning_content: responseMsg.reasoning_content,
                                     }];
                                     const rc = extractReasoningContent(fullMessages as ReasoningMessage[]);
-                                    if (rc) storeReasoning(rc.sk, rc.firstToolCallId, rc.reasoningContent);
+                                    if (rc) storeReasoning(rc.sk, rc.firstToolCallId, rc.reasoningContent, fullMessages.length, rc.fp);
                                 }
                             } catch (_) { /* non-fatal */ }
                             const anthropicResp = translateResponse(openaiResp, model || '');

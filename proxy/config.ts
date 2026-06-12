@@ -35,6 +35,12 @@ interface ProvidersData {
     contextLimits?: Record<string, number>;
     configs?: Record<string, Record<string, string>>;
     pricing?: Record<string, { input: number; output: number }>;
+    thinking?: Record<string, ThinkingConfig>;
+}
+
+interface ThinkingConfig {
+    type: string;
+    budget_tokens: number;
 }
 
 interface ParsedArgs {
@@ -51,6 +57,7 @@ interface ConfigState {
     overridesMtime: number;
     providersFile: string | null;
     providersMtime: number;
+    thinkingConfig: Record<string, ThinkingConfig>;
 }
 // --- Argument parsing ---
 
@@ -165,11 +172,17 @@ function applyProviderMetadata(routing: RoutingConfig, providersData: ProvidersD
         }
     }
 
-    // Remove providers that exist in routing but not in providers.json
-    for (const key of Object.keys(routing.providers)) {
-        if (!providersData.providers[key]) {
-            delete routing.providers[key];
-            changed = true;
+    // Remove providers that exist in routing but not in providers.json.
+    // SAFETY: only prune when the new providers list is non-empty — an empty
+    // providers.json (e.g. during a config-file rotation or atomic replace)
+    // would otherwise wipe ALL provider state and cause a service outage.
+    const newKeys = Object.keys(providersData.providers);
+    if (newKeys.length > 0) {
+        for (const key of Object.keys(routing.providers)) {
+            if (!providersData.providers[key]) {
+                delete routing.providers[key];
+                changed = true;
+            }
         }
     }
 
@@ -204,10 +217,16 @@ export function loadConfig(parsed: ParsedArgs): ConfigState {
     let overridesMtime = 0;
     let providersMtime = 0;
     let slotOverrides: Record<string, string> = {};
+    let thinkingConfig: Record<string, ThinkingConfig> = {};
 
     if (parsed.routesFile) {
-        routing = readJson(parsed.routesFile) as RoutingConfig;
-        routesMtime = fs.statSync(parsed.routesFile).mtimeMs;
+        try {
+            routing = readJson(parsed.routesFile) as RoutingConfig;
+            routesMtime = fs.statSync(parsed.routesFile).mtimeMs;
+        } catch (e) {
+            log.error(null, 'Failed to load routes file: ' + (e as Error).message);
+            process.exit(1);
+        }
     }
     if (parsed.overridesFile) {
         try {
@@ -222,6 +241,7 @@ export function loadConfig(parsed: ParsedArgs): ConfigState {
         try {
             const providersData = readJson(parsed.providersFile) as ProvidersData;
             applyProviderMetadata(routing, providersData);
+            if (providersData.thinking) thinkingConfig = providersData.thinking;
             providersMtime = fs.statSync(parsed.providersFile).mtimeMs;
         } catch (e) {
             log.warn(null, 'Failed to load providers metadata: ' + (e as Error).message);
@@ -231,7 +251,7 @@ export function loadConfig(parsed: ParsedArgs): ConfigState {
     if (routing) {
         validateProviderUrls(routing);
     }
-    return { routing, routesMtime, slotOverrides, overridesMtime, providersFile: parsed.providersFile, providersMtime };
+    return { routing, routesMtime, slotOverrides, overridesMtime, providersFile: parsed.providersFile, providersMtime, thinkingConfig };
 }
 // --- Hot-reload ---
 // Polls route, override, and provider files once per second. If mtimes change, reloads.
@@ -249,7 +269,7 @@ export async function checkReload(state: ConfigState, parsed: ParsedArgs): Promi
     if (state.providersFile) {
         try {
             const stat = fs.statSync(state.providersFile);
-            if (stat.mtimeMs > state.providersMtime) {
+            if (stat.mtimeMs >= state.providersMtime) {
                 const providersData = readJson(state.providersFile) as ProvidersData;
                 if (state.routing) {
                     const metaChanged = applyProviderMetadata(state.routing, providersData);
@@ -264,6 +284,14 @@ export async function checkReload(state: ConfigState, parsed: ParsedArgs): Promi
                         log.info(null, 'hot-reloaded providers.json');
                     }
                 }
+                // Reload thinking config regardless of provider metadata changes
+                if (providersData.thinking) {
+                    const newThinking = JSON.stringify(providersData.thinking);
+                    if (JSON.stringify(state.thinkingConfig) !== newThinking) {
+                        state.thinkingConfig = providersData.thinking;
+                        changed = true;
+                    }
+                }
                 state.providersMtime = stat.mtimeMs;
             }
         } catch (e) {
@@ -274,7 +302,7 @@ export async function checkReload(state: ConfigState, parsed: ParsedArgs): Promi
     if (parsed.routesFile) {
         try {
             const stat = fs.statSync(parsed.routesFile);
-            if (stat.mtimeMs > state.routesMtime) {
+            if (stat.mtimeMs >= state.routesMtime) {
                 state.routing = readJson(parsed.routesFile) as RoutingConfig;
                 state.routesMtime = stat.mtimeMs;
                 changed = true;
@@ -309,7 +337,7 @@ export async function checkReload(state: ConfigState, parsed: ParsedArgs): Promi
     if (parsed.overridesFile) {
         try {
             const stat = fs.statSync(parsed.overridesFile);
-            if (stat.mtimeMs > state.overridesMtime) {
+            if (stat.mtimeMs >= state.overridesMtime) {
                 state.slotOverrides = readJson(parsed.overridesFile) as Record<string, string>;
                 state.overridesMtime = stat.mtimeMs;
                 changed = true;
@@ -372,6 +400,9 @@ export function validateConfig(state: ConfigState): string[] {
 
 export async function resolveKey(rawKey: string | null | undefined): Promise<string | null> {
     if (!rawKey) return null;
+    // Guard against the literal string "null" (e.g. from JSON config) — treat
+    // it as a missing key rather than sending "Bearer null" to upstream.
+    if (rawKey === 'null') return null;
     if (typeof rawKey !== 'string' || !rawKey.startsWith('$aes256gcm:')) {
         return rawKey;
     }

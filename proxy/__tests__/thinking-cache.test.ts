@@ -124,7 +124,7 @@ describe('extractThinkingBlocks', () => {
         expect(extractThinkingBlocks(undefined as unknown as Message[])).toBeNull();
     });
 
-    test('scans all messages — picks the first with thinking + tool_use', () => {
+    test('scans all messages — picks the last with thinking + tool_use (backward scan)', () => {
         const messages: Message[] = [
             makeUserMsg('hello'),
             makeAssistantMsg([
@@ -138,7 +138,7 @@ describe('extractThinkingBlocks', () => {
         ];
         const result = extractThinkingBlocks(messages);
         expect(result).not.toBeNull();
-        expect(result!.firstToolUseId).toBe('toolu_first');
+        expect(result!.firstToolUseId).toBe('toolu_second');
     });
 
     test('skips assistant messages without tool_use blocks', () => {

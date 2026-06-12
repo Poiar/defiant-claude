@@ -173,7 +173,6 @@
     "v4-pro": "deepseek-v4-pro",
     "v4-flash": "deepseek-v4-flash",
     "flash": "deepseek-v4-flash",
-    "big-pickle": "big-pickle",
     "kimi": "kimi-k2.6",
     "mimo": "mimo-v2.5-pro",
     "groq": "groq/llama-4-maverick",
@@ -206,6 +205,11 @@
     "byteplus/doubao-1.5-pro": 131072,
     "siliconflow/deepseek-v4-pro": 1048576,
     "novita/deepseek-v4-pro": 1048576
+  },
+  "thinking": {
+    "_comment": "Per-model thinking/reasoning mode configuration. When set, the proxy injects the thinking parameter into upstream requests for models that support it (DeepSeek V4 via /anthropic endpoint, etc.). type: 'enabled' enables extended thinking. budget_tokens: how many tokens the model can spend on internal reasoning (higher = deeper reasoning but slower/$$$).",
+    "deepseek-v4-pro": { "type": "enabled", "budget_tokens": 32000 },
+    "deepseek-v4-flash": { "type": "enabled", "budget_tokens": 16000 }
   },
   "compactionWindow": {
     "_comment": "Per-model compaction threshold (tokens). Overrides the auto-calculated value from contextLimits. DeepSeek has free disk cache lasting hours — pushing compaction near the wall preserves cache hits (98% of tokens at ~$0.0036/M vs $0.435/M miss). Compact only when genuinely needed.",
