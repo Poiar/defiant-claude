@@ -151,8 +151,8 @@ const MODULE_DESCRIPTIONS: Record<string, string> = {
   'routing.ts': 'Slot-based routing with prefix matching, fallback chain construction, circuit breaker',
   'protocol-translate.ts': "Bidirectional Anthropic Messages ↔ OpenAI Chat Completions format translation (only active for OpenAI-format providers — `ds` bypasses this entirely via DeepSeek's `/anthropic` endpoint)",
   'forward.ts': 'Upstream HTTP forwarding with SSE streaming, gzip decompression, stream heartbeat/deadline timers with byte diagnostics, total-byte cap (500MB), fallback header injection, SSE buffer guarding, usage token extraction, peekFirstChunk with fast-stream race protection',
-  'thinking-cache.ts': 'Anthropic-format thinking block extraction, caching, and injection for multi-turn tool conversations',
-  'reasoning-cache.ts': 'OpenAI-format reasoning content cache with session-keyed LRU and re-injection (only for OpenAI-format providers — `ds` handles this natively)',
+  'thinking-cache.ts': 'Anthropic-format thinking block extraction, caching, and injection for multi-turn tool conversations — keyed on sessionKey:toolUseId (no conversation fingerprint) to avoid cross-turn cache misses with DeepSeek thinking mode',
+  'reasoning-cache.ts': 'OpenAI-format reasoning content cache with session-keyed LRU and re-injection — same UUID-keyed architecture as thinking-cache.ts, no conversation fingerprint (only for OpenAI-format providers; `ds` handles this natively)',
   'transport-errors.ts': 'Network failure classification via ordered signature tuples with cause chain walking',
   'error-codes.ts': 'Structured error codes with template interpolation, dev/production mode, credential scrubbing via data-driven pattern list',
   'concurrency.ts': 'Promise-queue-based semaphore with FIFO ordering and acquire/release pump pattern',
@@ -224,7 +224,7 @@ function genProvidersSchema(): string {
 
 function genTestCoverage(): string {
   const stats = getTestStats();
-  return `${stats.total} tests across ${stats.files} test files covering all proxy modules — transport errors, concurrency, LRU cache, provider registry validation, error codes, routing, stats, forwarding, server tools, config, protocol translation, thinking cache, reasoning cache, header sanitization, truncation, crypto, friendly errors, SSRF validation, dead stream detection, startup checks, and stream metrics. Run with \`npm test\`.`;
+  return `${stats.total} tests across ${stats.files} test files covering all proxy modules — transport errors, concurrency, LRU cache, provider registry validation, error codes, routing, stats, forwarding, server tools, config, protocol translation, thinking cache (including fingerprint-free cross-turn regression tests), reasoning cache, header sanitization, truncation, crypto, friendly errors, SSRF validation, dead stream detection, startup checks, and stream metrics. Run with \`npm test\`.`;
 }
 
 // ─── Named configs usage ──────────────────────

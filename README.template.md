@@ -9,6 +9,8 @@ DeepClaude runs a local HTTP routing proxy that intercepts Claude Code's Anthrop
 
 **Direct DeepSeek (`ds`) uses the `/anthropic` endpoint** — DeepSeek offers an Anthropic-compatible API surface that speaks Claude's protocol natively. The proxy passes messages through unchanged: no format translation, no content flattening, no lossy conversion. Thinking mode (`{type: "enabled", budget_tokens: N}`), structured content blocks, tool use, and streaming all work without transformation. OpenAI-format translation only activates when routing through third-party providers (OpenRouter, Kimi, Mistral, etc.) that don't offer an Anthropic-compatible endpoint.
 
+**Thinking block echo** — When DeepSeek's thinking mode is enabled, every assistant response that contains a tool_use also includes a `thinking` block. DeepSeek requires these thinking blocks to be echoed back verbatim in every subsequent request — if missing, it returns HTTP 400 ("content[].thinking must be passed back to the API"). The proxy's `thinking-cache.ts` handles this automatically: it extracts thinking blocks from responses, caches them keyed by `sessionKey:toolUseId` (the tool_use UUID is globally unique, so no conversation fingerprint is needed), and re-injects them into the next request before forwarding. The same pattern applies to OpenAI-format reasoning content via `reasoning-cache.ts`.
+
 ### Proxy modules (`proxy/`)
 
 <!-- AUTO:modules -->
