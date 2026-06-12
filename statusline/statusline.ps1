@@ -70,18 +70,43 @@ $spendFile = "$env:USERPROFILE\.deepclaude\spend.json"
 if (Test-Path $spendFile) {
   try {
     $spendData = Get-Content $spendFile -Raw | ConvertFrom-Json
-    $sessionSpend = if ($spendData.sessions -and $spendData.sessions[0] -and $spendData.sessions[0].total) {
+    $proxySessionTotal = if ($spendData.sessions -and $spendData.sessions[0] -and $spendData.sessions[0].total) {
       $spendData.sessions[0].total
     } elseif ($spendData.total) { $spendData.total }
     $todayKey = (Get-Date).ToString('yyyy-MM-dd')
     $todaySpend = if ($spendData.daily -and $spendData.daily.$todayKey -and $spendData.daily.$todayKey.total) {
       $spendData.daily.$todayKey.total
     } else { $null }
+
+    # Snapshot proxy total on first tick so each CC session shows its own delta.
+    # Also stores proxy session "started" so we detect proxy restarts (re-snapshot).
+    $ccSessId = $env:CLAUDE_CODE_SESSION_ID
+    if ($ccSessId) {
+      $snapFile = "$env:USERPROFILE\.deepclaude\spend-snap-$ccSessId.json"
+      $snapshot = $null
+      if (Test-Path $snapFile) {
+        try {
+          $s = Get-Content $snapFile -Raw | ConvertFrom-Json
+          $proxyStarted = if ($spendData.sessions[0].started) { $spendData.sessions[0].started } else { '' }
+          # Re-snapshot if proxy restarted (stale start time)
+          if ($s.started -eq $proxyStarted) { $snapshot = $s.total }
+        } catch {}
+      }
+      if ($null -eq $snapshot) {
+        $snapshot = $proxySessionTotal
+        $proxyStarted = if ($spendData.sessions[0].started) { $spendData.sessions[0].started } else { '' }
+        @{ total = $snapshot; started = $proxyStarted } | ConvertTo-Json | Set-Content $snapFile -NoNewline
+      }
+      $sessionSpend = [Math]::Max(0.0, $proxySessionTotal - $snapshot)
+    } else {
+      $sessionSpend = $proxySessionTotal
+    }
+
     if ($sessionSpend -and $sessionSpend -gt 0) {
       $inv = [System.Globalization.CultureInfo]::InvariantCulture
       $parts = @()
       $parts += "$bold$(fg 255 210 80)`$$($sessionSpend.ToString('F2', $inv))$reset"
-      if ($todaySpend -and $todaySpend -gt $sessionSpend + 0.001) {
+      if ($todaySpend -and $todaySpend -gt $proxySessionTotal + 0.001) {
         $parts += "$(fg 120 120 120)`$$($todaySpend.ToString('F2', $inv))$reset"
       }
       $spendGroup = $parts -join ' '
