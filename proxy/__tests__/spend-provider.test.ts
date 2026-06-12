@@ -79,8 +79,8 @@ describe('recordProviderSpend', () => {
 
 describe('per-provider spend persistence', () => {
   test('daily spend breakdown with byProvider is persisted and readable', () => {
-    const today = new Date().toISOString().slice(0, 10);
-    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    const today = new Date().toLocaleDateString('da-DK');
+    const yesterday = new Date(Date.now() - 86400000).toLocaleDateString('da-DK');
 
     // Write file with per-provider breakdown (new format)
     const dailyData: Record<string, { total: number; byProvider: Record<string, number> }> = {};
@@ -105,7 +105,7 @@ describe('per-provider spend persistence', () => {
   });
 
   test('multiple providers tracked independently in same day', () => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = new Date().toLocaleDateString('da-DK');
     const dailyData: Record<string, { total: number; byProvider: Record<string, number> }> = {};
     dailyData[today] = { total: 6.00, byProvider: { ds: 1.00, or: 2.00, km: 3.00 } };
 
@@ -127,7 +127,7 @@ describe('per-provider spend persistence', () => {
 
 describe('getFullHealthSnapshot includes provider spend data', () => {
   test('dailySpend and monthlyBudget in provider entries', () => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = new Date().toLocaleDateString('da-DK');
 
     // Write spend file with per-provider spend for 'or' provider
     const dailyData: Record<string, { total: number; byProvider: Record<string, number> }> = {};
@@ -177,7 +177,7 @@ describe('getFullHealthSnapshot includes provider spend data', () => {
     for (let i = 0; i < 5; i++) {
       const d = new Date(today);
       d.setDate(d.getDate() - i);
-      const ds = d.toISOString().slice(0, 10);
+      const ds = d.toLocaleDateString('da-DK');
       dailyData[ds] = { total: 0.20, byProvider: { or: 0.20 } };
     }
 
@@ -210,7 +210,7 @@ describe('getFullHealthSnapshot includes provider spend data', () => {
   test('no avgDailySpend7d when no spend history exists', () => {
     recordStat('ds', true, 100);
 
-    const today = new Date().toISOString().slice(0, 10);
+    const today = new Date().toLocaleDateString('da-DK');
     const dailyData: Record<string, { total: number; byProvider: Record<string, number> }> = {};
     dailyData[today] = { total: 0.10, byProvider: { ds: 0.10 } };
 
@@ -239,7 +239,7 @@ describe('quota percentage and days-remaining', () => {
     for (let i = 0; i < 5; i++) {
       const d = new Date(today);
       d.setDate(d.getDate() - i);
-      const ds = d.toISOString().slice(0, 10);
+      const ds = d.toLocaleDateString('da-DK');
       dailyData[ds] = { total: 0.20, byProvider: { or: 0.20 } };
     }
 
@@ -272,7 +272,7 @@ describe('quota percentage and days-remaining', () => {
 
 describe('legacy format backward compatibility', () => {
   test('spend.json with old number format is read correctly', () => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = new Date().toLocaleDateString('da-DK');
 
     // Write file with legacy number format for daily entry
     const legacyDaily: Record<string, number> = {};

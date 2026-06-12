@@ -53,7 +53,7 @@ describe('checkBudget', () => {
   });
 
   test('daily budget from env var is applied correctly', () => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = new Date().toLocaleDateString('da-DK');
     setDailyBudget(5.00);
     // Write spend.json with daily spend of 3.00 (under budget)
     fs.writeFileSync(tmpFile, JSON.stringify({ daily: { [today]: 3.00 } }));
@@ -69,21 +69,21 @@ describe('checkBudget', () => {
   });
 
   test('returns null when daily budget not exceeded', () => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = new Date().toLocaleDateString('da-DK');
     setDailyBudget(5.00);
     fs.writeFileSync(tmpFile, JSON.stringify({ daily: { [today]: 3.00 } }));
     expect(checkBudget()).toBeNull();
   });
 
   test('returns reason string when daily budget exceeded', () => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = new Date().toLocaleDateString('da-DK');
     setDailyBudget(5.00);
     fs.writeFileSync(tmpFile, JSON.stringify({ daily: { [today]: 5.50 } }));
     expect(checkBudget()).not.toBeNull();
   });
 
   test('both caps set, session cap hit first', () => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = new Date().toLocaleDateString('da-DK');
     setSessionCap(0.50);
     setDailyBudget(5.00);
     _setSessionTotal(0.75);
@@ -110,7 +110,7 @@ describe('getDailySpend', () => {
   });
 
   test('returns correct amount for today', () => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = new Date().toLocaleDateString('da-DK');
     fs.writeFileSync(tmpFile, JSON.stringify({ daily: { [today]: 4.20 } }));
     expect(getDailySpend()).toBe(4.20);
   });
@@ -128,7 +128,7 @@ describe('budget messages', () => {
     // Daily budget message includes amounts
     _resetBudgetState();
     setSpendFilePath(tmpFile);
-    const today = new Date().toISOString().slice(0, 10);
+    const today = new Date().toLocaleDateString('da-DK');
     setDailyBudget(1.00);
     fs.writeFileSync(tmpFile, JSON.stringify({ daily: { [today]: 1.50 } }));
     const dailyReason = checkBudget();
