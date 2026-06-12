@@ -47,6 +47,7 @@ interface ParsedArgs {
     routesFile: string | null;
     overridesFile: string | null;
     providersFile: string | null;
+    thinkingOverridesFile: string | null;
     singleUrl: string | null;
     singleKey: string | null;
 }
@@ -57,6 +58,8 @@ interface ConfigState {
     overridesMtime: number;
     providersFile: string | null;
     providersMtime: number;
+    thinkingOverridesFile: string | null;
+    thinkingOverridesMtime: number;
     thinkingConfig: Record<string, ThinkingConfig>;
 }
 // --- Argument parsing ---
@@ -66,6 +69,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     let routesFile: string | null = null;
     let overridesFile: string | null = null;
     let providersFile: string | null = null;
+    let thinkingOverridesFile: string | null = null;
     let singleUrl: string | null = null;
     let singleKey: string | null = null;
 
@@ -75,16 +79,17 @@ export function parseArgs(argv: string[]): ParsedArgs {
         for (let i = 2; i < args.length - 1; i += 2) {
             if (args[i] === '--overrides') overridesFile = args[i + 1];
             if (args[i] === '--providers') providersFile = args[i + 1];
+            if (args[i] === '--thinking-overrides') thinkingOverridesFile = args[i + 1];
         }
     } else if (args.length >= 2) {
         singleUrl = args[0];
         singleKey = args[1];
     } else {
         console.error('Usage: npx tsx start-proxy.ts <provider_url> <api_key>');
-        console.error('       npx tsx start-proxy.ts --routes <routes.json> [--overrides <overrides.json>] [--providers <providers.json>]');
+        console.error('       npx tsx start-proxy.ts --routes <routes.json> [--overrides <overrides.json>] [--providers <providers.json>] [--thinking-overrides <thinking-overrides.json>]');
         process.exit(1);
     }
-    return { routesFile, overridesFile, providersFile, singleUrl, singleKey };
+    return { routesFile, overridesFile, providersFile, thinkingOverridesFile, singleUrl, singleKey };
 }
 // --- JSON file helpers ---
 
@@ -189,6 +194,52 @@ function applyProviderMetadata(routing: RoutingConfig, providersData: ProvidersD
     return changed;
 }
 
+// --- Thinking overrides ---
+// Loads thinking-overrides.json and applies it on top of the base
+// thinking config from providers.json. An override value of null
+// disables thinking for that model. Non-null values merge (budget_tokens
+// overrides, type preserved from base).
+
+interface ThinkingOverride {
+    type?: string;
+    budget_tokens?: number;
+}
+
+export function applyThinkingOverrides(
+    baseConfig: Record<string, ThinkingConfig>,
+    overridesFile: string | null
+): Record<string, ThinkingConfig> {
+    if (!overridesFile) return baseConfig;
+    let overrides: Record<string, ThinkingOverride | null> = {};
+    try {
+        const raw = fs.readFileSync(overridesFile, 'utf-8');
+        overrides = JSON.parse(raw);
+    } catch (_) {
+        return baseConfig;
+    }
+
+    const result = { ...baseConfig };
+    for (const [modelId, override] of Object.entries(overrides)) {
+        if (override === null) {
+            // null override = disable thinking for this model
+            delete result[modelId];
+        } else if (typeof override === 'object') {
+            result[modelId] = {
+                type: override.type || baseConfig[modelId]?.type || 'enabled',
+                budget_tokens: override.budget_tokens ?? baseConfig[modelId]?.budget_tokens ?? 16000,
+            };
+        }
+    }
+    return result;
+}
+
+export function getEffectiveThinkingConfig(
+    baseConfig: Record<string, ThinkingConfig>,
+    overridesFile: string | null
+): Record<string, ThinkingConfig> {
+    return applyThinkingOverrides(baseConfig, overridesFile);
+}
+
 // --- Load all provider info into the stats module ---
 // Called after a providers/routes change so auto-probe and circuit breaker
 // recovery use the current metadata.
@@ -218,6 +269,7 @@ export function loadConfig(parsed: ParsedArgs): ConfigState {
     let providersMtime = 0;
     let slotOverrides: Record<string, string> = {};
     let thinkingConfig: Record<string, ThinkingConfig> = {};
+    let thinkingOverridesMtime = 0;
 
     if (parsed.routesFile) {
         try {
@@ -251,7 +303,7 @@ export function loadConfig(parsed: ParsedArgs): ConfigState {
     if (routing) {
         validateProviderUrls(routing);
     }
-    return { routing, routesMtime, slotOverrides, overridesMtime, providersFile: parsed.providersFile, providersMtime, thinkingConfig };
+    return { routing, routesMtime, slotOverrides, overridesMtime, providersFile: parsed.providersFile, providersMtime, thinkingOverridesFile: parsed.thinkingOverridesFile, thinkingOverridesMtime, thinkingConfig };
 }
 // --- Hot-reload ---
 // Polls route, override, and provider files once per second. If mtimes change, reloads.
@@ -297,6 +349,17 @@ export async function checkReload(state: ConfigState, parsed: ParsedArgs): Promi
         } catch (e) {
             log.warn(null, 'Failed to reload providers: ' + (e as Error).message);
         }
+    }
+
+    // Reload thinking overrides if the file changed
+    if (state.thinkingOverridesFile) {
+        try {
+            const stat = fs.statSync(state.thinkingOverridesFile);
+            if (stat.mtimeMs >= state.thinkingOverridesMtime) {
+                state.thinkingOverridesMtime = stat.mtimeMs;
+                changed = true;
+            }
+        } catch (_) { /* file may not exist yet or was deleted */ }
     }
 
     if (parsed.routesFile) {

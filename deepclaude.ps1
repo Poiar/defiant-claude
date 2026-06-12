@@ -49,6 +49,8 @@
     deepclaude --lint-config         # Validate providers.json configuration
     deepclaude --log-all            # Log all requests (failures always logged)
     deepclaude --skip-startup-check # Skip the provider health check on proxy startup
+    deepclaude --no-thinking        # Disable extended thinking for all models
+    deepclaude --thinking-budget 64000  # Set thinking budget to 64K tokens
     deepclaude --subagent-model oc:big-pickle  # Set a dedicated subagent model
     deepclaude --subagent-model     # Clear the dedicated subagent model
     deepclaude --fix-av             # Print AV exclusion commands
@@ -87,6 +89,8 @@ param(
     [switch]$SkipStartupCheck,
     [switch]$Logs,
     [switch]$Health,
+    [switch]$NoThinking,
+    [int]$ThinkingBudget = 0,
     [Parameter(ValueFromRemainingArguments)]
     [string[]]$ModelSpecs
 )
@@ -167,6 +171,15 @@ if ($Backend -match '^--(.+)$') {
     elseif ($flag -eq 'skip-startup-check') { $SkipStartupCheck = $true }
     elseif ($flag -eq 'logs' -or $flag -eq 'tail') { $Logs = $true }
     elseif ($flag -eq 'health')          { $Health = $true }
+    elseif ($flag -eq 'no-thinking')     { $NoThinking = $true }
+    elseif ($flag -eq 'thinking-budget' -and $ModelSpecs -and $ModelSpecs.Count -gt 0) {
+        $ThinkingBudget = [int]$ModelSpecs[0]
+        if ($ThinkingBudget -lt 0) {
+            Write-Host "ERROR: --thinking-budget must be >= 0" -ForegroundColor Red
+            exit 1
+        }
+        $ModelSpecs = if ($ModelSpecs.Count -gt 1) { $ModelSpecs[1..($ModelSpecs.Count-1)] } else { @() }
+    }
     else {
         Write-Host "ERROR: Unknown flag '--$flag'. Use --help for available flags." -ForegroundColor Red
         exit 1
@@ -185,6 +198,7 @@ $DeepClaudeDir = Join-Path $HOME ".deepclaude"
 $ProxyStateFile = Join-Path $DeepClaudeDir "proxy.json"
 $CurrentRoutesFile = Join-Path $DeepClaudeDir "current-routes.json"
 $SlotOverridesFile = Join-Path $DeepClaudeDir "slot-overrides.json"
+$ThinkingOverridesFile = Join-Path $DeepClaudeDir "thinking-overrides.json"
 $SubagentModelFile = Join-Path $DeepClaudeDir "subagent-model.json"
 
 # Ensure state directory exists
@@ -334,6 +348,32 @@ function Clear-AnthropicEnv {
 }
 
 # --- Slot overrides (sentinel key system) ---
+function Write-ThinkingOverrides {
+    # Build thinking overrides JSON from --no-thinking / --thinking-budget flags.
+    # { "<modelId>": null } disables thinking for that model.
+    # { "<modelId>": { "budget_tokens": N } } overrides the budget.
+    if (-not $NoThinking -and $ThinkingBudget -le 0) {
+        # No override requested — remove file so providers.json config is used as-is
+        if (Test-Path $ThinkingOverridesFile) {
+            Remove-Item $ThinkingOverridesFile -Force -ErrorAction SilentlyContinue
+        }
+        return
+    }
+    $overrides = @{}
+    # Apply to all DeepSeek models currently in the thinking config
+    $allModels = @("deepseek-v4-pro", "deepseek-v4-flash")
+    foreach ($m in $allModels) {
+        if ($NoThinking) {
+            $overrides[$m] = $null  # null = disable thinking
+            Write-Host "  Thinking: DISABLED for $m" -ForegroundColor Yellow
+        } elseif ($ThinkingBudget -gt 0) {
+            $overrides[$m] = @{ budget_tokens = $ThinkingBudget }
+            Write-Host "  Thinking: $ThinkingBudget token budget for $m" -ForegroundColor Cyan
+        }
+    }
+    $overrides | ConvertTo-Json -Depth 3 | Set-Content -Path $ThinkingOverridesFile -NoNewline
+}
+
 function Initialize-SlotOverrides {
     param($resolved)
     $defaults = @{}
@@ -736,7 +776,7 @@ function Start-RoutingProxy {
         throw "Dependencies not installed. Run 'npm install' in '$myDir' first."
     }
     $proc = Start-Process -FilePath $tsxBin `
-        -ArgumentList ($proxyScript, '--routes', $RoutesFile, '--overrides', $SlotOverridesFile, '--providers', (Join-Path $myDir 'proxy\providers.json')) `
+        -ArgumentList ($proxyScript, '--routes', $RoutesFile, '--overrides', $SlotOverridesFile, '--providers', (Join-Path $myDir 'proxy\providers.json'), '--thinking-overrides', $ThinkingOverridesFile) `
         -NoNewWindow `
         -RedirectStandardOutput $outFile `
         -RedirectStandardError $errFile `
@@ -1088,6 +1128,8 @@ if ($Help) {
     Write-Host "  --lint-config   Validate providers.json configuration"
     Write-Host "  --log-all       Log all requests to ~/.deepclaude/requests.log"
     Write-Host "  --skip-startup-check  Skip the provider health check on proxy startup"
+    Write-Host "  --no-thinking    Disable extended thinking for all models (save cost)"
+    Write-Host "  --thinking-budget N   Set thinking budget in tokens (e.g. 64000)"
     Write-Host "  --logs, --tail   Tail the proxy log (~/.deepclaude/proxy.log)"
     Write-Host "  --health         Quick health check (one-line summary)"
     Write-Host "  --subagent-model MODEL  Set a dedicated subagent model (e.g., oc:big-pickle)"
@@ -1738,6 +1780,7 @@ if ($Switch -or $PSBoundParameters.ContainsKey('Switch')) {
     if (-not $proxyState) {
         Write-Host "`n  Starting persistent proxy for $($switchResolved.name)..." -ForegroundColor Cyan
         Show-ProxyWarning
+        Write-ThinkingOverrides
         $proxyInfo = Start-RoutingProxy -RoutesFile $routesFile -Persist
         Save-ProxyState -ProcessId $proxyInfo.Process.Id -Port $proxyInfo.Port -RoutesFile $routesFile
         Write-Host "  Proxy on port $($proxyInfo.Port)" -ForegroundColor Green
@@ -1911,9 +1954,12 @@ if ($proxyState) {
     $proxyPort = $proxyState.port
     $proxyInfo = @{ Port = $proxyPort; Process = $null; Persist = $true }
     Write-Host "  Reusing persistent proxy on :$proxyPort" -ForegroundColor DarkGray
+    # Apply thinking overrides to running proxy (hot-reload picks up the file)
+    Write-ThinkingOverrides
 } else {
     # Start new proxy (persistent if --persist flag set)
     Show-ProxyWarning
+    Write-ThinkingOverrides
     $proxyInfo = Start-RoutingProxy -RoutesFile $CurrentRoutesFile -Persist:$Persist
     if ($Persist) {
         Save-ProxyState -ProcessId $proxyInfo.Process.Id -Port $proxyInfo.Port -RoutesFile $CurrentRoutesFile
