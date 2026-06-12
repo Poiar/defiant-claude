@@ -165,6 +165,13 @@ if ($tokens -and $maxTokens -and $maxTokens -gt 0) {
 }
 $ctxStr = if ($tokStr -and $null -ne $pct) { "$tokStr/$pct%" } elseif ($null -ne $pct) { "$pct%" } elseif ($tokStr) { $tokStr } else { '' }
 
+# DeepSeek V4 Pro context-window milestone tags
+$milestone = ''
+if ($modelLookup -eq 'deepseek-v4-pro' -and $tokens) {
+  if ($tokens -ge 400000) { $milestone = " $bold$(fg 255 130 50)FBR$reset" }
+  elseif ($tokens -ge 300000) { $milestone = " $(fg 140 180 220)SR$reset" }
+}
+
 $effortColor = if ($effort -eq 'high') { fg 255 80 80 } elseif ($effort -eq 'medium') { fg 255 180 50 } else { fg 100 160 255 }
 $ctxColor    = if ($null -ne $pct -and $pct -ge 80) { fg 255 80 80 } elseif ($null -ne $pct -and $pct -ge 50) { fg 255 180 50 } else { fg 80 200 120 }
 
@@ -187,6 +194,7 @@ if ($cbIndicator) {
 $modelGroup = $modelParts -join $narrow
 
 $ctxGroup = if ($ctxStr) { "$bold$ctxColor$ctxStr$reset" } else { '' }
+if ($milestone) { $ctxGroup += $milestone }
 
 $output = @($locationGroup, $modelGroup, $ctxGroup, $spendGroup | Where-Object { $_ }) -join $wide
 # Strip any bare hex UUID/tab IDs (6+ lowercase hex chars) that leaked through
