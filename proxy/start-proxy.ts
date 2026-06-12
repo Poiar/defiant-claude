@@ -16,7 +16,7 @@ import { bodyHash, shouldUseCanary, recordCanaryResult, getOrCreateEntry, type C
 import { tryForward, addFallbackHeaders, sseHeaders, type ForwardResult } from './forward';
 import { sendProbe } from './probe';
 import type { ProbeSlot } from './probe';
-import { convertServerTools, populateToolResults, extractSearchQuery, webSearch } from './server-tools';
+import { convertServerTools, populateToolResults } from './server-tools';
 import { isProviderHealthy, recordSpend, recordStat, recordUsage, recordRecentRequest, recordStreamMetrics, getFullHealthSnapshot, buildPrometheusMetrics, nextRequestId, checkBudget, setSessionCap, setDailyBudget, registerProviderInfo, maybeStartProbe, recordProbeResult, getRegisteredProviderKeys, getProviderInfo, setGitHash, recordFallback } from './stats';
 import { serveDashboard } from './dashboard';
 import { formatError, formatExhaustedError, scrubCredentials, isStreamingClient } from './error-codes';
@@ -785,42 +785,21 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
 
                     // Pre-processing step: intercept web search requests.
                 // Extract the search query from CC's "Perform a web search"
-                // Pre-execute: extract search query, run DDG Lite, inject results
-                // into the user message, then forward to DeepSeek for summarization.
-                // The "Did N searches" counter is cosmetic — results are delivered.
+                // Populate empty tool results before forwarding (server-side execution).
+                // Web search uses normal tool_use → tool_result flow:
+                // 1. DeepSeek sees web_search tool, optionally calls it
+                // 2. If called, CC sends tool_result with empty content
+                // 3. populateToolResults fills it with DDG Lite results
+                // 4. DeepSeek summarizes on next turn
+                // The "Did N searches" counter works because CC counts
+                // tool_use blocks in the response content.
                 if (parsedBody.messages) {
                     try {
                         const messages = parsedBody.messages as Array<Record<string, unknown>>;
-                        const searchQuery = extractSearchQuery(messages as any[]);
-                        if (searchQuery) {
-                            log.info(reqId, 'web search: ' + truncateForLog(searchQuery));
-                            const searchResults = await webSearch(searchQuery);
-                            for (let i = messages.length - 1; i >= 0; i--) {
-                                const msg = messages[i];
-                                if (msg.role !== 'user') continue;
-                                const content = msg.content;
-                                if (typeof content === 'string') {
-                                    msg.content = 'Search results for "' + searchQuery + '":\n\n' + searchResults + '\n\nSummarize these results.';
-                                } else if (Array.isArray(content)) {
-                                    (msg as Record<string, unknown>).content = [{
-                                        type: 'text',
-                                        text: 'Search results for "' + searchQuery + '":\n\n' + searchResults + '\n\nSummarize these results.',
-                                    }];
-                                }
-                                modified = true;
-                                break;
-                            }
-                            // Remove web_search tools — search already executed
-                            if (parsedBody.tools && Array.isArray(parsedBody.tools)) {
-                                type ToolItem = Record<string, unknown>;
-                                parsedBody.tools = (parsedBody.tools as ToolItem[]).filter(
-                                    t => !(t && (t.name === 'web_search' || t.name === 'web_fetch' || (typeof t.type === 'string' && t.type.startsWith('web_search_'))))
-                                );
-                                if ((parsedBody.tools as ToolItem[]).length === 0) delete parsedBody.tools;
-                            }
-                        }
+                        const populated = await populateToolResults(messages as any[]);
+                        if (populated) modified = true;
                     } catch (e) {
-                        log.error(reqId, 'web search error: ' + truncateForLog((e as Error).message));
+                        log.error(reqId, 'populate error: ' + truncateForLog((e as Error).message));
                     }
                 }
 
