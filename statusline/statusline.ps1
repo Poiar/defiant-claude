@@ -70,34 +70,37 @@ $spendFile = "$env:USERPROFILE\.deepclaude\spend.json"
 if (Test-Path $spendFile) {
   try {
     $spendData = Get-Content $spendFile -Raw | ConvertFrom-Json
-    $proxySessionTotal = if ($spendData.sessions -and $spendData.sessions[0] -and $spendData.sessions[0].total) {
-      $spendData.sessions[0].total
-    } elseif ($spendData.total) { $spendData.total }
     $todayKey = (Get-Date).ToString('yyyy-MM-dd')
     $todaySpend = if ($spendData.daily -and $spendData.daily.$todayKey -and $spendData.daily.$todayKey.total) {
       $spendData.daily.$todayKey.total
     } else { $null }
+    $proxySessionTotal = if ($spendData.sessions -and $spendData.sessions[0] -and $spendData.sessions[0].total) {
+      $spendData.sessions[0].total
+    } elseif ($spendData.total) { $spendData.total }
 
-    # Snapshot proxy total on first tick so each CC session shows its own delta.
-    # Also stores proxy session "started" so we detect proxy restarts (re-snapshot).
+    # Heartbeat: tell the proxy which CC session is currently active.
+    # The proxy reads this at spend-flush time and attributes pending cost.
     $ccSessId = $env:CLAUDE_CODE_SESSION_ID
     if ($ccSessId) {
-      $snapFile = "$env:USERPROFILE\.deepclaude\spend-snap-$ccSessId.json"
-      $snapshot = $null
-      if (Test-Path $snapFile) {
+      $ccActiveFile = "$env:USERPROFILE\.deepclaude\cc-active.json"
+      try {
+        @{ sessionId = $ccSessId; timestamp = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() } | ConvertTo-Json -Compress | Set-Content $ccActiveFile -NoNewline
+      } catch {}
+    }
+
+    # Read per-CC-session spend from the proxy — no snapshot math needed.
+    # Each CC window gets only the spend the proxy attributed to its session.
+    $sessionSpend = 0
+    if ($ccSessId) {
+      $ccSpendFile = "$env:USERPROFILE\.deepclaude\cc-spend.json"
+      if (Test-Path $ccSpendFile) {
         try {
-          $s = Get-Content $snapFile -Raw | ConvertFrom-Json
-          $proxyStarted = if ($spendData.sessions[0].started) { $spendData.sessions[0].started } else { '' }
-          # Re-snapshot if proxy restarted (stale start time)
-          if ($s.started -eq $proxyStarted) { $snapshot = $s.total }
+          $ccData = Get-Content $ccSpendFile -Raw | ConvertFrom-Json
+          if ($ccData.sessions -and $ccData.sessions.$ccSessId) {
+            $sessionSpend = [double]$ccData.sessions.$ccSessId
+          }
         } catch {}
       }
-      if ($null -eq $snapshot) {
-        $snapshot = $proxySessionTotal
-        $proxyStarted = if ($spendData.sessions[0].started) { $spendData.sessions[0].started } else { '' }
-        @{ total = $snapshot; started = $proxyStarted } | ConvertTo-Json | Set-Content $snapFile -NoNewline
-      }
-      $sessionSpend = [Math]::Max(0.0, $proxySessionTotal - $snapshot)
     } else {
       $sessionSpend = $proxySessionTotal
     }
