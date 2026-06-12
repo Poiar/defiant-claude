@@ -71,20 +71,25 @@ function getVersion(): string {
 function getTestStats(): { files: number; total: number } {
   const files = fs.readdirSync(path.join(PROXY_DIR, '__tests__'))
     .filter(f => f.endsWith('.test.ts')).length;
+
+  // Use cached count when available — avoids ~4s Jest run.
+  // Set DEEPCLAUDE_TEST_COUNT=<N> or DEEPCLAUDE_RUN_TESTS=1 to force live run.
+  if (process.env.DEEPCLAUDE_TEST_COUNT && !process.env.DEEPCLAUDE_RUN_TESTS) {
+    return { files, total: parseInt(process.env.DEEPCLAUDE_TEST_COUNT) };
+  }
+
   try {
     const jestBin = path.join(ROOT, 'node_modules', '.bin', 'jest');
     const out = execSync(`"${jestBin}" --no-coverage --forceExit 2>&1`, {
       cwd: ROOT, encoding: 'utf-8', timeout: 30000,
       windowsHide: true,
     });
-    const m = out.match(/Tests:\s+\d+ failed, \d+ passed, (\d+) total/);
+    const m = out.match(/Tests:\s+\d+ passed, (\d+) total/);
     const total = m ? parseInt(m[1]) : 0;
     return { files, total };
   } catch (e: any) {
-    // Jest may exit non-zero on test failures but still print totals.
-    // Try to parse from stderr/stdout combined.
     const out = (e.stdout || '') + (e.stderr || '');
-    const m = out.match(/Tests:\s+\d+ failed, \d+ passed, (\d+) total/);
+    const m = out.match(/Tests:\s+\d+ passed, (\d+) total/);
     const total = m ? parseInt(m[1]) : 0;
     return { files, total };
   }
@@ -175,10 +180,11 @@ const MODULE_DESCRIPTIONS: Record<string, string> = {
   'dashboard.ts': 'Health dashboard HTML page with live SSE metrics stream',
   'config-lint.ts': '`providers.json` structural validation (used by `--lint-config`)',
   'dry-run.ts': 'Resolved routing table display without starting the proxy (used by `--dry-run`)',
+  'launcher.mjs': 'Unified Node.js engine shared by deepclaude.ps1 and deepclaude.sh — config resolution, routes JSON, env vars with [1m] suffix and compaction window, slot/thinking overrides, proxy state, pricing/model/key data. Zero npm deps, single source of truth.',
 };
 
 function genModuleTable(): string {
-  const files = fs.readdirSync(PROXY_DIR).filter(f => f.endsWith('.ts')).sort();
+  const files = fs.readdirSync(PROXY_DIR).filter(f => f.endsWith('.ts') || f.endsWith('.mjs')).sort();
   const lines: string[] = [];
   lines.push('| Module | Purpose |');
   lines.push('|---|---|');
@@ -258,12 +264,17 @@ function genProviderTable(): string {
 
 function genConfigsReference(): string {
   const configs = providersData.configs || {};
-  const slots = ['opus', 'sonnet', 'haiku', 'sub'] as const;
+  const slotLabels = ['opus', 'sonnet', 'haiku', 'sub', 'fable'] as const;
+  const slotKeys = ['opus', 'sonnet', 'haiku', 'sub', 'fable'] as const;
   const lines: string[] = [];
   for (const [key, cfg] of Object.entries(configs)) {
-    const parts = slots.map(s => `${s}=${(cfg as Record<string,string>)[s] || '-'}`);
+    const cfgRec = cfg as Record<string,string>;
+    const parts = slotKeys.map((s, i) => {
+      const val = cfgRec[s] || (s === 'fable' ? cfgRec['opus'] : '-');
+      return `${i < 4 ? s : 'fable'}=${val}`;
+    });
     const allSame = parts.every(p => p.split('=')[1] === parts[0].split('=')[1]);
-    lines.push(`${key.padEnd(7)} ${parts.join('  ')}${allSame && slots.length === 4 ? '  (all slots same)' : ''}`);
+    lines.push(`${key.padEnd(7)} ${parts.join('  ')}${allSame ? '  (all slots same)' : ''}`);
   }
   return lines.join('\n');
 }
@@ -356,6 +367,7 @@ function genStateFiles(): string {
 
 function genFlags(): string {
   return [
+    '-h, --help      Show this help',
     '--status        Show keys, configs, and active slot mapping',
     '--doctor        System health check (prereqs, keys, proxy test)',
     '--cost          Pricing comparison',
@@ -363,26 +375,28 @@ function genFlags(): string {
     '--models        List all available model IDs (for /model in CC)',
     '--remote        Browser-based remote control (starts proxy automatically)',
     '--persist       Keep proxy alive after CC exits',
-    '--switch CONFIG Switch a running persistent proxy to a different config',
-    '--set-slot SLOT MODEL  Override a slot (opus/sonnet/haiku/subagent)',
+    '--switch CONFIG  Switch a running persistent proxy to a different config',
+    '--set-slot SLOT MODEL  Override a slot (opus/sonnet/haiku/subagent/fable)',
     '--subagent-model MODEL  Set a dedicated subagent model (e.g., oc:big-pickle)',
     '--stop-proxy    Kill the persistent proxy',
     '--probe [FILE]  Test each provider with a minimal prompt (latency, tokens, auth)',
     '--dry-run [FILE] Show resolved routing table without starting the proxy',
+    '--what-if       Alias for --dry-run',
     '--dashboard     Print health dashboard URL (http://127.0.0.1:PORT/dashboard)',
     '--open          Open dashboard in browser (use with --dashboard)',
     '--version       Print version with git hash and proxy path',
     '--lint          Self-lint (PSScriptAnalyzer on .ps1, shellcheck on .sh)',
-    '--effort LEVEL        Set Claude Code effort level (default: max)',
-    '--fix-av              Print Windows Defender exclusion commands',
-    '--install-statusline  Auto-install the statusline script and config',
-    '--log-all             Log all requests to ~/.deepclaude/requests.log (by default only failures are logged)',
-    '--stats               Show proxy request stats and provider health',
-    '--lint-config         Validate providers.json configuration',
+    '--lint-config   Validate providers.json configuration',
+    '--effort LEVEL  Set Claude Code effort level (default: max). Values: low, medium, high, max.',
+    '--fix-av        Print Windows Defender exclusion commands',
+    '--install-statusline  Install status bar showing model, effort, context (requires restart)',
+    '--logs, --tail  Tail the proxy log (~/.deepclaude/proxy.log)',
+    '--health        Quick health check (one-line summary)',
+    '--log-all       Log all requests to ~/.deepclaude/requests.log (by default only failures are logged)',
+    '--stats         Show proxy request stats and provider health',
     '--skip-startup-check  Skip provider health checks on proxy startup',
-    '--no-thinking        Disable extended thinking for all models (save cost)',
+    '--no-thinking   Disable extended thinking for all models (save cost)',
     '--thinking-budget N  Set thinking budget in tokens (e.g. 64000 for deep reasoning)',
-    '--what-if             Alias for --dry-run',
   ].join('\n');
 }
 
@@ -390,13 +404,13 @@ function genFlags(): string {
 
 function genOpenAINote(): string {
   const providers = providersData.providers || {};
-  const openaiNames = Object.entries(providers)
+  const openaiProviders = Object.entries(providers)
     .filter(([, def]) => def.wireFormat === 'openai')
     .map(([key]) => DISPLAY_NAMES[key] || key);
-  const anthropicNames = Object.entries(providers)
+  const directProviders = Object.entries(providers)
     .filter(([, def]) => def.wireFormat === 'anthropic' && def.endpoint?.includes('deepseek.com'))
     .map(([key]) => key);
-  return `Providers with \`format = "openai"\` (${openaiNames.join(', ')}) use OpenAI-compatible endpoints. The proxy automatically translates between Anthropic and OpenAI protocols — including thinking/reasoning, tool calls, streaming, and multi-turn context management. Direct DeepSeek (\`${anthropicNames.join(', ')}\`) uses the \`/anthropic\` endpoint and bypasses all translation.`;
+  return `Providers with \`format = "openai"\` (${openaiProviders.join(', ')}) use OpenAI-compatible endpoints. The proxy automatically translates between Anthropic and OpenAI protocols — including thinking/reasoning, tool calls, streaming, and multi-turn context management. Direct DeepSeek (\`${directProviders.join(', ')}\`) uses the \`/anthropic\` endpoint and bypasses all translation.`;
 }
 
 // ──────────────────────────────────────────────

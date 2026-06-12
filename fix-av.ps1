@@ -9,12 +9,25 @@
 $dir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
 $proxyDir = Join-Path $dir "proxy"
 
+$distDir = Join-Path $dir "dist" "proxy"
+
 $existing = (Get-MpPreference).ExclusionPath
-if ($existing -contains $proxyDir) {
-    Write-Host "Already excluded: $proxyDir (proxy directory only)" -ForegroundColor Green
-    exit 0
+$added = $false
+
+foreach ($excludePath in @($proxyDir, $distDir)) {
+    if (Test-Path $excludePath) {
+        if ($existing -contains $excludePath) {
+            Write-Host "Already excluded: $excludePath" -ForegroundColor Green
+        } else {
+            Add-MpPreference -ExclusionPath $excludePath
+            Write-Host "Excluded: $excludePath" -ForegroundColor Green
+            $added = $true
+        }
+    }
 }
 
-Add-MpPreference -ExclusionPath $proxyDir
-Write-Host "Excluded: $proxyDir (proxy directory only)" -ForegroundColor Green
-Write-Host "Note: This only excludes the proxy JavaScript files, not the entire project."
+if (-not $added -and (Test-Path $proxyDir)) {
+    Write-Host "All paths already excluded." -ForegroundColor Green
+}
+Write-Host "Note: Excludes proxy source (tsx) and compiled output (dist). This prevents Defender from" -ForegroundColor DarkGray
+Write-Host "      scanning files on every request, which can add 200-500ms latency per call." -ForegroundColor DarkGray

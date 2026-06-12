@@ -22,11 +22,12 @@ if (Test-Path $pidFile) {
 }
 
 # 2. Start fresh proxy with all flags
-$tsx = 'C:\OC\deepclaude\node_modules\.bin\tsx.cmd'
-$script = 'C:\OC\deepclaude\proxy\start-proxy.ts'
+$repoRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+$tsx = Join-Path $repoRoot 'node_modules' '.bin' 'tsx.cmd'
+$script = Join-Path $repoRoot 'proxy' 'start-proxy.ts'
 $rf = "$h\.deepclaude\current-routes.json"
 $of = "$h\.deepclaude\slot-overrides.json"
-$pf = 'C:\OC\deepclaude\proxy\providers.json'
+$pf = Join-Path $repoRoot 'proxy' 'providers.json'
 $out = "$h\.deepclaude\proxy-startup.txt"
 
 Write-Host "Starting new proxy..." -ForegroundColor Cyan
