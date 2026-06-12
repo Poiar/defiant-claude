@@ -8,7 +8,7 @@ import fs from 'fs';
 import { translateRequest, createStreamTransformer } from './protocol-translate';
 import { injectThinkingBlocks } from './thinking-cache';
 import { reinjectReasoningContent } from './reasoning-cache';
-import { deduplicatePath } from './util';
+import { deduplicatePath, buildSafeHeaders } from './util';
 import { parseArgs, loadConfig, checkReload, validateConfig, resolveKey } from './config';
 import { resolveTarget, ResolvedTarget } from './routing';
 import { classifyRequest, resolvePromptRoute } from './prompt-router';
@@ -223,19 +223,12 @@ try {
             const colonIdx = raw.indexOf(':');
             const existingPid = parseInt(colonIdx >= 0 ? raw.slice(0, colonIdx) : raw, 10);
             const existingPort = colonIdx >= 0 ? parseInt(raw.slice(colonIdx + 1), 10) : 0;
-            if (!isNaN(existingPid)) {
+            if (Number.isSafeInteger(existingPid) && existingPid > 0 && existingPid < 4194304) {
                 let processAlive = false;
-                if (process.platform === 'win32') {
-                    try {
-                        const out = execSync('tasklist /FI "PID eq ' + existingPid + '" /NH /FO CSV', { timeout: 3000, stdio: 'pipe' }).toString();
-                        processAlive = out.includes(String(existingPid));
-                    } catch { /* process not found */ }
-                } else {
-                    try {
-                        process.kill(existingPid, 0);
-                        processAlive = true;
-                    } catch { /* process not found */ }
-                }
+                try {
+                    process.kill(existingPid, 0);
+                    processAlive = true;
+                } catch { /* process not found */ }
                 if (processAlive) {
                     if (existingPort > 0) {
                         // Existing proxy is alive and we know its port — reuse it
@@ -478,11 +471,31 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
             await checkReload(state, parsed);
             let model: string | null = null;
             let parsedBody: Record<string, unknown> | null = null;
-            try { const parsed = JSON.parse(rawBody.toString()) as Record<string, unknown>; parsedBody = parsed; model = parsed.model as string; } catch (e) {
+            try {
+                const parsed = JSON.parse(rawBody.toString()) as Record<string, unknown>;
+                if (typeof parsed.model !== 'string' || parsed.model.length === 0) {
+                    if (rawBody.length > 0) {
+                        log.warn(reqId, 'body missing or invalid "model" field (type=' + typeof parsed.model + ')');
+                        if (!res.headersSent && !res.destroyed) {
+                            res.writeHead(400, { 'content-type': 'application/json' });
+                            res.end(JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: 'Missing or invalid "model" field' } }));
+                        }
+                        return;
+                    }
+                    // Empty body with no model: health probe, let it pass
+                }
+                parsedBody = parsed;
+                model = parsed.model as string;
+            } catch (e) {
                 if (rawBody.length === 0) {
                     log.info(reqId, 'body parse warning: empty body (likely health probe)');
                 } else {
                     log.error(reqId, 'body parse error: ' + truncateForLog((e as Error).message));
+                    if (!res.headersSent && !res.destroyed) {
+                        res.writeHead(400, { 'content-type': 'application/json' });
+                        res.end(JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: 'Malformed JSON body' } }));
+                    }
+                    return;
                 }
             }
 
@@ -491,6 +504,19 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
 
             // Non-model calls (OAuth, agent infrastructure, etc.) -> passthrough to Anthropic.
             if (!isModelCall) {
+                // Validate path against known Anthropic API endpoints to prevent
+                // endpoint injection (e.g. /v1/admin/... or query-string attacks).
+                const ALLOWED_PREFIXES = ['/v1/messages', '/v1/complete', '/v1/embeddings', '/v1/models', '/v1/usage', '/v1/organizations', '/v1/api_keys', '/v1/workspaces', '/v1/users', '/v1/oauth'];
+                const reqPath = (req.url || '').split('?')[0];
+                const allowed = ALLOWED_PREFIXES.some(p => reqPath.startsWith(p)) || reqPath === '/' || reqPath === '/_health' || reqPath === '/health' || reqPath === '/health/stream' || reqPath === '/dashboard' || reqPath === '/metrics' || reqPath === '/stats';
+                if (!allowed) {
+                    log.warn(reqId, 'passthrough: blocked unknown path=' + truncateForLog(reqPath));
+                    if (!res.headersSent && !res.destroyed) {
+                        res.writeHead(403, { 'content-type': 'application/json' });
+                        res.end(JSON.stringify({ type: 'error', error: { type: 'permission_error', message: 'Unknown API path' } }));
+                    }
+                    return;
+                }
                 const anthro = new URL('https://api.anthropic.com');
                 const anthroPath = anthro.pathname.replace(/\/+$/, '') + req.url;
                 const anthroHeaders: Record<string, string | string[] | undefined> = { ...req.headers };
@@ -513,11 +539,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                     headers: anthroHeaders as Record<string, string>,
                     timeout: 60000,
                 }, (anthroRes: http.IncomingMessage) => {
-                    const safeResHeaders: Record<string, string | string[] | undefined> = {};
-                    const hopByHop = new Set(['transfer-encoding', 'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'upgrade']);
-                    for (const [k, v] of Object.entries(anthroRes.headers)) {
-                        if (!hopByHop.has(k.toLowerCase())) safeResHeaders[k] = v;
-                    }
+                    const safeResHeaders = buildSafeHeaders(anthroRes.headers as Record<string, string | string[] | undefined>);
                     if (!res.headersSent && !res.destroyed) {
                         res.writeHead(anthroRes.statusCode || 200, safeResHeaders as Record<string, string | number>);
 
@@ -653,6 +675,8 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                         const resolvedKey = await resolveKey(rawKey);
                         if (!(rawKey.startsWith('$aes256gcm:') && resolvedKey === null)) {
                             const entry = getOrCreateEntry(slot, config);
+                            if (!entry) { /* canary disabled */ }
+                            else {
                             const hash = bodyHash(rawBody.toString(), slot);
 
                             if (shouldUseCanary(hash, entry.state, entry.config)) {
@@ -677,6 +701,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                             }
 
                             canaryEntry = entry;
+                            }
                         }
                     }
                 }
@@ -808,6 +833,26 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                     }
                 }
 
+                // Inject thinking mode configuration for models that support it.
+                // Look up the upstream model name in the thinking config from providers.json
+                // and add the Anthropic-format thinking parameter. DeepSeek V4 supports
+                // extended thinking via the /anthropic endpoint with thinking { type, budget_tokens }.
+                const upstreamModel = target.rewriteModel || model;
+                if (upstreamModel && state.thinkingConfig && target.format === 'anthropic') {
+                    const thinkingCfg = state.thinkingConfig[upstreamModel];
+                    if (thinkingCfg) {
+                        try {
+                            const p = JSON.parse(forwardedBody.toString());
+                            if (!p.thinking) {
+                                p.thinking = { type: thinkingCfg.type, budget_tokens: thinkingCfg.budget_tokens };
+                                forwardedBody = Buffer.from(JSON.stringify(p));
+                            }
+                        } catch (e) {
+                            log.error(reqId, 'thinking config injection error: ' + truncateForLog((e as Error).message));
+                        }
+                    }
+                }
+
                 // Protocol translation
                 let streamTransformer: Transform | null = null;
                 if (target.format === 'openai') {
@@ -875,6 +920,11 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                 // host, or other sensitive headers (CRITICAL security fix).
                 const providerDef = lookupProviderByHost(options.hostname);
                 if (providerDef && providerDef.extraHeaders) {
+                    // Strict allowlist of provider-defined extra headers that may be
+                    // forwarded upstream.  This is intentionally more restrictive than
+                    // buildSafeHeaders / header-sanitizer (which are blacklists for the
+                    // *downstream* direction).  Only these three low-risk headers can be
+                    // injected from providers.json.
                     const SAFE_EXTRA_HEADERS = new Set([
                         'http-referer', 'x-title', 'x-request-id',
                     ]);
@@ -1280,12 +1330,22 @@ runStartupChecks().then((startupCheckResult) => {
         process.stdout.write('PORT:' + String(port));
         if (hasDashboard) {
             const url = 'http://127.0.0.1:' + port + '/dashboard';
-            process.stdout.write('\nDASHBOARD:' + url);
+            // Only print the dashboard URL when authentication is configured
+            // to avoid advertising an unauthenticated health-data endpoint.
+            if (process.env.DEEPCLAUDE_DASHBOARD_KEY) {
+                process.stdout.write('\nDASHBOARD:' + url);
+            }
             if (hasOpen) {
                 const platform = process.platform;
-                const cmd = platform === 'win32' ? 'start' : platform === 'darwin' ? 'open' : 'xdg-open';
                 setTimeout(() => {
-                    require('child_process').exec(cmd + ' "' + url + '"');
+                    const { execFile } = require('child_process');
+                    if (platform === 'win32') {
+                        execFile('cmd', ['/c', 'start', '', url]);
+                    } else if (platform === 'darwin') {
+                        execFile('open', [url]);
+                    } else {
+                        execFile('xdg-open', [url]);
+                    }
                 }, 500);
             }
         }
