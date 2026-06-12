@@ -230,8 +230,9 @@ if ($Logs) {
 if ($Health) {
     $stateFile = Join-Path $DeepClaudeDir "proxy.json"
     if (-not (Test-Path $stateFile)) {
-        Write-Host "No proxy running. Start one first." -ForegroundColor Yellow
-        exit 1
+        # Hook-friendly: exit 0 so SessionStart hooks don't error on clean state.
+        # Claude Code hooks treat any non-zero exit as a failure.
+        exit 0
     }
     $state = Get-Content $stateFile -Raw | ConvertFrom-Json
     $health = Invoke-RestMethod -Uri "http://127.0.0.1:$($state.port)/health" -TimeoutSec 5

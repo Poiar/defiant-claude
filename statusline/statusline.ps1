@@ -59,6 +59,12 @@ if (Test-Path $routesFile) {
   } catch {}
 }
 
+function fg($r, $g, $b) { "$([char]27)[38;2;$r;$g;$($b)m" }
+$reset  = "$([char]27)[0m"
+$bold   = "$([char]27)[1m"
+$narrow = '  '
+$wide   = '     '
+
 $spendGroup = ''
 $spendFile = "$env:USERPROFILE\.deepclaude\spend.json"
 if (Test-Path $spendFile) {
@@ -67,8 +73,18 @@ if (Test-Path $spendFile) {
     $sessionSpend = if ($spendData.sessions -and $spendData.sessions[0] -and $spendData.sessions[0].total) {
       $spendData.sessions[0].total
     } elseif ($spendData.total) { $spendData.total }
+    $todayKey = (Get-Date).ToString('yyyy-MM-dd')
+    $todaySpend = if ($spendData.daily -and $spendData.daily.$todayKey -and $spendData.daily.$todayKey.total) {
+      $spendData.daily.$todayKey.total
+    } else { $null }
     if ($sessionSpend -and $sessionSpend -gt 0) {
-      $spendGroup = "$bold$(fg 80 200 120)`$$($sessionSpend.ToString('F2'))$reset"
+      $inv = [System.Globalization.CultureInfo]::InvariantCulture
+      $parts = @()
+      $parts += "$bold$(fg 255 210 80)`$$($sessionSpend.ToString('F2', $inv))$reset"
+      if ($todaySpend -and $todaySpend -gt $sessionSpend + 0.001) {
+        $parts += "$(fg 120 120 120)`$$($todaySpend.ToString('F2', $inv))$reset"
+      }
+      $spendGroup = $parts -join ' '
     }
   } catch {}
 }
@@ -123,12 +139,6 @@ if ($tokens -and $maxTokens -and $maxTokens -gt 0) {
   $pct = [math]::Round(($tokens / $maxTokens) * 100)
 }
 $ctxStr = if ($tokStr -and $null -ne $pct) { "$tokStr/$pct%" } elseif ($null -ne $pct) { "$pct%" } elseif ($tokStr) { $tokStr } else { '' }
-
-function fg($r, $g, $b) { "$([char]27)[38;2;$r;$g;$($b)m" }
-$reset  = "$([char]27)[0m"
-$bold   = "$([char]27)[1m"
-$narrow = '  '
-$wide   = '     '
 
 $effortColor = if ($effort -eq 'high') { fg 255 80 80 } elseif ($effort -eq 'medium') { fg 255 180 50 } else { fg 100 160 255 }
 $ctxColor    = if ($null -ne $pct -and $pct -ge 80) { fg 255 80 80 } elseif ($null -ne $pct -and $pct -ge 50) { fg 255 180 50 } else { fg 80 200 120 }
