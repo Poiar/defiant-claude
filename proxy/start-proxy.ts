@@ -804,6 +804,21 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                                 const responseId = 'msg_' + crypto.randomUUID();
                                 const serverToolUse = { web_search_requests: 1, web_fetch_requests: 0 };
 
+                                // Return non-streaming JSON regardless — CC reads
+                                // server_tool_use from the complete message object.
+                                {
+                                    const body = JSON.stringify({
+                                        id: responseId, type: 'message', model: model || '', role: 'assistant',
+                                        content: [{ type: 'text', text: searchResults }],
+                                        stop_reason: 'end_turn', stop_sequence: null,
+                                        usage: { input_tokens: 1, output_tokens: 1, server_tool_use: serverToolUse },
+                                    });
+                                    res.writeHead(200, { 'content-type': 'application/json' });
+                                    res.end(body);
+                                    log.info(reqId, 'web search direct JSON sent');
+                                    return;
+                                }
+                                /* SSE path — kept for reference, might need later
                                 if (isStream) {
                                     // Anthropic SSE format
                                     const se = (e: string, d: unknown) => 'event: ' + e + '\ndata: ' + JSON.stringify(d) + '\n\n';
