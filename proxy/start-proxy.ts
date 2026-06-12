@@ -734,30 +734,33 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                     }
 
                     // Handle Anthropic server-side tools for non-Anthropic providers.
-                    // web_search / web_fetch: pre-executed locally above and STRIPPED —
-                    //   forwarding them causes 400s on DeepSeek.
-                    // text_editor / bash / code_execution / memory: CONVERTED to custom
-                    //   tools — DeepSeek typically accepts these.
+                    // Step 1: Convert ALL Anthropic server-side tools to custom tools FIRST.
+                    // This includes web_search_*, web_fetch_*, text_editor_, bash_, etc.
+                    // Converting before stripping lets web_search/web_fetch survive so
+                    // DeepSeek can request them — then the proxy executes them and reports
+                    // the count in usage.server_tool_use so Claude Code's "Did N searches"
+                    // display is correct.
                     if (parsedBody.tools && Array.isArray(parsedBody.tools)) {
-                        // Only strip web_tools; convert everything else
+                        const conv = convertServerTools(parsedBody.tools as any[]);
+                        if (conv.tools !== parsedBody.tools) {
+                            parsedBody.tools = conv.tools as any[];
+                            modified = true;
+                        }
+                        // Step 2: Strip any remaining unconverted web_search_* tools
+                        // (belt-and-suspenders — convertServerTools should handle them,
+                        // but if a new prefix slips through, strip it to avoid 400s).
                         const WEB_TOOL_PREFIXES = ['web_search_', 'web_fetch_', 'url_fetch_'];
                         const isWebTool = (type: string) => WEB_TOOL_PREFIXES.some(p => type.startsWith(p));
-                        const hadWebTools = (parsedBody.tools as any[]).some(
+                        const unconvertedWebTools = (parsedBody.tools as any[]).filter(
                             (t: any) => t && typeof t.type === 'string' && isWebTool(t.type)
                         );
-                        if (hadWebTools) {
+                        if (unconvertedWebTools.length > 0) {
                             parsedBody.tools = (parsedBody.tools as any[]).filter(
                                 (t: any) => !(t && typeof t.type === 'string' && isWebTool(t.type))
                             );
                             if ((parsedBody.tools as any[]).length === 0) {
                                 delete parsedBody.tools;
                             }
-                            modified = true;
-                        }
-                        // Convert remaining Anthropic tools (text_editor, bash, etc.) to custom
-                        const conv = convertServerTools(parsedBody.tools as any[]);
-                        if (conv.tools !== parsedBody.tools) {
-                            parsedBody.tools = conv.tools as any[];
                             modified = true;
                         }
                     }

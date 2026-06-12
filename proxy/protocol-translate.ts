@@ -369,6 +369,18 @@ export function translateResponse(openaiBody: OpenAIResponseBody, model: string)
         }
     }
 
+    // Count server-side tool use for Claude Code's "Did N searches" display.
+    // Claude Code reads usage.server_tool_use from the Anthropic response to set
+    // searchCount in toolUseResult. Without this the display always shows 0.
+    let webSearchRequests = 0;
+    let webFetchRequests = 0;
+    for (const block of content) {
+        if (block.type === 'tool_use') {
+            if (block.name === 'web_search') webSearchRequests++;
+            else if (block.name === 'web_fetch') webFetchRequests++;
+        }
+    }
+
     return {
         id: openaiBody.id || `msg_${crypto.randomUUID()}`,
         type: 'message',
@@ -380,6 +392,9 @@ export function translateResponse(openaiBody: OpenAIResponseBody, model: string)
         usage: {
             input_tokens: usage.prompt_tokens || 0,
             output_tokens: usage.completion_tokens || 0,
+            ...(webSearchRequests > 0 || webFetchRequests > 0 ? {
+                server_tool_use: { web_search_requests: webSearchRequests, web_fetch_requests: webFetchRequests },
+            } : {}),
         },
     };
 }
@@ -396,6 +411,7 @@ interface TransformerState {
     messageId: string;
     model: string;
     usage: { input_tokens: number; output_tokens: number };
+    serverToolUse: { web_search_requests: number; web_fetch_requests: number };
 }
 
 export function createStreamTransformer(model: string): Transform {
@@ -409,6 +425,7 @@ export function createStreamTransformer(model: string): Transform {
         messageId: `msg_${crypto.randomUUID()}`,
         model,
         usage: { input_tokens: 0, output_tokens: 0 },
+        serverToolUse: { web_search_requests: 0, web_fetch_requests: 0 },
     };
 
     function emit(eventType: string, data: Record<string, unknown>): string {
@@ -466,10 +483,15 @@ export function createStreamTransformer(model: string): Transform {
 
     function finishStream(stopReason: string): string {
         let output = closeBlock();
+        const srv = state.serverToolUse;
+        const hasServerTools = srv.web_search_requests > 0 || srv.web_fetch_requests > 0;
         output += emit('message_delta', {
             type: 'message_delta',
             delta: { stop_reason: stopReason, stop_sequence: null },
-            usage: { output_tokens: state.usage.output_tokens },
+            usage: {
+                output_tokens: state.usage.output_tokens,
+                ...(hasServerTools ? { server_tool_use: srv } : {}),
+            },
         });
         output += emit('message_stop', { type: 'message_stop' });
         state.finished = true;
@@ -539,6 +561,9 @@ export function createStreamTransformer(model: string): Transform {
                     state.currentBlockType = 'tool_use';
                     state.lastToolUseIdx = idx;
                     if (tc.index !== undefined) state.toolCallMap[tc.index] = idx;
+                    // Track server-side tool requests for usage.server_tool_use
+                    if (tc.function.name === 'web_search') state.serverToolUse.web_search_requests++;
+                    else if (tc.function.name === 'web_fetch') state.serverToolUse.web_fetch_requests++;
                     output += emit('content_block_start', {
                         type: 'content_block_start', index: idx,
                         content_block: { type: 'tool_use', id: tc.id, name: tc.function.name, input: {} },
