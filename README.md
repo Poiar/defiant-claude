@@ -4,7 +4,9 @@ Provider-agnostic Claude Code wrapper. Route each model slot (Opus, Sonnet, Haik
 
 ## Architecture
 
-DeepClaude runs a local HTTP routing proxy that intercepts Claude Code's Anthropic API calls and dispatches each model slot (Opus, Sonnet, Haiku, subagent) to a different upstream provider. The proxy is written in TypeScript — no third-party proxy frameworks, no copied code.
+DeepClaude runs a local HTTP routing proxy that intercepts Claude Code's Anthropic API calls and dispatches each model slot (Opus, Sonnet, Haiku, subagent) to a different upstream provider.
+
+**Direct DeepSeek (`ds`) uses the `/anthropic` endpoint** — DeepSeek offers an Anthropic-compatible API surface that speaks Claude's protocol natively. The proxy passes messages through unchanged: no format translation, no content flattening, no lossy conversion. Thinking mode (`{type: "enabled", budget_tokens: N}`), structured content blocks, tool use, and streaming all work without transformation. OpenAI-format translation only activates when routing through third-party providers (OpenRouter, Kimi, Mistral, etc.) that don't offer an Anthropic-compatible endpoint.
 
 ### Proxy modules (`proxy/`)
 
@@ -12,10 +14,10 @@ DeepClaude runs a local HTTP routing proxy that intercepts Claude Code's Anthrop
 |---|---|
 | `start-proxy.ts` | Entry point — HTTP server, request lifecycle, health endpoint |
 | `routing.ts` | Slot-based routing with prefix matching, fallback chain construction, circuit breaker |
-| `protocol-translate.ts` | Bidirectional Anthropic Messages ↔ OpenAI Chat Completions format translation |
+| `protocol-translate.ts` | Bidirectional Anthropic Messages ↔ OpenAI Chat Completions format translation (only active for OpenAI-format providers — `ds` bypasses this entirely via DeepSeek's `/anthropic` endpoint) |
 | `forward.ts` | Upstream HTTP forwarding with SSE streaming, gzip decompression, stream heartbeat/deadline timers with byte diagnostics, total-byte cap (500MB), fallback header injection, SSE buffer guarding, usage token extraction, peekFirstChunk with fast-stream race protection |
-| `thinking-cache.ts` | Anthropic-format thinking block extraction, caching, and injection across providers that strip them |
-| `reasoning-cache.ts` | OpenAI-format reasoning content cache with session-keyed LRU and re-injection |
+| `thinking-cache.ts` | Anthropic-format thinking block extraction, caching, and injection for multi-turn tool conversations |
+| `reasoning-cache.ts` | OpenAI-format reasoning content cache with session-keyed LRU and re-injection (only for OpenAI-format providers — `ds` handles this natively) |
 | `transport-errors.ts` | Network failure classification via ordered signature tuples with cause chain walking |
 | `error-codes.ts` | Structured error codes with template interpolation, dev/production mode, credential scrubbing via data-driven pattern list |
 | `concurrency.ts` | Promise-queue-based semaphore with FIFO ordering and acquire/release pump pattern |
@@ -50,12 +52,14 @@ Both the proxy and the launcher scripts (`deepclaude.ps1`, `deepclaude.sh`) read
 
 ```
 providers.json
-├── _comment      →  schema version / description (ignored by code)
-├── providers     →  endpoint, auth, wire format, fallbacks, setup URLs, streamUsageReporting, extraHeaders
-├── contextLimits →  per-model token windows
-├── configs       →  named preset configs (slot → provider:model), monthlyBudget
-├── aliases       →  short model aliases (e.g. "v4" → "deepseek-v4-pro")
-└── pricing       →  per-model input/output token pricing ($/MTok)
+├── _comment         →  schema version / description (ignored by code)
+├── providers        →  endpoint, auth, wire format, fallbacks, setup URLs, streamUsageReporting, extraHeaders
+├── contextLimits    →  per-model token windows
+├── compactionWindow →  per-model compaction thresholds (950K for DeepSeek — preserves disk cache hits)
+├── thinking         →  per-model reasoning mode config (type, budget_tokens)
+├── configs          →  named preset configs (slot → provider:model), monthlyBudget
+├── aliases          →  short model aliases (e.g. "v4" → "deepseek-v4-pro")
+└── pricing          →  per-model input/output/cache token pricing ($/MTok)
 ```
 
 ### Launcher scripts
@@ -67,7 +71,7 @@ Two launcher scripts with identical behavior, each loading `providers.json` nati
 
 ### Test coverage
 
-609 tests across 36 suites covering all proxy modules — transport errors, concurrency, LRU cache, provider registry validation, error codes, routing, stats, forwarding, server tools, config, protocol translation, thinking cache, reasoning cache, header sanitization, truncation, crypto, friendly errors, SSRF validation, dead stream detection, startup checks, and stream metrics. Run with `npm test`.
+623 tests across 36 test files covering all proxy modules — transport errors, concurrency, LRU cache, provider registry validation, error codes, routing, stats, forwarding, server tools, config, protocol translation, thinking cache, reasoning cache, header sanitization, truncation, crypto, friendly errors, SSRF validation, dead stream detection, startup checks, and stream metrics. Run with `npm test`.
 
 ### Pre-commit
 
@@ -185,7 +189,7 @@ deepclaude ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free  # 3 specs 
 
 Keys are read from both process env and machine/user environment variables.
 
-Providers with `format = "openai"` (Kimi, Mimo, Alibaba, Groq, Mistral, MiniMax, Z.ai, BytePlus, SiliconFlow, Novita) use OpenAI-compatible endpoints. The proxy automatically translates between Anthropic and OpenAI protocols — no configuration needed.
+Providers with `format = "openai"` (OpenRouter, Kimi, Mimo, Alibaba, Groq, Mistral, MiniMax, Z.ai, BytePlus, SiliconFlow, Novita) use OpenAI-compatible endpoints. The proxy automatically translates between Anthropic and OpenAI protocols — including thinking/reasoning, tool calls, streaming, and multi-turn context management. Direct DeepSeek (`ds`) uses the `/anthropic` endpoint and bypasses all translation.
 
 ## Provider fallback
 
@@ -265,6 +269,8 @@ Per-model context limits are configured automatically:
 | `novita/deepseek-v4-pro` | 1M |
 
 Models at 1M tokens get `CLAUDE_CODE_AUTO_COMPACT_WINDOW` set (clamped to 1,000,000 — Claude Code's internal max). Models between 128K–1M get `CLAUDE_CODE_MAX_CONTEXT_TOKENS` with compaction disabled. A `[1m]` suffix is appended to 1M-context model IDs (e.g. `deepseek-v4-pro[1m]`) — this is stripped by the proxy's router and used internally by Claude Code for dynamic context-window detection.
+
+DeepSeek V4 models use a `compactionWindow` of 950K tokens to preserve automatic disk cache hits. Compaction rewrites conversation history, which invalidates the prefix and forces an expensive cache miss ($0.435/M). By delaying compaction to 950K (near the 1M wall), most requests stay within the same prefix and hit the disk cache at $0.0036/M — a 50× discount. The cache persists for hours to days and requires no configuration.
 
 ## Persistent proxy workflow
 
