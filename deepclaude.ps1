@@ -198,6 +198,7 @@ $CurrentRoutesFile = Join-Path $DeepClaudeDir "current-routes.json"
 $SlotOverridesFile = Join-Path $DeepClaudeDir "slot-overrides.json"
 $ThinkingOverridesFile = Join-Path $DeepClaudeDir "thinking-overrides.json"
 $SubagentModelFile = Join-Path $DeepClaudeDir "subagent-model.json"
+$FixAvBatchFile = Join-Path $DeepClaudeDir "fix-av.cmd"
 
 # Ensure state directory exists
 if (-not (Test-Path $DeepClaudeDir)) {
@@ -736,10 +737,61 @@ function Build-RoutesJson {
     } | ConvertTo-Json -Depth 5
 }
 
+# --- Standalone AV fix batch file ---
+# Written on every launch to ~/.deepclaude/fix-av.cmd.  This survives
+# Windows Defender quarantine because AV only targets executable content in
+# the proxy directory, not plain-text files in the user's home directory.
+# If deepclaude gets deleted, the user can still run this file as admin to
+# add the exclusion and then re-clone/re-install.
+function Write-FixAvBatch {
+    $myPath = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+    $proxyDir = Join-Path $myPath "proxy"
+    $nodeExe = (Get-Command node -ErrorAction SilentlyContinue).Source
+    if (-not $nodeExe) { $nodeExe = "node.exe" }
+
+    $batch = @"
+@echo off
+REM ================================================================
+REM  deepclaude — Windows Defender Exclusion Helper
+REM  Run this as ADMINISTRATOR if the proxy was blocked or deleted.
+REM ================================================================
+echo.
+echo  This script adds Windows Defender exclusions for deepclaude.
+echo  Run it in an ADMIN PowerShell window, OR simply paste the
+echo  commands below into an admin PowerShell yourself:
+echo.
+echo  ----- Copy from here -----
+echo  Add-MpPreference -ExclusionPath "$proxyDir"
+echo  Add-MpPreference -ExclusionProcess "$nodeExe"
+echo  ----- End copy ---------
+echo.
+echo  After adding exclusions, re-install deepclaude (git pull / npm install)
+echo  if files were quarantined, then relaunch.
+echo.
+powershell -Command "Add-MpPreference -ExclusionPath '$proxyDir'; Add-MpPreference -ExclusionProcess '$nodeExe'; Write-Host 'Exclusions added.' -ForegroundColor Green"
+pause
+"@
+    try {
+        Set-Content -Path $FixAvBatchFile -Value $batch -NoNewline
+    } catch {
+        # Disk full or permissions — non-fatal
+    }
+}
+
 # --- Start the HTTP routing proxy (delegates to proxy/start-proxy.js) ---
 function Show-ProxyWarning {
-    Write-Host "  NOTE: The proxy script may trigger Windows Defender." -ForegroundColor DarkYellow
-    Write-Host "  If blocked, run: deepclaude --fix-av" -ForegroundColor DarkYellow
+    # On Windows, Defender may quarantine the proxy script before it starts.
+    # This is a catch-22: if the proxy is deleted, you can't run --fix-av.
+    # We proactively write a standalone fix-av.cmd to ~/.deepclaude/ that
+    # survives quarantine (AV only targets executable paths, not text files
+    # in the user's home directory).
+    Write-Host "`n  ==============================================================================" -ForegroundColor Yellow
+    Write-Host "  WINDOWS DEFENDER MAY BLOCK THE PROXY." -ForegroundColor Yellow
+    Write-Host "  If the proxy fails to start or gets deleted, open an ADMIN PowerShell and run:" -ForegroundColor Yellow
+    Write-Host "    $FixAvBatchFile" -ForegroundColor White
+    Write-Host "  (That file was just written to your home dir — it survives AV deletion.)" -ForegroundColor DarkGray
+    Write-Host "  ==============================================================================`n" -ForegroundColor Yellow
+    Write-FixAvBatch
 }
 
 function Start-RoutingProxy {
