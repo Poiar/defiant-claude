@@ -1,7 +1,6 @@
 'use strict';
 
 import { LruCache } from './lru-cache';
-import { sessionKey } from './session-key';
 
 const TTL_MS = 30 * 60 * 1000;
 const MAX_ENTRIES = 500;

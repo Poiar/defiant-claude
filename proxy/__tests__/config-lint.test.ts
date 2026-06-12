@@ -22,7 +22,7 @@ function cleanupJson(filePath: string): void {
 }
 
 // Save and restore env vars around tests that modify them
-let savedEnv: Record<string, string | undefined> = {};
+const savedEnv: Record<string, string | undefined> = {};
 function saveEnv(keys: string[]): void {
     for (const k of keys) {
         savedEnv[k] = process.env[k];

@@ -1,7 +1,7 @@
 'use strict';
 
 import http from 'http';
-import { serveDashboard, buildDashboardHtml, getDashboardKey } from '../dashboard';
+import { serveDashboard, buildDashboardHtml } from '../dashboard';
 import { recordRecentRequest, getFullHealthSnapshot } from '../stats';
 
 // Dashboard now requires authentication.  Use a fixed key for tests.

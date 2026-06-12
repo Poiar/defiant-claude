@@ -145,7 +145,7 @@ export function validateConfig(registryPath?: string): LintIssue[] {
             if (hasFallback) {
                 issues.push({ type: 'WARNING', section: 'keys', message: (entry.displayName || pk) + " (" + pk + "): " + keyName + " not set, but has fallback [" + (entry.fallback || []).join(', ') + "]" });
             } else if (isReferenced) {
-                let keyOrFallback = "Set " + keyName;
+                const keyOrFallback = "Set " + keyName;
                 issues.push({ type: 'ERROR', section: 'keys', message: "config '" + pk + "': provider '" + pk + "' has no fallback and no API key set. " + keyOrFallback + " or configure a fallback." });
             }
         }
@@ -276,7 +276,7 @@ export function formatLintResults(issues: LintIssue[], registryPath?: string): s
                 if (val && typeof val === 'string') {
                     const displaySlot = slotMap[sk];
                     const hasIssue = issues.some(i => i.message.indexOf(ck) >= 0 && i.message.indexOf(displaySlot) >= 0);
-                    const marker = hasIssue ? (red + '?' + reset) : (green + '✓' + reset);
+                    const _marker = hasIssue ? (red + '?' + reset) : (green + '✓' + reset);
                     slotParts.push(displaySlot + '=' + val);
                 }
             }

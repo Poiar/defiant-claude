@@ -1,0 +1,43 @@
+{
+  "parser": "@typescript-eslint/parser",
+  "parserOptions": {
+    "ecmaVersion": 2022,
+    "sourceType": "module"
+  },
+  "plugins": ["@typescript-eslint"],
+  "extends": [
+    "eslint:recommended",
+    "plugin:@typescript-eslint/eslint-recommended"
+  ],
+  "env": {
+    "node": true,
+    "es2022": true
+  },
+  "rules": {
+    "no-unused-vars": "off",
+    "@typescript-eslint/no-unused-vars": ["warn", {
+      "argsIgnorePattern": "^_",
+      "varsIgnorePattern": "^_",
+      "caughtErrorsIgnorePattern": "^_",
+      "destructuredArrayIgnorePattern": "^_"
+    }],
+    "no-undef": "off",
+    "no-empty": ["error", { "allowEmptyCatch": true }],
+    "no-inner-declarations": "off",
+    "no-control-regex": "off",
+    "no-mixed-spaces-and-tabs": "off"
+  },
+  "overrides": [
+    {
+      "files": ["**/__tests__/**/*.ts"],
+      "env": { "jest": true }
+    },
+    {
+      "files": ["scripts/**/*.ts"],
+      "parserOptions": {
+        "ecmaVersion": 2022,
+        "sourceType": "module"
+      }
+    }
+  ]
+}

@@ -22,7 +22,7 @@ export function runDryRun(routesFile: string): void {
         contextLimits?: Record<string, number>;
     };
 
-    let displayNames: Record<string, string> = {};
+    const displayNames: Record<string, string> = {};
     try {
         const reg = JSON.parse(fs.readFileSync(path.join(__dirname, 'providers.json'), 'utf-8'));
         if (reg.providers) {

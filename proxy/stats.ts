@@ -495,7 +495,7 @@ export function isProviderHealthy(providerKey: string): boolean {
     // until the probe confirms the provider is actually reachable again.
     if (state === 'HALF_OPEN') return false;
     return true;
-};
+}
 
 // Derive circuit breaker state from recorded stats or active breaker entry.
 // Returns CLOSED, OPEN, HALF_OPEN, or UNTESTED.
@@ -571,7 +571,7 @@ export function recordStreamMetrics(providerKey: string, metrics: StreamMetrics)
 // --- Spend tracking ---
 
 let spendFile = path.join(os.homedir(), '.deepclaude', 'spend.json');
-let spendJournalFile = spendFile + '.journal';
+const spendJournalFile = spendFile + '.journal';
 let lastSpendWrite = 0;
 let spendWriteLock = false;
 const SPEND_WRITE_THROTTLE_MS = 1000;

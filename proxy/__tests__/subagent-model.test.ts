@@ -23,7 +23,7 @@ function writeSubagentModel(dir: string, data: unknown): void {
     fs.writeFileSync(path.join(subDir, 'subagent-model.json'), JSON.stringify(data));
 }
 
-function removeSubagentModel(dir: string): void {
+function _removeSubagentModel(dir: string): void {
     const filePath = path.join(dir, '.deepclaude', 'subagent-model.json');
     try { fs.unlinkSync(filePath); } catch (_) { /* ignore */ }
 }
