@@ -80,7 +80,7 @@ All business logic — config resolution, routes JSON construction, env var comp
 ### Test coverage
 
 <!-- AUTO:test-coverage -->
-617 tests across 36 test files covering all proxy modules — transport errors, concurrency, LRU cache, provider registry validation, error codes, routing, stats, forwarding, server tools, config, protocol translation, thinking cache, reasoning cache, header sanitization, truncation, crypto, friendly errors, SSRF validation, dead stream detection, startup checks, and stream metrics. Run with `npm test`.
+625 tests across 36 test files covering all proxy modules — transport errors, concurrency, LRU cache, provider registry validation, error codes, routing, stats, forwarding, server tools, config, protocol translation, thinking cache, reasoning cache, header sanitization, truncation, crypto, friendly errors, SSRF validation, dead stream detection, startup checks, and stream metrics. Run with `npm test`.
 <!-- /AUTO:test-coverage -->
 
 ### Pre-commit
@@ -342,6 +342,22 @@ deepclaude --doctor
 ## Statusline
 
 Shows the real model, provider, context usage, effort level, and git branch — with slot override resolution so you see what's actually running.
+
+<pre style="background:#1a1a1a;color:#ccc;padding:10px 14px;border-radius:6px;font-family:Consolas,Menlo,monospace;font-size:13px;line-height:1.6;overflow-x:auto;white-space:pre">
+<span style="font-weight:bold;color:#64B4FF">deepclaude</span>  <span style="font-weight:bold;color:#FF50B4">main</span>     <span style="font-weight:bold;color:#C864FF">o deepseek-v4-pro[1m]</span>  <span style="font-weight:bold;color:#FF5050">max</span>     <span style="font-weight:bold;color:#50C878">45k</span>     <span style="font-weight:bold;color:#FFD250">$0.01</span> <span style="color:#787878">$3.74</span>
+</pre>
+
+| Color | Element | Source |
+|---|---|---|
+| <span style="font-weight:bold;color:#64B4FF">█ Light blue</span> | Directory name | `d.workspace.current_dir` last segment |
+| <span style="font-weight:bold;color:#FF50B4">█ Pink</span> | Git branch | `git rev-parse --abbrev-ref HEAD` |
+| <span style="font-weight:bold;color:#C864FF">█ Purple</span> | Slot + model | Slot label (`o`/`s`/`h`/`sub`) + resolved model ID |
+| <span style="font-weight:bold;color:#FF5050">█ Red</span> / <span style="font-weight:bold;color:#FFB432">█ Orange</span> / <span style="font-weight:bold;color:#64A0FF">█ Blue</span> | Effort | `max`/`high` (red), `medium` (orange), `low` (blue) |
+| <span style="font-weight:bold;color:#50C878">█ Green</span> / <span style="font-weight:bold;color:#FFB432">█ Orange</span> / <span style="font-weight:bold;color:#FF5050">█ Red</span> | Context usage | Token count + % — green ≤50%, orange 50–79%, red ≥80% |
+| <span style="font-weight:bold;color:#FFD250">█ Gold</span> | Session spend | Current Claude Code session cost from `~/.deepclaude/spend.json` |
+| <span style="color:#787878">█ Gray</span> | Today spend | Daily total (shown when it exceeds session spend) |
+
+The context gauge reads `tokens/percent` (e.g. `45k/5%` when the max is known). DeepSeek V4 Pro appends milestone tags: **SR** (300K+, purple) and **FBR** (400K+, magenta). Circuit breakers show **✕** (open, red), **◐** (half-open, orange), or **·** (closed, green). A recent fallback appends **↳**provider (orange).
 
 ```
 # All platforms (Node.js)
