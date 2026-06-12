@@ -1,4 +1,14 @@
 .claude/worktrees/
 .claude/settings.local.json
+.claude/cron/
+.idea/
 node_modules/
+dist/
 .env
+*.tmp
+*.tmp.*
+*.journal
+proxy.log
+.claude/logs/
+.claude/*.lock
+.husky/_/

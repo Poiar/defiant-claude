@@ -16,17 +16,19 @@ DeepClaude runs a local HTTP routing proxy that intercepts Claude Code's Anthrop
 
 ### Data-driven provider registry
 
-Both the proxy and the launcher scripts (`deepclaude.ps1`, `deepclaude.sh`) read from a single `proxy/providers.json` file. This eliminates duplicated provider, config, and context-limit definitions across languages.
+The proxy, the launcher scripts, and `statusline.mjs` all read from a single `proxy/providers.json` file. Config resolution, route construction, and context-limit lookups are centralized in `proxy/launcher.mjs` — a zero-dependency Node.js module shared by both `deepclaude.ps1` and `deepclaude.sh`. This eliminates duplicated provider, config, and context-limit definitions across languages and guarantees behavioral parity.
 
 <!-- AUTO:providers-schema -->
 <!-- /AUTO:providers-schema -->
 
 ### Launcher scripts
 
-Two launcher scripts with identical behavior, each loading `providers.json` natively:
+Two thin platform wrappers with identical behavior:
 
-- **`deepclaude.ps1`** — PowerShell 7+, uses `ConvertFrom-Json`
-- **`deepclaude.sh`** — Bash 4+, uses `jq` with `@tsv` output to avoid delimiter issues
+- **`deepclaude.ps1`** — PowerShell 7+ (Windows), parses CLI args, manages processes
+- **`deepclaude.sh`** — Bash 4+ (macOS/Linux), same role
+
+All business logic — config resolution, routes JSON construction, env var computation, slot/thinking overrides, context window calculation — lives in a single **`proxy/launcher.mjs`** Node.js module shared by both wrappers. This eliminates the ~1800 lines of duplicated logic that existed previously and guarantees behavioral parity across platforms.
 
 ### Test coverage
 
@@ -53,6 +55,7 @@ npm install -g .
 # macOS/Linux: export PATH="$PATH:/path/to/deepclaude"
 
 deepclaude                                    # Launch with DeepSeek V4 Pro
+dc                                            # Shortcut — same as deepclaude (Windows: dc.cmd, macOS/Linux: alias)
 ```
 
 ## Requirements
@@ -72,12 +75,14 @@ deepclaude                                    # Launch with DeepSeek V4 Pro
 
 ### Ad-hoc positional configs
 
-Pass 1–4 `providerKey:modelId` specs, mapped to opus/sonnet/haiku/subagent:
+Pass 1–5 `providerKey:modelId` specs, mapped to opus/sonnet/haiku/subagent/fable:
 
 ```
-deepclaude ds:deepseek-v4-pro                                    # 1 spec → all slots
-deepclaude ds:deepseek-v4-pro oc:big-pickle                      # 2 specs → first half / second half
-deepclaude ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free  # 3 specs → last repeats
+deepclaude ds:deepseek-v4-pro                                              # 1 spec → all 5 slots
+deepclaude ds:deepseek-v4-pro oc:big-pickle                                # 2 specs → first 3 / last 2
+deepclaude ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free       # 3 specs → opus, rest=second, sub/fable=third
+deepclaude ds:deepseek-v4-pro ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free  # 4 specs → sub/fable share last
+deepclaude ds:deepseek-v4-pro ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free mm:mimo-v2.5-pro  # 5 specs → direct
 ```
 
 ### Flags
@@ -189,17 +194,11 @@ deepclaude --doctor
 Shows the real model, provider, context usage, effort level, and git branch — with slot override resolution so you see what's actually running.
 
 ```
-# Windows (PowerShell)
-1. Copy statusline/statusline.ps1 → ~/.claude/statusline.ps1
+# All platforms (Node.js)
+1. Copy statusline/statusline.mjs → ~/.claude/statusline.mjs
 2. Add to ~/.claude/settings.json:
 
-  { "statusLine": { "type": "command", "command": "pwsh ~/.claude/statusline.ps1" } }
-
-# macOS/Linux (bash)
-1. Copy statusline/statusline.sh → ~/.claude/statusline.sh
-2. Add to ~/.claude/settings.json:
-
-  { "statusLine": { "type": "command", "command": "bash ~/.claude/statusline.sh" } }
+  { "statusLine": { "type": "command", "command": "node ~/.claude/statusline.mjs" } }
 ```
 
 Resolves slot overrides from `~/.deepclaude/slot-overrides.json` and context limits from `~/.deepclaude/current-routes.json`, so the token gauge and model display always reflect reality.

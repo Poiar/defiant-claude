@@ -78,10 +78,4 @@ Stale tab→session mappings are detected via ping ACK:
 
 ## Skills
 
-| Skill | Trigger |
-|---|---|
-| `peer-msg` | Send/receive messages between sessions (file-based) |
-| `peer-check` | Process incoming messages from inbox file (triggered by `/peer-check` pings) |
-| `peer-inbox` | Check recent messages |
-| `peer-sessions` | Discover other running sessions |
-| `peer-all` | Broadcast to all sessions |
+Peer skills are installed by the launcher (`deepclaude --install-statusline`) or by running `.\peer\install.ps1`. They are thin wrappers that invoke the scripts above via CC's skill system — no standalone skill files ship in this directory.

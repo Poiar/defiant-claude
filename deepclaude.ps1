@@ -199,6 +199,20 @@ $SlotOverridesFile = Join-Path $DeepClaudeDir "slot-overrides.json"
 $ThinkingOverridesFile = Join-Path $DeepClaudeDir "thinking-overrides.json"
 $SubagentModelFile = Join-Path $DeepClaudeDir "subagent-model.json"
 $FixAvBatchFile = Join-Path $DeepClaudeDir "fix-av.cmd"
+$LauncherMjs = Join-Path $PSScriptRoot "proxy\launcher.mjs"
+
+function Invoke-LauncherMjs {
+    $tmpErr = Join-Path $env:TEMP "launcher-$([System.Guid]::NewGuid()).err"
+    $result = node $LauncherMjs @args 2>$tmpErr
+    if ($LASTEXITCODE -ne 0) {
+        $errText = if (Test-Path $tmpErr) { Get-Content $tmpErr -Raw } else { '' }
+        Remove-Item $tmpErr -ErrorAction SilentlyContinue
+        Write-Host "ERROR: launcher.mjs failed: $errText" -ForegroundColor Red
+        exit 1
+    }
+    Remove-Item $tmpErr -ErrorAction SilentlyContinue
+    return $result
+}
 
 # Ensure state directory exists
 if (-not (Test-Path $DeepClaudeDir)) {
@@ -350,53 +364,21 @@ function Clear-AnthropicEnv {
 # --- Slot overrides (sentinel key system) ---
 function Write-ThinkingOverrides {
     # Build thinking overrides JSON from --no-thinking / --thinking-budget flags.
-    # { "<modelId>": null } disables thinking for that model.
-    # { "<modelId>": { "budget_tokens": N } } overrides the budget.
-    if (-not $NoThinking -and $ThinkingBudget -le 0) {
-        # No override requested — remove file so providers.json config is used as-is
-        if (Test-Path $ThinkingOverridesFile) {
-            Remove-Item $ThinkingOverridesFile -Force -ErrorAction SilentlyContinue
-        }
-        return
-    }
-    $overrides = @{}
-    # Apply to all DeepSeek models currently in the thinking config
-    $allModels = @("deepseek-v4-pro", "deepseek-v4-flash")
-    foreach ($m in $allModels) {
-        if ($NoThinking) {
-            $overrides[$m] = $null  # null = disable thinking
-            Write-Host "  Thinking: DISABLED for $m" -ForegroundColor Yellow
-        } elseif ($ThinkingBudget -gt 0) {
-            $overrides[$m] = @{ budget_tokens = $ThinkingBudget }
-            Write-Host "  Thinking: $ThinkingBudget token budget for $m" -ForegroundColor Cyan
+    # Delegate to launcher.mjs for the actual logic
+    $argsList = @("thinking-overrides")
+    if ($NoThinking) { $argsList += "--no-thinking" }
+    if ($ThinkingBudget -gt 0) { $argsList += "--budget=$ThinkingBudget" } else { $argsList += "--budget=0" }
+    $result = Invoke-LauncherMjs $argsList | ConvertFrom-Json
+    if ($result.messages) {
+        foreach ($msg in $result.messages) {
+            Write-Host "  $msg" -ForegroundColor $(
+                if ($msg -match 'DISABLED') { 'Yellow' } else { 'Cyan' }
+            )
         }
     }
-    $overrides | ConvertTo-Json -Depth 3 | Set-Content -Path $ThinkingOverridesFile -NoNewline
 }
 
-function Initialize-SlotOverrides {
-    param($resolved)
-    $defaults = @{}
-    foreach ($slot in @("opus","sonnet","haiku","subagent","fable")) {
-        $s = $resolved.slots[$slot]
-        $defaults[$slot] = "$($s.provider):$($s.model)"
-    }
-
-    $existing = @{}
-    if (Test-Path $SlotOverridesFile) {
-        try { $existing = Get-Content $SlotOverridesFile -Raw | ConvertFrom-Json } catch { $null = $_ }
-    }
-
-    # Merge: existing overrides win over new defaults
-    $merged = @{ _defaults = $defaults }
-    foreach ($slot in @("opus","sonnet","haiku","subagent","fable")) {
-        if ($existing.PSObject.Properties.Name -contains $slot) {
-            $merged[$slot] = $existing.$slot
-        }
-    }
-
-    $merged | ConvertTo-Json | Set-Content -Path $SlotOverridesFile -NoNewline
-}
+# Initialize-SlotOverrides removed — superseded by proxy/launcher.mjs init-overrides
 
 # --- Persistent proxy state management ---
 function Get-ProxyState {
@@ -661,82 +643,7 @@ function Build-AdHocConfig($specs) {
     return $config
 }
 
-# --- Build routing JSON for multi-provider proxy ---
-function Build-RoutesJson {
-    param($resolved, [switch]$IncludeAllModels)
-
-    $routes = @{}
-    if ($IncludeAllModels) {
-        # Include ALL models from ALL configs that have valid keys (for /model switching)
-        $seen = @{}
-        foreach ($cfg in $Configs.Values) {
-            foreach ($slot in @("opus","sonnet","haiku","subagent","fable")) {
-                $val = $cfg[$slot]
-                if ($val -match '^(.+?):(.+)$') {
-                    $provKey = $Matches[1]
-                    $modelId = $Matches[2]
-                    $apiModelId = $modelId
-                    if (-not $seen.ContainsKey($apiModelId) -and $Providers.ContainsKey($provKey) -and $Providers[$provKey].key) {
-                        $seen[$apiModelId] = $true
-                        $routes[$apiModelId] = @{ provider = $provKey; rewrite = $apiModelId }
-                    }
-                }
-            }
-        }
-    } else {
-        foreach ($kv in $resolved.modelProviders.GetEnumerator()) {
-            $modelId = $kv.Key
-            $apiModelId = $modelId
-            $provKey = $kv.Value
-            $routes[$apiModelId] = @{ provider = $provKey; rewrite = $apiModelId }
-        }
-    }
-
-    $providerEntries = @{}
-    if ($IncludeAllModels) {
-        # Include ALL providers with valid keys so /model providerKey:modelId works
-        foreach ($kv in $Providers.GetEnumerator()) {
-            if ($kv.Value.key) {
-                $fb = if ($kv.Value.fallback) { $kv.Value.fallback } else { $null }
-                $providerEntries[$kv.Key] = @{
-                    url      = $kv.Value.url
-                    keyEnv   = $kv.Value.keyName
-                    auth     = $kv.Value.auth
-                    format   = if ($kv.Value.format) { $kv.Value.format } else { "anthropic" }
-                    fallback = $fb
-                }
-                if ($kv.Value.extraHeaders) { $providerEntries[$kv.Key].extraHeaders = $kv.Value.extraHeaders }
-                if ($kv.Value.streamUsageReporting) { $providerEntries[$kv.Key].streamUsageReporting = $kv.Value.streamUsageReporting }
-            }
-        }
-    } else {
-        foreach ($kv in $resolved.providers.GetEnumerator()) {
-            $fb = if ($kv.Value.fallback) { $kv.Value.fallback } else { $null }
-            $providerEntries[$kv.Key] = @{
-                url      = $kv.Value.url
-                keyEnv   = $kv.Value.keyName
-                auth     = $kv.Value.auth
-                format   = if ($kv.Value.format) { $kv.Value.format } else { "anthropic" }
-                fallback = $fb
-            }
-            if ($kv.Value.extraHeaders) { $providerEntries[$kv.Key].extraHeaders = $kv.Value.extraHeaders }
-            if ($kv.Value.streamUsageReporting) { $providerEntries[$kv.Key].streamUsageReporting = $kv.Value.streamUsageReporting }
-        }
-    }
-    $slots = @{}
-    foreach ($slot in @("opus","sonnet","haiku","subagent","fable")) {
-        $s = $resolved.slots[$slot]
-        $slots[$slot] = "${slot}:$($s.provider):$($s.model)"
-    }
-
-    return @{
-        slots           = $slots
-        routes          = $routes
-        providers       = $providerEntries
-        defaultProvider = $resolved.defaultProvider
-        contextLimits   = $ModelCtx
-    } | ConvertTo-Json -Depth 5
-}
+# Build-RoutesJson removed — superseded by proxy/launcher.mjs build-routes
 
 # --- Standalone AV fix batch file ---
 # Written on every launch to ~/.deepclaude/fix-av.cmd.  This survives
@@ -1087,7 +994,11 @@ if ($PSBoundParameters.ContainsKey('ProbeFile')) {
             $r = Resolve-Config $defaultCfg
         }
         Set-UsedProviderEnv $r
-        $routesJson = Build-RoutesJson $r -IncludeAllModels
+        if ($AllSpecs.Count -eq 1 -and $Configs.Contains($AllSpecs[0])) {
+            $routesJson = Invoke-LauncherMjs "build-routes", "--name=$($AllSpecs[0])"
+        } else {
+            $routesJson = Invoke-LauncherMjs "build-routes", "--specs=$($AllSpecs -join ',')"
+        }
         $routesFile = Join-Path $DeepClaudeDir "probe-routes.json"
         Write-AtomicFile $routesFile $routesJson
     }
@@ -1103,14 +1014,16 @@ if ($DryRun) {
 
     if ($AllSpecs.Count -eq 1 -and $Configs.Contains($AllSpecs[0])) {
         $r = Resolve-Config $AllSpecs[0]
+        $routesJson = Invoke-LauncherMjs "build-routes", "--name=$($AllSpecs[0])"
     } elseif ($AllSpecs.Count -gt 0) {
         $r = Build-AdHocConfig $AllSpecs
+        $routesJson = Invoke-LauncherMjs "build-routes", "--specs=$($AllSpecs -join ',')"
     } else {
         $defaultCfg = if ($env:DEEPCLAUDE_DEFAULT_BACKEND) { $env:DEEPCLAUDE_DEFAULT_BACKEND } elseif ($env:CHEAPCLAUDE_DEFAULT_BACKEND) { $env:CHEAPCLAUDE_DEFAULT_BACKEND } else { "ds" }
         $r = Resolve-Config $defaultCfg
+        $routesJson = Invoke-LauncherMjs "build-routes", "--name=$defaultCfg"
     }
     Set-UsedProviderEnv $r
-    $routesJson = Build-RoutesJson $r -IncludeAllModels
     $routesFile = Join-Path $DeepClaudeDir "dryrun-routes.json"
     Write-AtomicFile $routesFile $routesJson
     & $tsxBin $proxyScript --dry-run $routesFile
@@ -1128,9 +1041,10 @@ if ($Cost) {
     if ($costData) {
         foreach ($prop in $costData.PSObject.Properties) {
             $model = $prop.Name
+            if ($model.StartsWith('_')) { continue }
             $p = $prop.Value
-            $inp = if ($p.input -eq 0) { "free" } else { "`$$($p.input.ToString('F3'))" }
-            $out = if ($p.output -eq 0) { "free" } else { "`$$($p.output.ToString('F2'))" }
+            $inp = if (-not $p.input) { "free" } else { "`$$($p.input.ToString('F3'))" }
+            $out = if (-not $p.output) { "free" } else { "`$$($p.output.ToString('F2'))" }
             $cacheHit = if ($p.input_cache_hit) { "`$$($p.input_cache_hit.ToString('F4'))" } else { "—" }
             $cacheMiss = if ($p.input_cache_miss) { "`$$($p.input_cache_miss.ToString('F3'))" } else { "—" }
             $displayName = if ($model.Length -gt 37) { $model.Substring(0, 37) } else { $model }
@@ -1211,10 +1125,10 @@ if ($Version) {
     $mtime = if (Test-Path $scriptPath) { (Get-Item $scriptPath).LastWriteTime.ToString("yyyy-MM-dd HH:mm") } else { "unknown" }
 
     # Read version from package.json, fallback to hardcoded default.
-    $version = "v1.0.0"
+    $verStr = "v1.0.0"
     $pkgPath = Join-Path $myPath "package.json"
     if (Test-Path $pkgPath) {
-        try { $version = "v" + ((Get-Content $pkgPath -Raw | ConvertFrom-Json).version) } catch {}
+        try { $verStr = "v" + ((Get-Content $pkgPath -Raw | ConvertFrom-Json).version) } catch {}
     }
 
     # Get short git hash from the repo directory.
@@ -1224,7 +1138,7 @@ if ($Version) {
         if ($hash) { $gitHash = $hash.Trim() }
     } catch {}
 
-    Write-Host "deepclaude $version ($gitHash) ($mtime)"
+    Write-Host "deepclaude $verStr ($gitHash) ($mtime)"
     Write-Host "Proxy: $(Join-Path $myPath 'proxy\start-proxy.js')"
     exit 0
 }
@@ -1232,16 +1146,9 @@ if ($Version) {
 # --- Install Statusline ---
 if ($InstallStatusline) {
     $myDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
-    if ($IsWindows) {
-        $scriptExt = "ps1"
-        $scriptType = "PowerShell"
-    } else {
-        $scriptExt = "sh"
-        $scriptType = "shell"
-    }
-    $sourceFile = Join-Path $myDir "statusline" "statusline.$scriptExt"
+    $sourceFile = Join-Path $myDir "statusline" "statusline.mjs"
     $claudeDir = Join-Path $HOME ".claude"
-    $destFile = Join-Path $claudeDir "statusline.$scriptExt"
+    $destFile = Join-Path $claudeDir "statusline.mjs"
     $settingsFile = Join-Path $claudeDir "settings.json"
 
     if (-not (Test-Path $sourceFile)) {
@@ -1254,9 +1161,9 @@ if ($InstallStatusline) {
         New-Item -ItemType Directory -Path $claudeDir -Force | Out-Null
     }
 
-    # Copy statusline script
+    # Copy the single statusline script (Node.js, no platform wrapper needed)
     Copy-Item $sourceFile $destFile -Force
-    Write-Host "  Copied statusline script to: $destFile" -ForegroundColor Green
+    Write-Host "  Copied statusline to: $destFile" -ForegroundColor Green
 
     # Read or create settings.json
     $settings = @{}
@@ -1272,10 +1179,10 @@ if ($InstallStatusline) {
         }
     }
 
-    # Add/merge statusLine config
+    # Add/merge statusLine config — node runs .mjs directly, no platform wrapper needed
     $statusLineConfig = @{
         type = "command"
-        command = if ($IsWindows) { "pwsh -NoProfile -File `"$destFile`"" } else { "bash `"$destFile`"" }
+        command = "node `"$($destFile -replace '\\', '/')`""
     }
 
     if ($settings -is [PSCustomObject]) {
@@ -1421,7 +1328,7 @@ if ($Doctor) {
             $doctorResolved = Resolve-Config $doctorConfigName
             Set-UsedProviderEnv $doctorResolved
             Show-ProxyWarning
-            $testRoutesJson = Build-RoutesJson $doctorResolved -IncludeAllModels
+            $testRoutesJson = Invoke-LauncherMjs "build-routes", "--name=$doctorConfigName"
             $testRoutesFile = Join-Path $DeepClaudeDir "doctor-test-routes.json"
             Write-AtomicFile $testRoutesFile $testRoutesJson
 
@@ -1439,7 +1346,7 @@ if ($Doctor) {
 
             # Also test provider API key validity via probe
             Write-Host "`n  Key Validation (probe each provider):" -ForegroundColor Yellow
-            $probeRoutesJson = Build-RoutesJson $doctorResolved -IncludeAllModels
+            $probeRoutesJson = Invoke-LauncherMjs "build-routes", "--name=$doctorConfigName"
             $probeRoutesFile = Join-Path $DeepClaudeDir "doctor-probe-routes.json"
             Write-AtomicFile $probeRoutesFile $probeRoutesJson
             $probeOut = & $tsxBin $proxyScript --probe $probeRoutesFile 2>&1
@@ -1832,7 +1739,16 @@ if ($Switch -or $PSBoundParameters.ContainsKey('Switch')) {
     Set-UsedProviderEnv $switchResolved
 
     $proxyState = Get-ProxyState
-    $routesJson = Build-RoutesJson $switchResolved -IncludeAllModels
+
+    # Build routes and slot overrides via launcher.mjs
+    if ($Configs.Contains($switchTarget)) {
+        $routesJson = Invoke-LauncherMjs "build-routes", "--name=$switchTarget"
+        Invoke-LauncherMjs "init-overrides", "--name=$switchTarget" | Out-Null
+    } else {
+        $specs = $switchTarget -split '\s+'
+        $routesJson = Invoke-LauncherMjs "build-routes", "--specs=$($specs -join ',')"
+        Invoke-LauncherMjs "init-overrides", "--specs=$($specs -join ',')" | Out-Null
+    }
 
     $routesFile = $CurrentRoutesFile
     Write-AtomicFile $routesFile $routesJson
@@ -1847,8 +1763,6 @@ if ($Switch -or $PSBoundParameters.ContainsKey('Switch')) {
     } else {
         Write-Host "`n  Proxy routes updated to: $($switchResolved.name)" -ForegroundColor Green
     }
-
-    Initialize-SlotOverrides $switchResolved
 
     Write-Host "  Slot mappings:" -ForegroundColor DarkGray
     foreach ($slot in @("opus","sonnet","haiku","subagent","fable")) {
@@ -1899,7 +1813,15 @@ if ($Remote) {
 
     Write-Host "`n  Starting routing proxy for $($resolved.name)..." -ForegroundColor Cyan
 
-    $routesJson = Build-RoutesJson $resolved -IncludeAllModels
+    # Build routes and slot overrides via launcher.mjs
+    if ($AllSpecs.Count -eq 1 -and $Configs.Contains($AllSpecs[0])) {
+        $routesJson = Invoke-LauncherMjs "build-routes", "--name=$($AllSpecs[0])"
+        Invoke-LauncherMjs "init-overrides", "--name=$($AllSpecs[0])" | Out-Null
+    } else {
+        $routesJson = Invoke-LauncherMjs "build-routes", "--specs=$($AllSpecs -join ',')"
+        Invoke-LauncherMjs "init-overrides", "--specs=$($AllSpecs -join ',')" | Out-Null
+    }
+
     $proxyState = Get-ProxyState
 
     if ($proxyState) {
@@ -1916,8 +1838,6 @@ if ($Remote) {
         Write-Host "  Proxy on :$proxyPort (persistent)" -ForegroundColor DarkGray
     }
 
-    Initialize-SlotOverrides $resolved
-
     $provNames = ($resolved.providers.Values | ForEach-Object { $_.name }) -join " + "
     Write-Host "  Providers: $provNames" -ForegroundColor DarkGray
     Write-Host "  Launching remote control...`n" -ForegroundColor Cyan
@@ -1929,44 +1849,20 @@ if ($Remote) {
         }
     }
 
-    $overrides = Get-Content $SlotOverridesFile -Raw | ConvertFrom-Json
-    # Helper: append [1m] to model if its context limit is >=1M
-    $Append1M = {
-        param($m) $modelId = ($m -split ':')[-1]; if ($ModelCtx[$modelId] -ge 1000000) { return $m + '[1m]' }; return $m
+    # Use launcher.mjs for env vars (handles [1m] suffix, compaction window, etc.)
+    $resolvedOpus = $resolved.slots['opus'].model
+    $resolvedSonnet = $resolved.slots['sonnet'].model
+    $resolvedHaiku = $resolved.slots['haiku'].model
+    $resolvedSub = $resolved.slots['subagent'].model
+    $resolvedFable = $resolved.slots['fable'].model
+    $envJson = Invoke-LauncherMjs "env-vars", "--port=$proxyPort", "--opus=$resolvedOpus", "--sonnet=$resolvedSonnet", "--haiku=$resolvedHaiku", "--subagent=$resolvedSub", "--fable=$resolvedFable" | ConvertFrom-Json
+    foreach ($kv in $envJson.PSObject.Properties) {
+        if ($kv.Name -eq '_unset') { continue }
+        Set-Content "Env:$($kv.Name)" -Value $kv.Value
     }
-    $env:ANTHROPIC_BASE_URL = "http://127.0.0.1:$proxyPort"
-    $env:ANTHROPIC_DEFAULT_OPUS_MODEL = & $Append1M ("opus:" + ($overrides.opus ?? $overrides._defaults.opus ?? "$($resolved.slots['opus'].provider):$($resolved.slots['opus'].model)"))
-    $env:ANTHROPIC_DEFAULT_SONNET_MODEL = & $Append1M ("sonnet:" + ($overrides.sonnet ?? $overrides._defaults.sonnet ?? "$($resolved.slots['sonnet'].provider):$($resolved.slots['sonnet'].model)"))
-    $env:ANTHROPIC_DEFAULT_HAIKU_MODEL = & $Append1M ("haiku:" + ($overrides.haiku ?? $overrides._defaults.haiku ?? "$($resolved.slots['haiku'].provider):$($resolved.slots['haiku'].model)"))
-    $env:ANTHROPIC_DEFAULT_FABLE_MODEL = & $Append1M ("fable:" + ($overrides.fable ?? $overrides._defaults.fable ?? "$($resolved.slots['fable'].provider):$($resolved.slots['fable'].model)"))
-    $env:CLAUDE_CODE_SUBAGENT_MODEL = & $Append1M ("subagent:" + ($overrides.subagent ?? $overrides._defaults.subagent ?? "$($resolved.slots['subagent'].provider):$($resolved.slots['subagent'].model)"))
-    $ctxModel = $resolved.slots["opus"].model -replace '\[1m\]', ''
-    $opusCtx = $CompactionWindow[$ctxModel]
-    if ($opusCtx) {
-        # Per-model compaction window (from compactionWindow in providers.json)
-        if ($opusCtx -ge 1000000) {
-            $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = "1000000"
-        } else {
-            $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = "$opusCtx"
-        }
-    } else {
-        # Fall back to full context limit (pre-compactionWindow behavior)
-        $opusCtx = $ModelCtx[$ctxModel]
-        if ($opusCtx) {
-            if ($opusCtx -ge 1000000) {
-                $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = "1000000"
-            } elseif ($opusCtx -gt 131072) {
-                $env:DISABLE_COMPACT = "1"
-                $env:CLAUDE_CODE_MAX_CONTEXT_TOKENS = "$opusCtx"
-            } else {
-                $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = "$opusCtx"
-            }
-        }
+    foreach ($uk in $envJson._unset) {
+        Remove-Item "Env:$uk" -ErrorAction SilentlyContinue
     }
-    Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
-    $env:ANTHROPIC_AUTH_TOKEN = "proxy"  # dummy — proxy handles real auth
-    $env:CLAUDE_CONTEXT_COMPRESSION = 'true'
-    $env:ANTHROPIC_MODEL = & $Append1M ($resolved.slots['opus'].model -replace '\[1m\]', '')
 
     try {
         & claude --effort $Effort --dangerously-skip-permissions remote-control @ModelSpecs
@@ -2004,7 +1900,15 @@ foreach ($slot in @("opus","sonnet","haiku","subagent","fable")) {
 }
 Write-Host ""
 
-$routesJson = Build-RoutesJson $resolved -IncludeAllModels
+# Build routes and slot overrides via launcher.mjs
+if ($AllSpecs.Count -eq 1 -and $Configs.Contains($AllSpecs[0])) {
+    $routesJson = Invoke-LauncherMjs "build-routes", "--name=$($AllSpecs[0])"
+    Invoke-LauncherMjs "init-overrides", "--name=$($AllSpecs[0])" | Out-Null
+} else {
+    $routesJson = Invoke-LauncherMjs "build-routes", "--specs=$($AllSpecs -join ',')"
+    Invoke-LauncherMjs "init-overrides", "--specs=$($AllSpecs -join ',')" | Out-Null
+}
+
 $proxyState = Get-ProxyState
 
 Write-AtomicFile $CurrentRoutesFile $routesJson
@@ -2029,64 +1933,26 @@ if ($proxyState) {
     }
 }
 
-Initialize-SlotOverrides $resolved
-
-# Resolve actual models from overrides (so /model shows the real model, not config defaults)
-$overrides = Get-Content $SlotOverridesFile -Raw | ConvertFrom-Json
-function Get-SlotModel($s) { $overrides.$s ?? $overrides._defaults.$s ?? "$($resolved.slots[$s].provider):$($resolved.slots[$s].model)" }
-$opusM   = "opus:" + (Get-SlotModel 'opus')
-$sonnetM = "sonnet:" + (Get-SlotModel 'sonnet')
-$haikuM  = "haiku:" + (Get-SlotModel 'haiku')
-$subM    = "subagent:" + (Get-SlotModel 'subagent')
-$fableM  = "fable:" + (Get-SlotModel 'fable')
-
-# Append [1m] suffix for models with >=1M context. Claude Code's PV() checks this
-# dynamically on every request, so the context window follows /model switches.
-function Append-1M($modelSpec) {
-    $modelId = ($modelSpec -split ':')[-1]
-    $ctxLimit = $ModelCtx[$modelId]
-    if ($ctxLimit -ge 1000000) { return $modelSpec + '[1m]' }
-    return $modelSpec
+# Set env vars via launcher.mjs (handles [1m] suffix, compaction window, etc.)
+$resolvedOpus = $resolved.slots['opus'].model
+$resolvedSonnet = $resolved.slots['sonnet'].model
+$resolvedHaiku = $resolved.slots['haiku'].model
+$resolvedSub = $resolved.slots['subagent'].model
+$resolvedFable = $resolved.slots['fable'].model
+$envJson = Invoke-LauncherMjs "env-vars", "--port=$($proxyInfo.Port)", "--opus=$resolvedOpus", "--sonnet=$resolvedSonnet", "--haiku=$resolvedHaiku", "--subagent=$resolvedSub", "--fable=$resolvedFable" | ConvertFrom-Json
+foreach ($kv in $envJson.PSObject.Properties) {
+    if ($kv.Name -eq '_unset') { continue }
+    Set-Content "Env:$($kv.Name)" -Value $kv.Value
 }
-$opusM   = Append-1M $opusM
-$sonnetM = Append-1M $sonnetM
-$haikuM  = Append-1M $haikuM
-$subM    = Append-1M $subM
-$fableM  = Append-1M $fableM
+foreach ($uk in $envJson._unset) {
+    Remove-Item "Env:$uk" -ErrorAction SilentlyContinue
+}
 
 if ($Dashboard) {
     Write-Host "  Dashboard: http://127.0.0.1:$($proxyInfo.Port)/dashboard" -ForegroundColor Cyan
     if ($Open) {
         Start-Process "http://127.0.0.1:$($proxyInfo.Port)/dashboard"
     }
-}
-
-$env:ANTHROPIC_BASE_URL = "http://127.0.0.1:$($proxyInfo.Port)"
-$env:CLAUDE_CONTEXT_COMPRESSION = 'true'
-$env:ANTHROPIC_AUTH_TOKEN = "proxy"  # dummy -- proxy handles real auth
-$env:ANTHROPIC_MODEL = $opusM
-$env:ANTHROPIC_DEFAULT_OPUS_MODEL = $opusM
-$env:ANTHROPIC_DEFAULT_SONNET_MODEL = $sonnetM
-$env:ANTHROPIC_DEFAULT_HAIKU_MODEL = $haikuM
-$env:ANTHROPIC_DEFAULT_FABLE_MODEL = $fableM
-$env:CLAUDE_CODE_SUBAGENT_MODEL = $subM
-$ctxModel = $resolved.slots["opus"].model -replace '\[1m\]', ''
-$opusCtx = $ModelCtx[$ctxModel]
-if ($opusCtx) {
-    if ($opusCtx -ge 1000000) {
-        # Claude Code's auto-compact window max is 1,000,000 (bu_ constant).
-        # Setting it higher (e.g. 1,048,576) is rejected as invalid by BKH().
-        $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = "1000000"
-    } elseif ($opusCtx -gt 131072) {
-        $env:DISABLE_COMPACT = "1"
-        $env:CLAUDE_CODE_MAX_CONTEXT_TOKENS = "$opusCtx"
-    } else {
-        $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = "$opusCtx"
-    }
-}
-if ($env:ANTHROPIC_API_KEY) {
-    Write-Host "  Note: ANTHROPIC_API_KEY is set but not used with this config." -ForegroundColor DarkGray
-    Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
 }
 
 if ($env:DEEPCLAUDE_WATCHDOG -eq 'true' -and $proxyInfo.Process) {

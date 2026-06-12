@@ -27,6 +27,7 @@ DeepClaude runs a local HTTP routing proxy that intercepts Claude Code's Anthrop
 | `forward.ts` | Upstream HTTP forwarding with SSE streaming, gzip decompression, stream heartbeat/deadline timers with byte diagnostics, total-byte cap (500MB), fallback header injection, SSE buffer guarding, usage token extraction, peekFirstChunk with fast-stream race protection |
 | `friendly-error.ts` | Conversational error responses for exhausted fallback chains |
 | `header-sanitizer.ts` | Request header sanitization before logging (drops auth, cookies, noise) |
+| `launcher.mjs` | Unified Node.js engine shared by deepclaude.ps1 and deepclaude.sh — config resolution, routes JSON, env vars with [1m] suffix and compaction window, slot/thinking overrides, proxy state, pricing/model/key data. Zero npm deps, single source of truth. |
 | `log.ts` | Structured logger with per-module namespacing, request IDs, and env-gated debug level (`DEEPCLAUDE_DEBUG=true`) |
 | `lru-cache.ts` | TTL cache with LRU eviction using delete-then-set MRU promotion and lazy shared cleanup |
 | `momentum.ts` | Session-based provider stickiness (tracks last 5 provider decisions) |
@@ -52,7 +53,7 @@ DeepClaude runs a local HTTP routing proxy that intercepts Claude Code's Anthrop
 
 ### Data-driven provider registry
 
-Both the proxy and the launcher scripts (`deepclaude.ps1`, `deepclaude.sh`) read from a single `proxy/providers.json` file. This eliminates duplicated provider, config, and context-limit definitions across languages.
+The proxy, the launcher scripts, and `statusline.mjs` all read from a single `proxy/providers.json` file. Config resolution, route construction, and context-limit lookups are centralized in `proxy/launcher.mjs` — a zero-dependency Node.js module shared by both `deepclaude.ps1` and `deepclaude.sh`. This eliminates duplicated provider, config, and context-limit definitions across languages and guarantees behavioral parity.
 
 <!-- AUTO:providers-schema -->
 ```
@@ -69,15 +70,17 @@ providers.json
 
 ### Launcher scripts
 
-Two launcher scripts with identical behavior, each loading `providers.json` natively:
+Two thin platform wrappers with identical behavior:
 
-- **`deepclaude.ps1`** — PowerShell 7+, uses `ConvertFrom-Json`
-- **`deepclaude.sh`** — Bash 4+, uses `jq` with `@tsv` output to avoid delimiter issues
+- **`deepclaude.ps1`** — PowerShell 7+ (Windows), parses CLI args, manages processes
+- **`deepclaude.sh`** — Bash 4+ (macOS/Linux), same role
+
+All business logic — config resolution, routes JSON construction, env var computation, slot/thinking overrides, context window calculation — lives in a single **`proxy/launcher.mjs`** Node.js module shared by both wrappers. This eliminates the ~1800 lines of duplicated logic that existed previously and guarantees behavioral parity across platforms.
 
 ### Test coverage
 
 <!-- AUTO:test-coverage -->
-623 tests across 36 test files covering all proxy modules — transport errors, concurrency, LRU cache, provider registry validation, error codes, routing, stats, forwarding, server tools, config, protocol translation, thinking cache, reasoning cache, header sanitization, truncation, crypto, friendly errors, SSRF validation, dead stream detection, startup checks, and stream metrics. Run with `npm test`.
+617 tests across 36 test files covering all proxy modules — transport errors, concurrency, LRU cache, provider registry validation, error codes, routing, stats, forwarding, server tools, config, protocol translation, thinking cache, reasoning cache, header sanitization, truncation, crypto, friendly errors, SSRF validation, dead stream detection, startup checks, and stream metrics. Run with `npm test`.
 <!-- /AUTO:test-coverage -->
 
 ### Pre-commit
@@ -100,6 +103,7 @@ npm install -g .
 # macOS/Linux: export PATH="$PATH:/path/to/deepclaude"
 
 deepclaude                                    # Launch with DeepSeek V4 Pro
+dc                                            # Shortcut — same as deepclaude (Windows: dc.cmd, macOS/Linux: alias)
 ```
 
 ## Requirements
@@ -135,18 +139,21 @@ deepclaude -b anthropic     # Normal Claude Code
 
 ### Ad-hoc positional configs
 
-Pass 1–4 `providerKey:modelId` specs, mapped to opus/sonnet/haiku/subagent:
+Pass 1–5 `providerKey:modelId` specs, mapped to opus/sonnet/haiku/subagent/fable:
 
 ```
-deepclaude ds:deepseek-v4-pro                                    # 1 spec → all slots
-deepclaude ds:deepseek-v4-pro oc:big-pickle                      # 2 specs → first half / second half
-deepclaude ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free  # 3 specs → last repeats
+deepclaude ds:deepseek-v4-pro                                              # 1 spec → all 5 slots
+deepclaude ds:deepseek-v4-pro oc:big-pickle                                # 2 specs → first 3 / last 2
+deepclaude ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free       # 3 specs → opus, rest=second, sub/fable=third
+deepclaude ds:deepseek-v4-pro ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free  # 4 specs → sub/fable share last
+deepclaude ds:deepseek-v4-pro ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free mm:mimo-v2.5-pro  # 5 specs → direct
 ```
 
 ### Flags
 
 ```
 <!-- AUTO:flags -->
+-h, --help      Show this help
 --status        Show keys, configs, and active slot mapping
 --doctor        System health check (prereqs, keys, proxy test)
 --cost          Pricing comparison
@@ -154,26 +161,28 @@ deepclaude ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free  # 3 specs 
 --models        List all available model IDs (for /model in CC)
 --remote        Browser-based remote control (starts proxy automatically)
 --persist       Keep proxy alive after CC exits
---switch CONFIG Switch a running persistent proxy to a different config
---set-slot SLOT MODEL  Override a slot (opus/sonnet/haiku/subagent)
+--switch CONFIG  Switch a running persistent proxy to a different config
+--set-slot SLOT MODEL  Override a slot (opus/sonnet/haiku/subagent/fable)
 --subagent-model MODEL  Set a dedicated subagent model (e.g., oc:big-pickle)
 --stop-proxy    Kill the persistent proxy
 --probe [FILE]  Test each provider with a minimal prompt (latency, tokens, auth)
 --dry-run [FILE] Show resolved routing table without starting the proxy
+--what-if       Alias for --dry-run
 --dashboard     Print health dashboard URL (http://127.0.0.1:PORT/dashboard)
 --open          Open dashboard in browser (use with --dashboard)
 --version       Print version with git hash and proxy path
 --lint          Self-lint (PSScriptAnalyzer on .ps1, shellcheck on .sh)
---effort LEVEL        Set Claude Code effort level (default: max)
---fix-av              Print Windows Defender exclusion commands
---install-statusline  Auto-install the statusline script and config
---log-all             Log all requests to ~/.deepclaude/requests.log (by default only failures are logged)
---stats               Show proxy request stats and provider health
---lint-config         Validate providers.json configuration
+--lint-config   Validate providers.json configuration
+--effort LEVEL  Set Claude Code effort level (default: max). Values: low, medium, high, max.
+--fix-av        Print Windows Defender exclusion commands
+--install-statusline  Install status bar showing model, effort, context (requires restart)
+--logs, --tail  Tail the proxy log (~/.deepclaude/proxy.log)
+--health        Quick health check (one-line summary)
+--log-all       Log all requests to ~/.deepclaude/requests.log (by default only failures are logged)
+--stats         Show proxy request stats and provider health
 --skip-startup-check  Skip provider health checks on proxy startup
---no-thinking        Disable extended thinking for all models (save cost)
+--no-thinking   Disable extended thinking for all models (save cost)
 --thinking-budget N  Set thinking budget in tokens (e.g. 64000 for deep reasoning)
---what-if             Alias for --dry-run
 <!-- /AUTO:flags -->
 ```
 
@@ -230,20 +239,20 @@ Fallbacks are configured per-provider and transparent to Claude Code. Max 3 atte
 
 ```
 <!-- AUTO:configs-reference -->
-or      opus=or:deepseek/deepseek-v4-pro  sonnet=or:deepseek/deepseek-v4-pro  haiku=or:deepseek/deepseek-v4-flash  sub=or:deepseek/deepseek-v4-flash
-fw      opus=fw:accounts/fireworks/models/deepseek-v4-pro  sonnet=fw:accounts/fireworks/models/deepseek-v4-pro  haiku=fw:accounts/fireworks/models/deepseek-v4-pro  sub=fw:accounts/fireworks/models/deepseek-v4-pro  (all slots same)
-oc      opus=oc:big-pickle  sonnet=oc:big-pickle  haiku=oc:big-pickle  sub=oc:big-pickle  (all slots same)
-km      opus=km:kimi-k2.6  sonnet=km:kimi-k2.6  haiku=km:kimi-k2.6  sub=km:kimi-k2.6  (all slots same)
-mm      opus=mm:mimo-v2.5-pro  sonnet=mm:mimo-v2.5-pro  haiku=mm:mimo-v2.5-pro  sub=mm:mimo-v2.5-pro  (all slots same)
-um      opus=um:umans-coder  sonnet=um:umans-coder  haiku=um:umans-coder  sub=um:umans-coder  (all slots same)
-gr      opus=gr:groq/llama-4-maverick  sonnet=gr:groq/llama-4-maverick  haiku=gr:groq/deepseek-r1-distill-qwen-32b  sub=gr:groq/deepseek-r1-distill-qwen-32b
-mt      opus=mt:mistral/mistral-large  sonnet=mt:mistral/mistral-large  haiku=mt:mistral/mistral-small  sub=mt:mistral/mistral-small
-mx      opus=mx:minimax/minimax-m1  sonnet=mx:minimax/minimax-m1  haiku=mx:minimax/minimax-m1  sub=mx:minimax/minimax-m1  (all slots same)
-za      opus=za:zai/glm-4.5  sonnet=za:zai/glm-4.5  haiku=za:zai/glm-4.5  sub=za:zai/glm-4.5  (all slots same)
-bp      opus=bp:byteplus/doubao-1.5-pro  sonnet=bp:byteplus/doubao-1.5-pro  haiku=bp:byteplus/doubao-1.5-pro  sub=bp:byteplus/doubao-1.5-pro  (all slots same)
-sf      opus=sf:siliconflow/deepseek-v4-pro  sonnet=sf:siliconflow/deepseek-v4-pro  haiku=sf:siliconflow/deepseek-v4-pro  sub=sf:siliconflow/deepseek-v4-pro  (all slots same)
-nv      opus=nv:novita/deepseek-v4-pro  sonnet=nv:novita/deepseek-v4-pro  haiku=nv:novita/deepseek-v4-pro  sub=nv:novita/deepseek-v4-pro  (all slots same)
-ds+oc   opus=ds:deepseek-v4-pro  sonnet=ds:deepseek-v4-pro  haiku=oc:big-pickle  sub=oc:big-pickle
+or      opus=or:deepseek/deepseek-v4-pro  sonnet=or:deepseek/deepseek-v4-pro  haiku=or:deepseek/deepseek-v4-flash  sub=or:deepseek/deepseek-v4-flash  fable=or:deepseek/deepseek-v4-pro
+fw      opus=fw:accounts/fireworks/models/deepseek-v4-pro  sonnet=fw:accounts/fireworks/models/deepseek-v4-pro  haiku=fw:accounts/fireworks/models/deepseek-v4-pro  sub=fw:accounts/fireworks/models/deepseek-v4-pro  fable=fw:accounts/fireworks/models/deepseek-v4-pro  (all slots same)
+oc      opus=oc:big-pickle  sonnet=oc:big-pickle  haiku=oc:big-pickle  sub=oc:big-pickle  fable=oc:big-pickle  (all slots same)
+km      opus=km:kimi-k2.6  sonnet=km:kimi-k2.6  haiku=km:kimi-k2.6  sub=km:kimi-k2.6  fable=km:kimi-k2.6  (all slots same)
+mm      opus=mm:mimo-v2.5-pro  sonnet=mm:mimo-v2.5-pro  haiku=mm:mimo-v2.5-pro  sub=mm:mimo-v2.5-pro  fable=mm:mimo-v2.5-pro  (all slots same)
+um      opus=um:umans-coder  sonnet=um:umans-coder  haiku=um:umans-coder  sub=um:umans-coder  fable=um:umans-coder  (all slots same)
+gr      opus=gr:groq/llama-4-maverick  sonnet=gr:groq/llama-4-maverick  haiku=gr:groq/deepseek-r1-distill-qwen-32b  sub=gr:groq/deepseek-r1-distill-qwen-32b  fable=gr:groq/llama-4-maverick
+mt      opus=mt:mistral/mistral-large  sonnet=mt:mistral/mistral-large  haiku=mt:mistral/mistral-small  sub=mt:mistral/mistral-small  fable=mt:mistral/mistral-large
+mx      opus=mx:minimax/minimax-m1  sonnet=mx:minimax/minimax-m1  haiku=mx:minimax/minimax-m1  sub=mx:minimax/minimax-m1  fable=mx:minimax/minimax-m1  (all slots same)
+za      opus=za:zai/glm-4.5  sonnet=za:zai/glm-4.5  haiku=za:zai/glm-4.5  sub=za:zai/glm-4.5  fable=za:zai/glm-4.5  (all slots same)
+bp      opus=bp:byteplus/doubao-1.5-pro  sonnet=bp:byteplus/doubao-1.5-pro  haiku=bp:byteplus/doubao-1.5-pro  sub=bp:byteplus/doubao-1.5-pro  fable=bp:byteplus/doubao-1.5-pro  (all slots same)
+sf      opus=sf:siliconflow/deepseek-v4-pro  sonnet=sf:siliconflow/deepseek-v4-pro  haiku=sf:siliconflow/deepseek-v4-pro  sub=sf:siliconflow/deepseek-v4-pro  fable=sf:siliconflow/deepseek-v4-pro  (all slots same)
+nv      opus=nv:novita/deepseek-v4-pro  sonnet=nv:novita/deepseek-v4-pro  haiku=nv:novita/deepseek-v4-pro  sub=nv:novita/deepseek-v4-pro  fable=nv:novita/deepseek-v4-pro  (all slots same)
+ds+oc   opus=ds:deepseek-v4-pro  sonnet=ds:deepseek-v4-pro  haiku=oc:big-pickle  sub=oc:big-pickle  fable=ds:deepseek-v4-pro
 <!-- /AUTO:configs-reference -->
 ```
 
@@ -335,17 +344,11 @@ deepclaude --doctor
 Shows the real model, provider, context usage, effort level, and git branch — with slot override resolution so you see what's actually running.
 
 ```
-# Windows (PowerShell)
-1. Copy statusline/statusline.ps1 → ~/.claude/statusline.ps1
+# All platforms (Node.js)
+1. Copy statusline/statusline.mjs → ~/.claude/statusline.mjs
 2. Add to ~/.claude/settings.json:
 
-  { "statusLine": { "type": "command", "command": "pwsh ~/.claude/statusline.ps1" } }
-
-# macOS/Linux (bash)
-1. Copy statusline/statusline.sh → ~/.claude/statusline.sh
-2. Add to ~/.claude/settings.json:
-
-  { "statusLine": { "type": "command", "command": "bash ~/.claude/statusline.sh" } }
+  { "statusLine": { "type": "command", "command": "node ~/.claude/statusline.mjs" } }
 ```
 
 Resolves slot overrides from `~/.deepclaude/slot-overrides.json` and context limits from `~/.deepclaude/current-routes.json`, so the token gauge and model display always reflect reality.

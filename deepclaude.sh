@@ -26,6 +26,7 @@ PROXY_STATE_FILE="${DEEPCLAUDE_DIR}/proxy.json"
 CURRENT_ROUTES_FILE="${DEEPCLAUDE_DIR}/current-routes.json"
 SLOT_OVERRIDES_FILE="${DEEPCLAUDE_DIR}/slot-overrides.json"
 SUBMODEL_FILE="${DEEPCLAUDE_DIR}/subagent-model.json"
+THINKING_OVERRIDES_FILE="${DEEPCLAUDE_DIR}/thinking-overrides.json"
 
 # --- API Keys ---
 DEEPSEEK_KEY="${DEEPSEEK_API_KEY:-}"
@@ -149,6 +150,15 @@ write_atomic() {
     chmod 600 "$path" 2>/dev/null || true
 }
 
+# --- Unified launcher engine ---
+# All business logic (config resolution, routes JSON, env vars, slot/thinking
+# overrides) lives in proxy/launcher.mjs — single source of truth shared by
+# both deepclaude.sh and deepclaude.ps1.
+LAUNCHER_MJS="${SCRIPT_DIR}/proxy/launcher.mjs"
+launcher_mjs() {
+    node "$LAUNCHER_MJS" "$@"
+}
+
 # --- Persistent proxy state management ---
 get_proxy_state() {
     if [[ ! -f "$PROXY_STATE_FILE" ]]; then return 1; fi
@@ -186,38 +196,7 @@ clear_proxy_state() {
 }
 
 # --- Slot overrides ---
-init_slot_overrides() {
-    local opus_prov="$1" opus_model="$2" sonnet_prov="$3" sonnet_model="$4"
-    local haiku_prov="$5" haiku_model="$6" subagent_prov="$7" subagent_model="$8" fable_prov="${9:-}" fable_model="${10:-}"
-
-    mkdir -p -m 700 "$DEEPCLAUDE_DIR"
-
-    # Build defaults
-    local defaults
-    defaults=$(jq -n \
-        --arg opus "${opus_prov}:${opus_model}" \
-        --arg sonnet "${sonnet_prov}:${sonnet_model}" \
-        --arg haiku "${haiku_prov}:${haiku_model}" \
-        --arg subagent "${subagent_prov}:${subagent_model}" \
-        --arg fable "${fable_prov}:${fable_model}" \
-        '{opus: $opus, sonnet: $sonnet, haiku: $haiku, subagent: $subagent, fable: $fable}')
-
-    local merged
-    if [[ -f "$SLOT_OVERRIDES_FILE" ]]; then
-        # Merge: existing user overrides win over new defaults
-        local existing
-        existing=$(cat "$SLOT_OVERRIDES_FILE")
-        merged=$(echo "$existing" | jq --argjson defaults "$defaults" '
-            ._defaults = $defaults
-        ')
-    else
-        merged=$(echo '{}' | jq --argjson defaults "$defaults" '
-            ._defaults = $defaults
-        ')
-    fi
-
-    echo "$merged" | jq -c '.' > "$SLOT_OVERRIDES_FILE"
-}
+# init_slot_overrides() removed — superseded by proxy/launcher.mjs init-overrides
 
 get_slot_model() {
     local slot="$1" fallback="$2"
@@ -332,79 +311,7 @@ resolve_config() {
 }
 
 # --- Build routes JSON for multi-provider proxy ---
-build_routes_json() {
-    # Reads slot/provider/model lines from stdin, outputs JSON to stdout
-    local slots_json routes_json providers_json default_provider
-    slots_json="{}"
-    routes_json="{}"
-    providers_json="{}"
-    default_provider=""
-
-    while IFS=' ' read -r slot prov_key model_id; do
-        if [[ -z "$default_provider" ]]; then
-            default_provider="$prov_key"
-        fi
-
-        # Slot entry
-        slots_json=$(echo "$slots_json" | jq --arg s "$slot" --arg v "${slot}:${prov_key}:${model_id}" '.[$s] = $v')
-
-        # Route entry
-        routes_json=$(echo "$routes_json" | jq --arg m "$model_id" --arg p "$prov_key" \
-            '.[$m] = {provider: $p, rewrite: $m}')
-
-        # Provider entry (deduplicated by key)
-        if ! echo "$providers_json" | jq -e --arg pk "$prov_key" '.[$pk]' > /dev/null 2>&1; then
-            providers_json=$(echo "$providers_json" | jq --arg pk "$prov_key" \
-                --arg url "${PROVIDER_URL[$prov_key]}" \
-                --arg keyEnv "${PROVIDER_KEYNAME[$prov_key]}" \
-                --arg auth "${PROVIDER_AUTH[$prov_key]}" \
-                --arg format "${PROVIDER_FORMAT[$prov_key]:-anthropic}" \
-                --arg fb "${PROVIDER_FALLBACK[$prov_key]:-}" \
-                '.[$pk] = {url: $url, keyEnv: $keyEnv, auth: $auth, format: $format, fallback: ($fb | if . == "" then [] else split(",") end)}')
-        fi
-    done
-
-    # Include ALL models from ALL configs that have valid keys (for /model switching)
-    for cfg in "${!CONFIG_NAME[@]}"; do
-        for slot in opus sonnet haiku subagent fable; do
-            local var="CONFIG_${slot^^}[$cfg]"
-            local val="${!var}"
-            local pk mid
-            read -r pk mid <<< "$(parse_spec "$val")"
-            local key
-            key=$(get_provider_key "$pk")
-            if [[ -n "$key" ]]; then
-                if ! echo "$routes_json" | jq -e --arg m "$mid" '.[$m]' > /dev/null 2>&1; then
-                    routes_json=$(echo "$routes_json" | jq --arg m "$mid" --arg p "$pk" \
-                        '.[$m] = {provider: $p, rewrite: $m}')
-                fi
-                if ! echo "$providers_json" | jq -e --arg pk "$pk" '.[$pk]' > /dev/null 2>&1; then
-                    providers_json=$(echo "$providers_json" | jq --arg pk "$pk" \
-                        --arg url "${PROVIDER_URL[$pk]}" \
-                        --arg keyEnv "${PROVIDER_KEYNAME[$pk]}" \
-                        --arg auth "${PROVIDER_AUTH[$pk]}" \
-                        --arg format "${PROVIDER_FORMAT[$pk]:-anthropic}" \
-                        --arg fb "${PROVIDER_FALLBACK[$pk]:-}" \
-                        '.[$pk] = {url: $url, keyEnv: $keyEnv, auth: $auth, format: $format, fallback: ($fb | if . == "" then [] else split(",") end)}')
-                fi
-            fi
-        done
-    done
-
-    # Build context limits JSON
-    local ctx_json="{}"
-    for model in "${!MODEL_CTX[@]}"; do
-        ctx_json=$(echo "$ctx_json" | jq --arg m "$model" --arg c "${MODEL_CTX[$model]}" '.[$m] = ($c | tonumber)')
-    done
-
-    jq -n \
-        --argjson slots "$slots_json" \
-        --argjson routes "$routes_json" \
-        --argjson providers "$providers_json" \
-        --arg default "$default_provider" \
-        --argjson contextLimits "$ctx_json" \
-        '{slots: $slots, routes: $routes, providers: $providers, defaultProvider: $default, contextLimits: $contextLimits}'
-}
+# build_routes_json() removed — superseded by proxy/launcher.mjs build-routes
 
 # --- Start the HTTP routing proxy ---
 start_proxy() {
@@ -431,6 +338,7 @@ start_proxy() {
         exit 1
     fi
     "$tsx_bin" "$proxy_script" --routes "$routes_file" --overrides "$SLOT_OVERRIDES_FILE" \
+        --providers "$REGISTRY_FILE" --thinking-overrides "$THINKING_OVERRIDES_FILE" \
         > "$out_file" 2> "$err_file" &
     local proxy_pid=$!
 
@@ -473,48 +381,31 @@ stop_proxy_info() {
 }
 
 # --- Set CC environment variables ---
+# Delegates to launcher.mjs env-vars — single source of truth shared with deepclaude.ps1.
+# Handles [1m] suffix, compaction window, and context limit computation.
 set_cc_env() {
     local proxy_port="$1" opus_model="$2" sonnet_model="$3" haiku_model="$4" subagent_model="$5" fable_model="$6"
-    local opus_ctxt_model="$7"  # model ID for context limit lookup
+    local opus_ctxt_model="${7:-$opus_model}"
 
-    export ANTHROPIC_BASE_URL="http://127.0.0.1:${proxy_port}"
-    export ANTHROPIC_AUTH_TOKEN="proxy"
-    export ANTHROPIC_MODEL="opus:${opus_model}"
-    export ANTHROPIC_DEFAULT_OPUS_MODEL="opus:${opus_model}"
-    export ANTHROPIC_DEFAULT_SONNET_MODEL="sonnet:${sonnet_model}"
-    export ANTHROPIC_DEFAULT_HAIKU_MODEL="haiku:${haiku_model}"
-    export ANTHROPIC_DEFAULT_FABLE_MODEL="fable:${fable_model}"
-    export CLAUDE_CODE_SUBAGENT_MODEL="subagent:${subagent_model}"
+    local env_json
+    env_json=$(launcher_mjs env-vars \
+        --port="$proxy_port" \
+        --opus="$opus_model" --sonnet="$sonnet_model" --haiku="$haiku_model" \
+        --subagent="$subagent_model" --fable="$fable_model" \
+        --ctx-model="$opus_ctxt_model")
+
+    # Apply env vars (key=value pairs; skip _unset)
+    while IFS='=' read -r key value; do
+        [[ -z "$key" || "$key" == "_unset" ]] && continue
+        export "$key"="$value"
+    done < <(echo "$env_json" | jq -r 'to_entries[] | select(.key != "_unset") | "\(.key)=\(.value)"')
+
+    # Process _unset list
+    echo "$env_json" | jq -r '._unset[]?' 2>/dev/null | while read -r uk; do
+        [[ -n "$uk" ]] && unset "$uk" 2>/dev/null || true
+    done
+
     export CLAUDE_CODE_EFFORT_LEVEL="$EFFORT"
-    unset ANTHROPIC_API_KEY 2>/dev/null || true
-
-    local opus_ctx="${COMPACTION_WINDOW[$opus_ctxt_model]:-}"
-    if [[ -n "$opus_ctx" ]]; then
-        # Per-model compaction window (from compactionWindow in providers.json)
-        if (( opus_ctx >= 1000000 )); then
-            export CLAUDE_CODE_AUTO_COMPACT_WINDOW="1000000"
-        else
-            export CLAUDE_CODE_AUTO_COMPACT_WINDOW="$opus_ctx"
-        fi
-    else
-        # Fall back to full context limit (pre-compactionWindow behavior)
-        local opus_ctx_fallback="${MODEL_CTX[$opus_ctxt_model]:-}"
-        if [[ -n "$opus_ctx_fallback" ]]; then
-            if (( opus_ctx_fallback >= 1048576 )); then
-                export CLAUDE_CODE_AUTO_COMPACT_WINDOW="$opus_ctx_fallback"
-            elif (( opus_ctx_fallback >= 200000 )); then
-                export CLAUDE_CODE_MAX_CONTEXT_TOKENS="$opus_ctx_fallback"
-                export DISABLE_COMPACT="1"
-            elif (( opus_ctx_fallback > 131072 )); then
-                export CLAUDE_CODE_MAX_CONTEXT_TOKENS="$opus_ctx_fallback"
-                export DISABLE_COMPACT="1"
-            else
-                export CLAUDE_CODE_AUTO_COMPACT_WINDOW="$opus_ctx_fallback"
-            fi
-        fi
-    fi
-
-    export CLAUDE_CONTEXT_COMPRESSION='true'
 }
 
 clear_anthropic_env() {
@@ -528,7 +419,128 @@ clear_anthropic_env() {
           CLAUDE_CONTEXT_COMPRESSION 2>/dev/null || true
 }
 
+# Append [1m] suffix for models with >=1M context. Claude Code's PV() checks
+# this dynamically on every request, so the context window follows /model switches.
+# append_1m() removed — [1m] logic now lives in proxy/launcher.mjs env-vars
+
+# Export all available provider API keys so the proxy child process inherits them.
+export_provider_keys() {
+    for pk in ds or fw oc al km mm um gr mt mx za bp sf nv; do
+        local key
+        key=$(get_provider_key "$pk")
+        if [[ -n "$key" ]]; then
+            export "${PROVIDER_KEYNAME[$pk]}=$key"
+        fi
+    done
+}
+
+# Build thinking overrides JSON from --no-thinking / --thinking-budget flags.
+# Delegates to launcher.mjs — single source of truth shared with deepclaude.ps1.
+write_thinking_overrides() {
+    if [[ "${NO_THINKING:-false}" == "true" ]]; then
+        launcher_mjs thinking-overrides --no-thinking > /dev/null
+    elif [[ "${THINKING_BUDGET:-0}" -gt 0 ]]; then
+        launcher_mjs thinking-overrides "--budget=${THINKING_BUDGET}" > /dev/null
+    else
+        launcher_mjs thinking-overrides > /dev/null
+    fi
+}
+
+test_context_length_error() {
+    local msg="${1:-}"
+    if [[ "$msg" == *"maximum context length"* ]]; then
+        echo ""
+        echo "ERROR: Context window exceeded. Consider enabling context compression"
+        echo "(add 'contextCompression: true' to ~/.claude/settings.json) or reducing input size."
+        echo ""
+    fi
+}
+
 # --- Actions ---
+show_stats() {
+    echo ""
+    echo "  deepclaude - Proxy Stats"
+    echo "  ==========================="
+
+    if [[ ! -f "$PROXY_STATE_FILE" ]]; then
+        echo ""
+        echo "  No proxy running. Start a proxy first with any backend."
+        echo ""
+        exit 0
+    fi
+
+    local port pid
+    port=$(jq -r '.port' "$PROXY_STATE_FILE" 2>/dev/null) || { echo "  Failed to read proxy state."; exit 1; }
+    pid=$(jq -r '.pid' "$PROXY_STATE_FILE" 2>/dev/null) || { echo "  Failed to read proxy PID."; exit 1; }
+
+    if ! kill -0 "$pid" 2>/dev/null; then
+        echo "  Proxy process (PID $pid) is no longer running."
+        echo "  Removing stale state file..."
+        rm -f "$PROXY_STATE_FILE"
+        exit 1
+    fi
+
+    local health
+    health=$(curl -sf "http://127.0.0.1:${port}/health" 2>/dev/null) || {
+        echo "  Failed to reach proxy on port $port"
+        exit 1
+    }
+
+    local uptime_ms
+    uptime_ms=$(echo "$health" | jq -r '.uptime // 0' 2>/dev/null)
+    local uptime_sec=$(( uptime_ms / 1000 ))
+
+    echo ""
+    echo "  Proxy: 127.0.0.1:$port (PID $pid)"
+    echo "  Uptime: ${uptime_sec}s"
+    echo ""
+
+    local provider_count
+    provider_count=$(echo "$health" | jq '.providers // {} | length' 2>/dev/null)
+    if [[ "$provider_count" -eq 0 ]]; then
+        echo "  No requests recorded yet."
+    else
+        printf "  %-3s %-8s  %3s  %3s %5s  %5s  %5s  %5s\n" \
+            "" "Provider" "Req" "OK" "Fail" "Rate" "Cache" "AvgTime"
+        printf "  %-3s %-8s  %3s  %3s %5s  %5s  %5s  %5s\n" \
+            "---" "--------" "---" "---" "-----" "-----" "-----" "-------"
+
+        while IFS=$'\t' read -r pk req ok fail avg_ms cache_rate; do
+            local rate_str="—"
+            if [[ "$req" -gt 0 ]]; then
+                rate_str=$(awk "BEGIN {printf \"%.0f%%\", ($ok/$req)*100}")
+            fi
+            local avg_str="—"
+            [[ "$avg_ms" -gt 0 ]] && avg_str="${avg_ms}ms"
+            local cache_str="—"
+            [[ -n "$cache_rate" && "$cache_rate" != "null" ]] && cache_str="${cache_rate}%"
+
+            local icon="●" color_code=32  # green
+            if [[ "$req" -eq 0 ]]; then
+                icon="○"; color_code=90  # dark gray
+            elif [[ "$((fail))" -gt 0 ]]; then
+                if [[ "$req" -lt 3 ]]; then
+                    icon="○"; color_code=90
+                elif awk "BEGIN {exit !($fail/$req >= 0.5)}"; then
+                    icon="◐"; color_code=31  # red
+                else
+                    icon="●"; color_code=32
+                fi
+            fi
+
+            printf "  \033[${color_code}m%s %-8s  %3s  %3s %5s  %5s  %5s  %5s\033[0m\n" \
+                "$icon" "$pk" "$req" "$ok" "$fail" "$rate_str" "$cache_str" "$avg_str"
+        done < <(echo "$health" | jq -r '
+            .providers // {} | to_entries[] |
+            [.key, .value.requests, .value.successes, .value.fails, .value.avgMs, .value.cacheHitRate] | @tsv
+        ')
+        echo ""
+        echo "  ● healthy  ○ new/unknown  ◐ degraded (>50% failures)"
+        echo "  Cache: KV disk cache hit % (DeepSeek: 98%+ typical)"
+    fi
+    echo ""
+}
+
 show_status() {
     echo ""
     echo "  deepclaude - Backend Status"
@@ -552,7 +564,7 @@ show_status() {
     echo "    NOVITA_API_KEY:               $(mask_key "$NOVITA_KEY")"
     echo ""
     echo "  Configurations:"
-    for cfg in ds or fw oc km mm um gr mt mx za bp sf nv "ds+oc"; do
+    for cfg in $(printf '%s\n' "${!CONFIG_NAME[@]}" | sort); do
         local label=""
         [[ "$cfg" == "ds" ]] && label=" (default)"
         local provs=()
@@ -619,13 +631,17 @@ show_cost() {
     echo "  Model Pricing (per million tokens)"
     echo "  ==================================="
     echo ""
-    echo "  Model                                      Input/M    Output/M"
-    echo "  ---------------                            --------   --------"
-    while IFS=$'\t' read -r model inp out; do
-        if [ "$inp" = "0" ]; then in_str="free"; else in_str=$(printf "\$%.2f" "$inp"); fi
+    echo "  Model                                      Input/M     CacheHit/M  CacheMiss/M  Output/M"
+    echo "  ---------------                            --------    ----------  -----------  --------"
+    while IFS=$'\t' read -r model inp cache_hit cache_miss out; do
+        if [ "$inp" = "0" ]; then in_str="free"; else in_str=$(printf "\$%.3f" "$inp"); fi
         if [ "$out" = "0" ]; then out_str="free"; else out_str=$(printf "\$%.2f" "$out"); fi
-        printf "  %-37s %-10s %s\n" "$model" "$in_str" "$out_str"
-    done < <(jq -r '.pricing | to_entries[] | [.key, .value.input, .value.output] | @tsv' "$REGISTRY_FILE")
+        local cache_hit_str="—"
+        [[ -n "$cache_hit" && "$cache_hit" != "null" ]] && cache_hit_str=$(printf "\$%.4f" "$cache_hit")
+        local cache_miss_str="—"
+        [[ -n "$cache_miss" && "$cache_miss" != "null" ]] && cache_miss_str=$(printf "\$%.3f" "$cache_miss")
+        printf "  %-37s %-10s %-10s %-11s %s\n" "$model" "$in_str" "$cache_hit_str" "$cache_miss_str" "$out_str"
+    done < <(jq -r '.pricing | to_entries[] | [.key, .value.input, .value.input_cache_hit, .value.input_cache_miss, .value.output] | @tsv' "$REGISTRY_FILE")
     echo ""
     echo "  Data sourced from proxy/providers.json pricing section. Cache-hit pricing varies by provider."
     echo ""
@@ -637,7 +653,7 @@ show_help() {
     echo "Usage: deepclaude [spec1] [spec2] [spec3] [spec4] [spec5]   (positional mode)"
     echo "       deepclaude [-b backend] [--status] [--doctor] [--version]"
     echo ""
-    echo "  Each positional arg is providerKey:modelId, mapping to opus/sonnet/haiku/subagent/fable/fable."
+    echo "  Each positional arg is providerKey:modelId, mapping to opus/sonnet/haiku/subagent/fable."
     echo "  Model aliases: sonnet, opus, haiku, v4, flash, ... (short names resolve to full model IDs)"
     echo "  Fewer than 5 specs repeats the last one for remaining slots."
     echo ""
@@ -650,18 +666,21 @@ show_help() {
     echo ""
     echo "  Named configs: ds, or, fw, oc, km, mm, um, gr, mt, mx, za, bp, sf, nv, ds+oc, anthropic"
     echo "  --status        Show keys, configs, and active slot mapping"
+    echo "  --stats         Show proxy request stats and health"
     echo "  --doctor        System health check (prereqs, keys, proxy test)"
     echo "  --cost          Pricing comparison"
     echo "  --benchmark     Latency test across all configs"
     echo "  --models        List all available models (for use with /model in CC)"
-    echo "  --effort LEVEL   Claude Code effort level (default: max)"
+    echo "  --effort LEVEL   Set Claude Code effort level (default: max). Values: low, medium, high, max."
     echo "  --lint                 Lint with shellcheck"
-  echo "  --lint-config          Validate providers.json configuration"
-  echo "  --log-all              Log all requests to ~/.deepclaude/requests.log"
-  echo "  --skip-startup-check   Skip the provider health check on proxy startup"
-  echo "  --fix-av               Windows Defender exclusion reminder"
-  echo "  --install-statusline   Auto-install statusline to ~/.claude/"
-  echo "  --set-slot SLOT MODEL  Override a slot: opus/sonnet/haiku/subagent/fable/fable"
+    echo "  --lint-config          Validate providers.json configuration"
+    echo "  --log-all              Log all requests to ~/.deepclaude/requests.log"
+    echo "  --skip-startup-check   Skip the provider health check on proxy startup"
+    echo "  --no-thinking          Disable extended thinking for all models (save cost)"
+    echo "  --thinking-budget N    Set thinking budget in tokens (e.g. 64000)"
+    echo "  --fix-av               Windows Defender exclusion reminder"
+    echo "  --install-statusline   Install status bar showing model, effort, context (requires restart)"
+    echo "  --set-slot SLOT MODEL  Override a slot: opus/sonnet/haiku/subagent/fable"
     echo "  --persist       Keep proxy running after CC exits"
     echo "  --remote              Browser-based remote control (starts proxy automatically)"
     echo "  --switch CONFIG  Switch active config of a running persistent proxy"
@@ -682,12 +701,10 @@ show_help() {
     echo "  4. deepclaude --set-slot haiku or:model  Override a single slot"
     echo "  5. deepclaude --stop-proxy        Kill the persistent proxy"
     echo ""
-    echo "Note: --fix-av, --lint, and --install-statusline are platform-specific."
-    echo "      --fix-av is Windows-only (PowerShell alternative to this script)."
-    echo "      --lint runs shellcheck on this script (bash only)."
+    echo "Note: --fix-av is Windows-only. --lint runs shellcheck on this script (bash only)."
     echo ""
     echo "Model control:"
-    echo "  --set-slot SLOT MODEL     Override a slot (opus/sonnet/haiku/subagent/fable/fable)"
+    echo "  --set-slot SLOT MODEL     Override a slot (opus/sonnet/haiku/subagent/fable)"
     echo "  --subagent-model MODEL    Set dedicated subagent model (e.g. oc:big-pickle)"
     echo ""
 }
@@ -896,7 +913,7 @@ run_doctor() {
             echo -e "    $warn  Proxy test: SKIP (no valid API keys configured)"
         else
             local test_routes_json
-            test_routes_json=$(echo "$test_slot_data" | build_routes_json)
+            test_routes_json=$(launcher_mjs build-routes --name="$test_config")
             write_atomic "$test_routes_file" "$test_routes_json"
 
             local test_port test_pid
@@ -925,7 +942,7 @@ run_doctor() {
             echo "  Key Validation (probe each provider):"
             if [[ -n "$test_slot_data" ]]; then
                 local probe_routes_json probe_routes_file
-                probe_routes_json=$(echo "$test_slot_data" | build_routes_json)
+                probe_routes_json=$(launcher_mjs build-routes --name="$test_config")
                 probe_routes_file="${DEEPCLAUDE_DIR}/doctor-probe-routes.json"
                 write_atomic "$probe_routes_file" "$probe_routes_json"
                 if "$SCRIPT_DIR/node_modules/.bin/tsx" "$proxy_script" --probe "$probe_routes_file" 2>&1; then
@@ -1131,7 +1148,11 @@ handle_switch() {
     fi
 
     local routes_json
-    routes_json=$(echo "$slot_data" | build_routes_json)
+    if [[ -n "${CONFIG_NAME[$target]:-}" ]]; then
+        routes_json=$(launcher_mjs build-routes --name="$target")
+    else
+        routes_json=$(launcher_mjs build-routes --specs="$target")
+    fi
 
     write_atomic "$CURRENT_ROUTES_FILE" "$routes_json"
 
@@ -1150,22 +1171,12 @@ handle_switch() {
         echo "  Proxy on port $port"
     fi
 
-    # Initialize slot overrides
-    # Get first 4 lines of slot_data: opus provider model, sonnet provider model, etc.
-    local opus_prov="" opus_model="" sonnet_prov="" sonnet_model=""
-    local haiku_prov="" haiku_model="" subagent_prov="" subagent_model="" fable_prov="" fable_model=""
-    while IFS=' ' read -r slot prov model; do
-        case "$slot" in
-            opus) opus_prov="$prov"; opus_model="$model" ;;
-            sonnet) sonnet_prov="$prov"; sonnet_model="$model" ;;
-            haiku) haiku_prov="$prov"; haiku_model="$model" ;;
-            subagent) subagent_prov="$prov"; subagent_model="$model" ;;
-            fable) fable_prov="$prov"; fable_model="$model" ;;
-        esac
-    done <<< "$slot_data"
-    init_slot_overrides "$opus_prov" "$opus_model" "$sonnet_prov" "$sonnet_model" \
-        "$haiku_prov" "$haiku_model" "$subagent_prov" "$subagent_model" \
-            "$fable_prov" "$fable_model"
+    # Initialize slot overrides via unified engine
+    if [[ -n "${CONFIG_NAME[$target]:-}" ]]; then
+        launcher_mjs init-overrides --name="$target" > /dev/null
+    else
+        launcher_mjs init-overrides --specs="$target" > /dev/null
+    fi
 
     echo "  Slot mappings:"
     while IFS=' ' read -r slot prov model; do
@@ -1190,6 +1201,8 @@ OPEN_BROWSER=false
 PROBE_FILE=""
 DRY_RUN_FILE=""
 SUBAGENT_MODEL=""
+NO_THINKING=false
+THINKING_BUDGET=0
 
 # Parse args
 while [[ $# -gt 0 ]]; do
@@ -1209,6 +1222,8 @@ while [[ $# -gt 0 ]]; do
             PERSIST=true; shift ;;
         --status)
             ACTION="status"; shift ;;
+        --stats)
+            ACTION="stats"; shift ;;
         --cost)
             ACTION="cost"; shift ;;
         --benchmark)
@@ -1227,17 +1242,17 @@ while [[ $# -gt 0 ]]; do
         --models)
             ACTION="models"; shift ;;
         --install-statusline)
-            dest="$HOME/.claude/statusline.sh"
-            cp "$SCRIPT_DIR/statusline/statusline.sh" "$dest"
+            dest="$HOME/.claude/statusline.mjs"
+            cp "$SCRIPT_DIR/statusline/statusline.mjs" "$dest"
             chmod +x "$dest"
 
             settings="$HOME/.claude/settings.json"
             if [[ -f "$settings" ]]; then
                 tmp=$(mktemp "${TMPDIR:-/tmp}/deepclaude.XXXXXX")
-                jq '.statusLine = {"type": "command", "command": ("bash " + $dest)}' --arg dest "$dest" "$settings" > "$tmp" && mv "$tmp" "$settings"
+                jq '.statusLine = {"type": "command", "command": ("node " + $dest)}' --arg dest "$dest" "$settings" > "$tmp" && mv "$tmp" "$settings"
             else
                 mkdir -p "$HOME/.claude"
-                printf '{"statusLine": {"type": "command", "command": "bash %s"}}\n' "$dest" > "$settings"
+                printf '{"statusLine": {"type": "command", "command": "node %s"}}\n' "$dest" > "$settings"
             fi
             echo "Statusline installed to $dest"
             echo "Added to $settings"
@@ -1299,6 +1314,16 @@ while [[ $# -gt 0 ]]; do
         --skip-startup-check)
             export DEEPCLAUDE_SKIP_STARTUP_CHECK=true
             shift ;;
+        --no-thinking)
+            NO_THINKING=true; shift ;;
+        --thinking-budget)
+            THINKING_BUDGET="${2:-0}"
+            if [[ ! "$THINKING_BUDGET" =~ ^[0-9]+$ || "$THINKING_BUDGET" -lt 0 ]]; then
+                echo "ERROR: --thinking-budget must be a non-negative integer" >&2
+                exit 1
+            fi
+            if [[ -n "${2:-}" ]]; then shift 2; else shift; fi
+            ;;
         --fix-av)
             echo "AV exclusion is Windows-only. Ensure $(dirname "$0") is excluded."; exit 0 ;;
         *)
@@ -1354,9 +1379,14 @@ case "$ACTION" in
         tail -f "$log_path"
         exit 0 ;;
     status)     show_status ;;
+    stats)      show_stats ;;
     health)
         local state_file="${DEEPCLAUDE_DIR}/proxy.json"
-        if [[ ! -f "$state_file" ]]; then echo "No proxy running. Start one first."; exit 1; fi
+        if [[ ! -f "$state_file" ]]; then
+            # Hook-friendly: exit 0 so SessionStart hooks don't error on clean state.
+            # Claude Code hooks treat any non-zero exit as a failure.
+            exit 0
+        fi
         local port; port=$(jq -r '.port' "$state_file" 2>/dev/null)
         local health; health=$(curl -sf "http://127.0.0.1:${port}/health" 2>/dev/null || true)
         if [[ -z "$health" ]]; then echo "Proxy not responding on port $port"; exit 1; fi
@@ -1384,30 +1414,26 @@ case "$ACTION" in
         # Build routes file if none provided
         local probe_routes="${PROBE_FILE}"
         if [[ -z "$probe_routes" ]]; then
-            local slot_data=""
-            if [[ ${#SPECS[@]} -gt 0 ]]; then
-                slot_data=$(build_adhoc_config "${SPECS[@]}" | tail -n +2)
-            else
-                slot_data=$(resolve_config "${BACKEND:-ds}" | tail -n +2)
-            fi
             probe_routes="${DEEPCLAUDE_DIR}/probe-routes.json"
             mkdir -p -m 700 "$DEEPCLAUDE_DIR"
-            echo "$slot_data" | build_routes_json > "$probe_routes"
+            if [[ ${#SPECS[@]} -gt 0 ]]; then
+                launcher_mjs build-routes --specs="$(IFS=,; echo "${SPECS[*]}")" > "$probe_routes"
+            else
+                launcher_mjs build-routes --name="${BACKEND:-ds}" > "$probe_routes"
+            fi
         fi
         "$SCRIPT_DIR/node_modules/.bin/tsx" "$SCRIPT_DIR/proxy/start-proxy.ts" --probe "$probe_routes"
         exit $? ;;
     dry-run)
         local dry_routes="${DRY_RUN_FILE}"
         if [[ -z "$dry_routes" ]]; then
-            local dry_slot_data=""
-            if [[ ${#SPECS[@]} -gt 0 ]]; then
-                dry_slot_data=$(build_adhoc_config "${SPECS[@]}" | tail -n +2)
-            else
-                dry_slot_data=$(resolve_config "${BACKEND:-ds}" | tail -n +2)
-            fi
             dry_routes="${DEEPCLAUDE_DIR}/dryrun-routes.json"
             mkdir -p -m 700 "$DEEPCLAUDE_DIR"
-            echo "$dry_slot_data" | build_routes_json > "$dry_routes"
+            if [[ ${#SPECS[@]} -gt 0 ]]; then
+                launcher_mjs build-routes --specs="$(IFS=,; echo "${SPECS[*]}")" > "$dry_routes"
+            else
+                launcher_mjs build-routes --name="${BACKEND:-ds}" > "$dry_routes"
+            fi
         fi
         "$SCRIPT_DIR/node_modules/.bin/tsx" "$SCRIPT_DIR/proxy/start-proxy.ts" --dry-run "$dry_routes"
         exit $? ;;
@@ -1436,12 +1462,22 @@ case "$ACTION" in
             echo ""
             echo "  Launching remote control (Anthropic)..."
             echo ""
-            claude --effort "$EFFORT" --dangerously-skip-permissions remote-control "$@"
-            exit $?
+            claude_exit=0
+            claude --effort "$EFFORT" --dangerously-skip-permissions remote-control "$@" || claude_exit=$?
+            if [[ $claude_exit -ne 0 ]]; then
+                test_context_length_error "$(tail -5 ~/.claude/debug.log 2>/dev/null || true)"
+            fi
+            exit $claude_exit
         fi
 
         # Resolve config
         config_name="" slot_data=""
+
+        # Push env vars for all providers so proxy inherits every available key
+        export_provider_keys
+
+        # Write thinking overrides before starting proxy
+        write_thinking_overrides
         if [[ ${#SPECS[@]} -gt 0 ]]; then
             config_name="Ad-hoc"
             slot_data=$(build_adhoc_config "${SPECS[@]}" | tail -n +2)
@@ -1455,7 +1491,11 @@ case "$ACTION" in
 
         # Build routes and start proxy
         routes_json=""
-        routes_json=$(echo "$slot_data" | build_routes_json)
+        if [[ ${#SPECS[@]} -gt 0 ]]; then
+            routes_json=$(launcher_mjs build-routes --specs="$(IFS=,; echo "${SPECS[*]}")")
+        else
+            routes_json=$(launcher_mjs build-routes --name="$BACKEND")
+        fi
 
         proxy_port="" proxy_pid=""
         mkdir -p -m 700 "$DEEPCLAUDE_DIR"
@@ -1499,24 +1539,26 @@ case "$ACTION" in
             watchdog_pid=$!
         fi
 
-        # Init slot overrides
+        # Init slot overrides via unified engine
+        if [[ ${#SPECS[@]} -gt 0 ]]; then
+            launcher_mjs init-overrides --specs="$(IFS=,; echo "${SPECS[*]}")" > /dev/null
+        else
+            launcher_mjs init-overrides --name="$BACKEND" > /dev/null
+        fi
+
+        # Get actual models from overrides (with fallbacks from slot_data)
         opus_prov="" opus_model="" sonnet_prov="" sonnet_model=""
         haiku_prov="" haiku_model="" subagent_prov="" subagent_model=""
+        fable_prov="" fable_model=""
         while IFS=' ' read -r slot prov model; do
             case "$slot" in
                 opus) opus_prov="$prov"; opus_model="$model" ;;
                 sonnet) sonnet_prov="$prov"; sonnet_model="$model" ;;
                 haiku) haiku_prov="$prov"; haiku_model="$model" ;;
                 subagent) subagent_prov="$prov"; subagent_model="$model" ;;
-            fable) fable_prov="$prov"; fable_model="$model" ;;
+                fable) fable_prov="$prov"; fable_model="$model" ;;
             esac
         done <<< "$slot_data"
-        init_slot_overrides "$opus_prov" "$opus_model" "$sonnet_prov" "$sonnet_model" \
-            "$haiku_prov" "$haiku_model" "$subagent_prov" "$subagent_model" \
-            "$fable_prov" "$fable_model"
-
-        # Get actual models from overrides
-        opus_m="" sonnet_m="" haiku_m="" sub_m=""
         opus_m=$(get_slot_model "opus" "${opus_prov}:${opus_model}")
         sonnet_m=$(get_slot_model "sonnet" "${sonnet_prov}:${sonnet_model}")
         haiku_m=$(get_slot_model "haiku" "${haiku_prov}:${haiku_model}")
@@ -1537,8 +1579,11 @@ case "$ACTION" in
         fi
 
         set_cc_env "$proxy_port" "$opus_m" "$sonnet_m" "$haiku_m" "$sub_m" "$fable_m" "$opus_model"
-        claude --effort "$EFFORT" --dangerously-skip-permissions remote-control "$@"
-        claude_exit=$?
+        claude_exit=0
+        claude --effort "$EFFORT" --dangerously-skip-permissions remote-control "$@" || claude_exit=$?
+        if [[ $claude_exit -ne 0 ]]; then
+            test_context_length_error "$(tail -5 ~/.claude/debug.log 2>/dev/null || true)"
+        fi
         if ! $PERSIST; then
             stop_proxy_info "$proxy_pid"
         fi
@@ -1554,9 +1599,14 @@ case "$ACTION" in
         echo ""
         echo "  Launching Claude Code via $config_name..."
 
-        # Build routes
-        routes_json=""
-        routes_json=$(echo "$slot_data" | build_routes_json)
+        # Push env vars for all providers so proxy inherits every available key
+        export_provider_keys
+
+        # Write thinking overrides before starting proxy
+        write_thinking_overrides
+
+        # Build routes via unified engine (single source of truth shared with .ps1)
+        routes_json=$(launcher_mjs build-routes --specs="$(IFS=,; echo "${SPECS[*]}")")
 
         mkdir -p -m 700 "$DEEPCLAUDE_DIR"
         proxy_port="" proxy_pid=""
@@ -1604,24 +1654,22 @@ case "$ACTION" in
             watchdog_pid=$!
         fi
 
-        # Init slot overrides
+        # Init slot overrides via unified engine
+        launcher_mjs init-overrides --specs="$(IFS=,; echo "${SPECS[*]}")" > /dev/null
+
+        # Resolve actual models from overrides (with fallbacks from slot_data)
         opus_prov="" opus_model="" sonnet_prov="" sonnet_model=""
         haiku_prov="" haiku_model="" subagent_prov="" subagent_model=""
+        fable_prov="" fable_model=""
         while IFS=' ' read -r slot prov model; do
             case "$slot" in
                 opus) opus_prov="$prov"; opus_model="$model" ;;
                 sonnet) sonnet_prov="$prov"; sonnet_model="$model" ;;
                 haiku) haiku_prov="$prov"; haiku_model="$model" ;;
                 subagent) subagent_prov="$prov"; subagent_model="$model" ;;
-            fable) fable_prov="$prov"; fable_model="$model" ;;
+                fable) fable_prov="$prov"; fable_model="$model" ;;
             esac
         done <<< "$slot_data"
-        init_slot_overrides "$opus_prov" "$opus_model" "$sonnet_prov" "$sonnet_model" \
-            "$haiku_prov" "$haiku_model" "$subagent_prov" "$subagent_model" \
-            "$fable_prov" "$fable_model"
-
-        # Resolve actual models from overrides
-        opus_m="" sonnet_m="" haiku_m="" sub_m=""
         opus_m=$(get_slot_model "opus" "${opus_prov}:${opus_model}")
         sonnet_m=$(get_slot_model "sonnet" "${sonnet_prov}:${sonnet_model}")
         haiku_m=$(get_slot_model "haiku" "${haiku_prov}:${haiku_model}")
@@ -1649,8 +1697,11 @@ case "$ACTION" in
 
         trap cleanup_proxy EXIT
 
-        claude --effort "$EFFORT" --dangerously-skip-permissions "$@"
-        claude_exit=$?
+        claude_exit=0
+        claude --effort "$EFFORT" --dangerously-skip-permissions "$@" || claude_exit=$?
+        if [[ $claude_exit -ne 0 ]]; then
+            test_context_length_error "$(tail -5 ~/.claude/debug.log 2>/dev/null || true)"
+        fi
         cleanup_proxy
         exit $claude_exit
         ;;
@@ -1660,8 +1711,12 @@ case "$ACTION" in
             echo ""
             echo "  Launching Claude Code (normal Anthropic)..."
             echo ""
-            claude --effort "$EFFORT" --dangerously-skip-permissions "$@"
-            exit $?
+            claude_exit=0
+            claude --effort "$EFFORT" --dangerously-skip-permissions "$@" || claude_exit=$?
+            if [[ $claude_exit -ne 0 ]]; then
+                test_context_length_error "$(tail -5 ~/.claude/debug.log 2>/dev/null || true)"
+            fi
+            exit $claude_exit
         fi
 
         # Same as launch-pos but uses named config
@@ -1671,6 +1726,12 @@ case "$ACTION" in
 
         echo ""
         echo "  Launching Claude Code via $config_name..."
+
+        # Push env vars for all providers so proxy inherits every available key
+        export_provider_keys
+
+        # Write thinking overrides (via unified engine)
+        write_thinking_overrides
 
         # Show provider names
         prov_keys=()
@@ -1691,9 +1752,8 @@ case "$ACTION" in
         done <<< "$slot_data"
         echo ""
 
-        # Build routes
-        routes_json=""
-        routes_json=$(echo "$slot_data" | build_routes_json)
+        # Build routes via unified engine (single source of truth shared with .ps1)
+        routes_json=$(launcher_mjs build-routes --name="$BACKEND")
 
         mkdir -p -m 700 "$DEEPCLAUDE_DIR"
         proxy_port="" proxy_pid=""
@@ -1741,24 +1801,22 @@ case "$ACTION" in
             watchdog_pid=$!
         fi
 
-        # Init slot overrides
+        # Init slot overrides via unified engine
+        launcher_mjs init-overrides --name="$BACKEND" > /dev/null
+
+        # Resolve actual models from overrides (with fallbacks from slot_data)
         opus_prov="" opus_model="" sonnet_prov="" sonnet_model=""
         haiku_prov="" haiku_model="" subagent_prov="" subagent_model=""
+        fable_prov="" fable_model=""
         while IFS=' ' read -r slot prov model; do
             case "$slot" in
                 opus) opus_prov="$prov"; opus_model="$model" ;;
                 sonnet) sonnet_prov="$prov"; sonnet_model="$model" ;;
                 haiku) haiku_prov="$prov"; haiku_model="$model" ;;
                 subagent) subagent_prov="$prov"; subagent_model="$model" ;;
-            fable) fable_prov="$prov"; fable_model="$model" ;;
+                fable) fable_prov="$prov"; fable_model="$model" ;;
             esac
         done <<< "$slot_data"
-        init_slot_overrides "$opus_prov" "$opus_model" "$sonnet_prov" "$sonnet_model" \
-            "$haiku_prov" "$haiku_model" "$subagent_prov" "$subagent_model" \
-            "$fable_prov" "$fable_model"
-
-        # Resolve actual models from overrides
-        opus_m="" sonnet_m="" haiku_m="" sub_m=""
         opus_m=$(get_slot_model "opus" "${opus_prov}:${opus_model}")
         sonnet_m=$(get_slot_model "sonnet" "${sonnet_prov}:${sonnet_model}")
         haiku_m=$(get_slot_model "haiku" "${haiku_prov}:${haiku_model}")
@@ -1779,8 +1837,11 @@ case "$ACTION" in
 
         trap cleanup_proxy EXIT
 
-        claude --effort "$EFFORT" --dangerously-skip-permissions "$@"
-        claude_exit=$?
+        claude_exit=0
+        claude --effort "$EFFORT" --dangerously-skip-permissions "$@" || claude_exit=$?
+        if [[ $claude_exit -ne 0 ]]; then
+            test_context_length_error "$(tail -5 ~/.claude/debug.log 2>/dev/null || true)"
+        fi
         cleanup_proxy
         exit $claude_exit
         ;;

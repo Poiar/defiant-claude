@@ -1,11 +1,14 @@
 # DeepClaude Proxy
 
-HTTP reverse proxy that routes Claude Code to cheap third-party backends. Provider-agnostic — mix models from different APIs in one config. 14 providers, 35 named configs, 617 tests.
+HTTP reverse proxy that routes Claude Code to cheap third-party backends. Provider-agnostic — mix models from different APIs in one config. 15 providers, 15 named configs, 625 tests.
 
 ## Architecture
 
 ```
-deepclaude.ps1 / deepclaude.sh          [Launcher — CLI parsing, lifecycle]
+deepclaude.ps1 / deepclaude.sh          [Thin launchers]
+  |
+  v
+proxy/launcher.mjs                      [Shared engine — CLI parsing, lifecycle]
   |
   v
 proxy/start-proxy.ts                    [HTTP server on :3200]
@@ -64,17 +67,17 @@ All provider definitions, pricing, context limits, and slot mappings are in a si
 
 ```
 providers.json:
-  providers:      14 provider definitions (endpoint, auth, wire format, fallbacks)
-  contextLimits:  40+ model context window sizes
+  providers:      15 provider definitions (endpoint, auth, wire format, fallbacks)
+  contextLimits:  22 model context window sizes
   compactionWindow: Per-model compaction thresholds
-  configs:        35 named configs (slot → provider:model)
-  aliases:        12 model aliases
-  pricing:        30+ pricing entries (input/output, cache hit/miss for DeepSeek)
+  configs:        15 named configs (slot → provider:model)
+  aliases:        14 model aliases
+  pricing:        23 pricing entries (input/output, cache hit/miss for DeepSeek)
 ```
 
 ## Running Tests
 
 ```sh
-npm test              # 35 suites, 617 tests
+npm test              # 36 suites, 625 tests
 npm run test:coverage
 ```
