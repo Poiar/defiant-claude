@@ -178,10 +178,15 @@ if (hasLogAll || process.env.DEEPCLAUDE_LOG_ALL_REQUESTS === 'true') {
 }
 
 // Load provider registry for data-driven hooks (optional -- proxy works without it)
-let providerRegistry: { providers: Record<string, { endpoint: string; extraHeaders?: Record<string, string> }> } | null = null;
-try { providerRegistry = require('./providers.json'); } catch (e: any) {
-    if (e.code !== 'MODULE_NOT_FOUND') {
-        console.warn('Warning: providers.json exists but could not be parsed:', e.message);
+interface ProviderRegistry {
+    providers: Record<string, { endpoint: string; extraHeaders?: Record<string, string>; displayName?: string }>;
+    _lastRefresh?: number;
+}
+let providerRegistry: ProviderRegistry | null = null;
+try { providerRegistry = require('./providers.json'); } catch (e: unknown) {
+    const err = e as NodeJS.ErrnoException;
+    if (err.code !== 'MODULE_NOT_FOUND') {
+        console.warn('Warning: providers.json exists but could not be parsed:', err.message);
     }
 }
 
@@ -230,8 +235,9 @@ try {
     } catch (_) { /* non-fatal */ }
     pidPath = deepclaudeDir + '/proxy.pid';
     fs.writeFileSync(pidPath, String(process.pid) + ':0', { flag: 'wx' });
-} catch (err: any) {
-    if (err && err.code === 'EEXIST') {
+} catch (err: unknown) {
+    const e = err as NodeJS.ErrnoException;
+    if (e && e.code === 'EEXIST') {
         try {
             const raw = fs.readFileSync(pidPath, 'utf-8').trim();
             const colonIdx = raw.indexOf(':');
@@ -336,7 +342,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
     {
         const now = Date.now();
         const REFRESH_MS = 15000;
-        if (providerRegistry && (providerRegistry as any)._lastRefresh && now - (providerRegistry as any)._lastRefresh < REFRESH_MS) {
+        if (providerRegistry?._lastRefresh && now - providerRegistry._lastRefresh < REFRESH_MS) {
             // skip — within throttled window
         } else {
             try {
@@ -350,10 +356,12 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                             providerDisplayNames[key] = rec.displayName;
                         }
                     }
-                    if (!(providerRegistry as any)._lastRefresh) (providerRegistry as any)._lastRefresh = 0;
-                    (providerRegistry as any)._lastRefresh = now;
+                    if (!providerRegistry!._lastRefresh) providerRegistry!._lastRefresh = 0;
+                    providerRegistry!._lastRefresh = now;
                 }
-            } catch (_) { /* non-fatal — keep stale registry */ }
+            } catch (e: unknown) {
+                log.warn(null, 'provider registry refresh failed (keeping stale data): ' + ((e instanceof Error && e.message) || String(e)));
+            }
         }
     }
 
@@ -729,7 +737,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                     let modified = false;
 
                     if (parsedBody.messages) {
-                        const populated = await populateToolResults(parsedBody.messages as any[]);
+                        const populated = await populateToolResults(parsedBody.messages as Array<Record<string, unknown>>);
                         if (populated) modified = true;
                     }
 
@@ -741,24 +749,23 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                     // the count in usage.server_tool_use so Claude Code's "Did N searches"
                     // display is correct.
                     if (parsedBody.tools && Array.isArray(parsedBody.tools)) {
-                        const conv = convertServerTools(parsedBody.tools as any[]);
+                        const conv = convertServerTools(parsedBody.tools as Array<Record<string, unknown>>);
                         if (conv.tools !== parsedBody.tools) {
-                            parsedBody.tools = conv.tools as any[];
+                            parsedBody.tools = conv.tools as Array<Record<string, unknown>>;
                             modified = true;
                         }
-                        // Step 2: Strip any remaining unconverted web_search_* tools
-                        // (belt-and-suspenders — convertServerTools should handle them,
-                        // but if a new prefix slips through, strip it to avoid 400s).
+                        // Strip any remaining unconverted web_search_* tools.
                         const WEB_TOOL_PREFIXES = ['web_search_', 'web_fetch_', 'url_fetch_'];
                         const isWebTool = (type: string) => WEB_TOOL_PREFIXES.some(p => type.startsWith(p));
-                        const unconvertedWebTools = (parsedBody.tools as any[]).filter(
-                            (t: any) => t && typeof t.type === 'string' && isWebTool(t.type)
+                        type ToolItem = Record<string, unknown>;
+                        const unconvertedWebTools = (parsedBody.tools as ToolItem[]).filter(
+                            t => t && typeof t.type === 'string' && isWebTool(t.type as string)
                         );
                         if (unconvertedWebTools.length > 0) {
-                            parsedBody.tools = (parsedBody.tools as any[]).filter(
-                                (t: any) => !(t && typeof t.type === 'string' && isWebTool(t.type))
+                            parsedBody.tools = (parsedBody.tools as ToolItem[]).filter(
+                                t => !(t && typeof t.type === 'string' && isWebTool(t.type as string))
                             );
-                            if ((parsedBody.tools as any[]).length === 0) {
+                            if (parsedBody.tools.length === 0) {
                                 delete parsedBody.tools;
                             }
                             modified = true;
@@ -1072,7 +1079,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                     }
 
                     try {
-                        result = await tryForward(transport as any, options as any, forwardedBody.toString(), streamTransformer, target.format === 'openai', parsedBody, model, reqId);
+                        result = await tryForward(transport, options as import('http').RequestOptions, forwardedBody.toString(), streamTransformer, target.format === 'openai', parsedBody, model, reqId);
                     } finally {
                         if (!slotReleased) {
                             slotReleased = true;
@@ -1164,18 +1171,18 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                     // Register cleanup on client disconnect before the
                     // headersSent/destroyed check to eliminate the TOCTOU race
                     // where the client disconnects between the check and pipeline.
-                    const clientStream = result.stream;
+                    interface DestroyableStream { destroyed?: boolean; destroy(): void }
+                    const clientStream = result.stream as DestroyableStream | undefined;
                     if (clientStream) {
                         res.once('close', () => {
-                            if (!(clientStream as any).destroyed) (clientStream as any).destroy();
+                            if (!clientStream.destroyed) clientStream.destroy();
                         });
                     }
-                    // Destroy upstream request on client disconnect to prevent
-                    // buffering data from a provider that keeps streaming after
-                    // the client has gone (wasted bandwidth + memory).
+                    // Destroy upstream request on client disconnect.
                     if (result._upstream) {
+                        const upstream = result._upstream as DestroyableStream;
                         res.once('close', () => {
-                            try { (result._upstream as any).destroy(); } catch (_) { /* already closed */ }
+                            try { upstream.destroy(); } catch (_) { /* already closed */ }
                         });
                     }
 
@@ -1369,7 +1376,9 @@ runStartupChecks().then((startupCheckResult) => {
         const port = (server.address() as { port: number }).port;
         // Update PID file with port so future instances can reuse this proxy
         if (pidPath) {
-            try { fs.writeFileSync(pidPath, String(process.pid) + ':' + String(port)); } catch {}
+            try { fs.writeFileSync(pidPath, String(process.pid) + ':' + String(port)); } catch (err: unknown) {
+                log.warn(null, 'Failed to write PID file: ' + ((err instanceof Error && err.message) || String(err)));
+            }
         }
         process.stdout.write('PORT:' + String(port));
         if (hasDashboard) {

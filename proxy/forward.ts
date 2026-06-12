@@ -94,6 +94,7 @@ export interface ForwardResult {
     streamUsage?: { prompt_tokens: number; completion_tokens: number; cache_hit_tokens: number; cache_miss_tokens: number } | null;
     error?: string;
     rawBody?: string | null;
+    _upstream?: NodeJS.WritableStream;
     transportError?: boolean;
     qualityFailure?: boolean;
     qualityReason?: string;
@@ -208,7 +209,10 @@ export function peekFirstChunk(proxyRes: NodeJS.ReadableStream, timeoutMs?: numb
 // Handles both streaming and non-streaming responses.
 // On stream success, attaches a 'data' listener that enforces MAX_SSE_BUFFER.
 
-interface TryForwardOptions {
+// Shared interface for request options passed to http.request() / https.request().
+// Fields match Node.js http.RequestOptions and are broad enough that callers
+// don't need `as any` casts on the transport or options parameters.
+export interface TryForwardOptions extends http.RequestOptions {
     hostname: string;
     port: number | string;
     path: string;
@@ -218,7 +222,7 @@ interface TryForwardOptions {
     agent?: http.Agent | boolean;
 }
 export function tryForward(
-    transport: { request: (opts: TryForwardOptions, callback: (res: NodeJS.ReadableStream & { statusCode?: number; headers: Record<string, string | string[] | undefined> }) => void) => NodeJS.WritableStream },
+    transport: Pick<typeof import('http'), 'request'>,
     options: TryForwardOptions,
     forwardedBody: string,
     streamTransformer: Transform | null,
@@ -447,16 +451,25 @@ export function tryForward(
                     // multi-turn tool conversations. The non-streaming path does this in
                     // one shot below; the streaming path must reconstruct the blocks.
                     const accumulatedBlocks: MessageBlock[] = [];
-                    let blockAccumulator: Record<string, unknown> | null = null;
+                    interface BlockAccumulator {
+                        type: string;
+                        thinking?: string;
+                        signature?: string;
+                        text?: string;
+                        id?: unknown;
+                        name?: unknown;
+                        input?: Record<string, unknown>;
+                        _partialInput?: string;
+                    }
+                    let blockAccumulator: BlockAccumulator | null = null;
                     function pushAccumulatedBlock(): void {
                         if (!blockAccumulator) return;
-                        const block = blockAccumulator as any;
                         // Parse accumulated input JSON for tool_use blocks
-                        if (block.type === 'tool_use' && block._partialInput) {
-                            try { block.input = JSON.parse(block._partialInput); } catch (_) { /* best-effort */ }
-                            delete block._partialInput;
+                        if (blockAccumulator.type === 'tool_use' && blockAccumulator._partialInput) {
+                            try { blockAccumulator.input = JSON.parse(blockAccumulator._partialInput); } catch (_) { /* best-effort */ }
+                            delete blockAccumulator._partialInput;
                         }
-                        accumulatedBlocks.push(block as MessageBlock);
+                        accumulatedBlocks.push(blockAccumulator as MessageBlock);
                         blockAccumulator = null;
                     }
                     sourceStream.on('data', (chunk: Buffer | string) => {
@@ -539,7 +552,7 @@ export function tryForward(
                                         } else if (delta.type === 'text_delta' && typeof delta.text === 'string') {
                                             blockAccumulator.text = ((blockAccumulator.text as string) || '') + delta.text;
                                         } else if (delta.type === 'input_json_delta' && typeof delta.partial_json === 'string') {
-                                            (blockAccumulator as any)._partialInput = ((blockAccumulator as any)._partialInput || '') + delta.partial_json;
+                                            blockAccumulator._partialInput = (blockAccumulator._partialInput || '') + delta.partial_json;
                                         }
                                     } else if (parsedPayload.type === 'content_block_stop') {
                                         pushAccumulatedBlock();
@@ -663,8 +676,8 @@ export function tryForward(
                                     }
                                 }
                                 if (ws > 0 || wf > 0) {
-                                    if (!resp.usage) (resp as any).usage = {};
-                                    (resp.usage as any).server_tool_use = { web_search_requests: ws, web_fetch_requests: wf };
+                                    if (!resp.usage) resp.usage = {};
+                                    (resp.usage as Record<string, unknown>).server_tool_use = { web_search_requests: ws, web_fetch_requests: wf };
                                     respModified = true;
                                 }
                             }

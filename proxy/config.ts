@@ -27,6 +27,7 @@ interface ProviderDefinition {
     fallback?: string[];
     extraHeaders?: Record<string, string>;
     streamUsageReporting?: string | null;
+    noAutoFallback?: boolean;
 }
 
 interface ProvidersData {
@@ -172,8 +173,8 @@ function applyProviderMetadata(routing: RoutingConfig, providersData: ProvidersD
                 existing.streamUsageReporting = expected; changed = true;
             }
         }
-        if ((existing as any).noAutoFallback !== (def.noAutoFallback === true)) {
-            (existing as any).noAutoFallback = def.noAutoFallback === true; changed = true;
+        if (existing.noAutoFallback !== (def.noAutoFallback === true)) {
+            existing.noAutoFallback = def.noAutoFallback === true; changed = true;
         }
     }
 
