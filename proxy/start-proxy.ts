@@ -1255,7 +1255,14 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                     // DEBUG: Capture body of failed requests to diagnose WebSearch/provider issues
                     try {
                         const debugBody = rawBody ? truncateForLog(rawBody.toString('utf-8', 0, Math.min(rawBody.length, 8192))) : '<no body>';
-                        log.warn(reqId, 'FAIL_BODY model=' + (model || '-') + ' body=' + debugBody);
+                        log.warn(reqId, 'FAIL_REQ model=' + (model || '-') + ' body=' + debugBody);
+                        // Also capture the upstream error response body and the forwarded request body
+                        if (result.rawBody) {
+                            log.warn(reqId, 'FAIL_UPSTREAM body=' + truncateForLog(result.rawBody.slice(0, 4096)));
+                        }
+                        if (forwardedBody && forwardedBody !== rawBody) {
+                            log.warn(reqId, 'FAIL_FWD model=' + (model || '-') + ' body=' + truncateForLog(forwardedBody.toString('utf-8', 0, Math.min(forwardedBody.length, 8192))));
+                        }
                     } catch (_) { /* best effort */ }
                     break;
                 }

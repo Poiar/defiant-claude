@@ -165,7 +165,6 @@ export function convertServerTools(tools: ToolDef[] | null | undefined): Convert
         if (type.startsWith('web_search_')) {
             hasWebSearch = true;
             return {
-                type: 'custom',
                 name: 'web_search',
                 description: 'Search the web for current, up-to-date information. Returns relevant text snippets and URLs.',
                 input_schema: WEB_SEARCH_SCHEMA as unknown as Record<string, unknown>,
@@ -174,7 +173,6 @@ export function convertServerTools(tools: ToolDef[] | null | undefined): Convert
         if (type.startsWith('web_fetch_') || type.startsWith('url_fetch_')) {
             hasWebFetch = true;
             return {
-                type: 'custom',
                 name: 'web_fetch',
                 description: 'Fetch and read content from a URL. Returns the text content of the page.',
                 input_schema: WEB_FETCH_SCHEMA as unknown as Record<string, unknown>,
