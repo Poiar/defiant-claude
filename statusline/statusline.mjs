@@ -191,16 +191,20 @@ async function main() {
         sessionSpend = proxySessionTotal;
       }
 
-      const todayKey = new Date().toISOString().slice(0, 10);
+      // Use local date (da-DK locale = YYYY-MM-DD) to match stats.ts writer.
+      // toISOString() would give UTC which can differ from local by a day.
+      const todayKey = new Date().toLocaleDateString('da-DK');
       const todaySpend =
         (spendData.daily && spendData.daily[todayKey] && spendData.daily[todayKey].total)
           ? spendData.daily[todayKey].total : 0;
 
-      if (sessionSpend > 0) {
+      // Always show today's spend as primary. Session spend is shown as secondary
+      // when it differs meaningfully from today's total (e.g., proxy restarted mid-day).
+      if (todaySpend > 0) {
         const parts = [];
-        parts.push(bold + fg(255, 210, 80) + '$' + Number(sessionSpend).toFixed(2) + reset);
-        if (todaySpend > sessionSpend + 0.001) {
-          parts.push(fg(120, 120, 120) + '$' + Number(todaySpend).toFixed(2) + reset);
+        parts.push(bold + fg(255, 210, 80) + '$' + Number(todaySpend).toFixed(2) + reset);
+        if (Math.abs(sessionSpend - todaySpend) > 0.001) {
+          parts.push(fg(120, 120, 120) + '$' + Number(sessionSpend).toFixed(2) + reset);
         }
         spendGroup = parts.join(' ');
       }

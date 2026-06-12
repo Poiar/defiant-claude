@@ -287,7 +287,7 @@ export function getFullHealthSnapshot(concurrencyStatus: unknown, rateLimiterSta
                 const raw = fs.readFileSync(spendFile, 'utf-8');
                 const data = JSON.parse(raw);
                 const rawDaily = data.daily as Record<string, unknown> || {};
-                const today = new Date().toLocaleDateString('en-CA');
+                const today = new Date().toLocaleDateString('da-DK');
                 spendByProvider = {};
                 for (const [date, value] of Object.entries(rawDaily)) {
                     if (typeof value === 'object' && value !== null) {
@@ -345,7 +345,7 @@ export function getFullHealthSnapshot(concurrencyStatus: unknown, rateLimiterSta
                 for (let i = 0; i < 7; i++) {
                     const d = new Date(today);
                     d.setDate(d.getDate() - i);
-                    const ds = d.toISOString().slice(0, 10);
+                    const ds = d.toLocaleDateString('da-DK');
                     const amt = spendByProvider[k].dailyHistory[ds] || 0;
                     if (amt > 0) { sum += amt; count++; }
                 }
@@ -607,7 +607,7 @@ try {
   if (fs.existsSync(spendJournalFile)) {
     const journalRaw = fs.readFileSync(spendJournalFile, 'utf-8');
     const lines = journalRaw.split('\n').filter(Boolean);
-    const today = new Date().toLocaleDateString('en-CA');
+    const today = new Date().toLocaleDateString('da-DK');
     for (const line of lines) {
       try {
         const entry = JSON.parse(line);
@@ -785,7 +785,7 @@ export async function recordSpend(modelName: string, usage: { prompt_tokens: num
         if (parsed.daily) existing.daily = parsed.daily;
       } catch (_) { /* ignore corrupt file */ }
     }
-    const today = new Date().toLocaleDateString('en-CA');
+    const today = new Date().toLocaleDateString('da-DK');
 
     // Normalize daily entries (handle legacy number format and new object format)
     const rawDaily = (existing.daily as Record<string, unknown>) || {};
@@ -858,7 +858,7 @@ export function getDailySpend(): number {
     }
     const raw = fs.readFileSync(spendFile, 'utf-8');
     const data = JSON.parse(raw);
-    const today = new Date().toLocaleDateString('en-CA');
+    const today = new Date().toLocaleDateString('da-DK');
     const daily = data.daily as Record<string, unknown> | undefined;
     // Handle both legacy number format and new { total, byProvider } format
     let dailyTotal = 0;
