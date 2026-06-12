@@ -693,9 +693,9 @@ export function createAnthropicStreamInterceptor(preExecutedSearches: number = 0
                 const trimmed = part.trim();
                 if (!trimmed) { output += '\n\n'; continue; }
 
-                // DEBUG: log first 10 SSE event types to trace what DeepSeek emits
+                // DEBUG: log all SSE event types to trace what DeepSeek emits
                 _eventCount++;
-                if (_eventCount <= 10) {
+                {
                     const dm = trimmed.match(/^data: (.*)$/m);
                     if (dm) {
                         try {
