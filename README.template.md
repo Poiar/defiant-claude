@@ -199,7 +199,7 @@ Shows the real model, provider, context usage, effort level, and git branch — 
 |---|---|---|
 | `#64B4FF` Light blue | Directory name | `d.workspace.current_dir` last segment |
 | `#FF50B4` Pink | Git branch | `git rev-parse --abbrev-ref HEAD` |
-| `#C864FF` Purple | Slot + model | Slot label (`o`/`s`/`h`/`sub`) + resolved model ID |
+| `#C864FF` Purple | Slot + model | Slot label (`o`/`s`/`h`/`sub`/`f`) + resolved model ID |
 | `#FF5050` Red / `#FFB432` Orange / `#64A0FF` Blue | Effort | `max`/`high` (red), `medium` (orange), `low` (blue) |
 | `#50C878` Green / `#FFB432` Orange / `#FF5050` Red | Context usage | Token count + percent — green ≤50%, orange 50–79%, red ≥80% |
 | `#FFD250` Gold | Session spend | Current Claude Code session cost from `~/.deepclaude/spend.json` |
