@@ -801,15 +801,16 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                             // Emit Anthropic SSE format because CC sends stream:true.
                             if (!res.headersSent && !res.destroyed) {
                                 const responseId = 'msg_' + crypto.randomUUID();
+                                const serverToolUse = { web_search_requests: 1, web_fetch_requests: 0 };
                                 const msg = {
                                     id: responseId,
                                     type: 'message',
                                     model: model || '',
                                     role: 'assistant',
-                                    content: [{ type: 'text', text: '' }],
+                                    content: [],
                                     stop_reason: null,
                                     stop_sequence: null,
-                                    usage: { input_tokens: 0, output_tokens: 0 },
+                                    usage: { input_tokens: 1, output_tokens: 1, server_tool_use: serverToolUse },
                                 };
                                 // SSE events: message_start → content_block_start → text deltas → content_block_stop → message_delta (with server_tool_use) → message_stop
                                 const se = (e: string, d: unknown) => 'event: ' + e + '\ndata: ' + JSON.stringify(d) + '\n\n';
@@ -821,10 +822,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                                 sse += se('message_delta', {
                                     type: 'message_delta',
                                     delta: { stop_reason: 'end_turn', stop_sequence: null },
-                                    usage: {
-                                        output_tokens: 0,
-                                        server_tool_use: { web_search_requests: 1, web_fetch_requests: 0 },
-                                    },
+                                    usage: { output_tokens: 1, server_tool_use: serverToolUse },
                                 });
                                 sse += se('message_stop', { type: 'message_stop' });
                                 res.writeHead(200, { 'content-type': 'text/event-stream' });
