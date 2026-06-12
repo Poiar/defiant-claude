@@ -663,3 +663,100 @@ export function createStreamTransformer(model: string): Transform {
     return new StreamTransformer();
 }
 
+// --- Anthropic-format SSE interceptor ---
+// Lightweight Transform that passes through all SSE events unchanged, but counts
+// web_search/web_fetch tool_use blocks and injects server_tool_use into the
+// message_delta event's usage. DeepSeek always reports web_search_requests: 0
+// in its Anthropic-format response; this overrides that with the actual count
+// so Claude Code's "Did N searches" display is correct.
+
+export function createAnthropicStreamInterceptor(): Transform {
+    let buf = '';
+    let webSearchRequests = 0;
+    let webFetchRequests = 0;
+
+    class Interceptor extends Transform {
+        _transform(chunk: Buffer | string, _encoding: string, callback: TransformCallback): void {
+            buf += chunk.toString();
+            if (buf.length > 1_048_576) { this.destroy(new Error('Anthropic SSE buffer exceeded 1MB')); return; }
+
+            const parts = buf.split('\n\n');
+            buf = parts.pop() || '';
+            let output = '';
+
+            for (const part of parts) {
+                const trimmed = part.trim();
+                if (!trimmed) { output += '\n\n'; continue; }
+
+                // Count web_search/web_fetch content_block_start events
+                if (trimmed.includes('"type":"content_block_start"')) {
+                    if (trimmed.includes('"name":"web_search"')) webSearchRequests++;
+                    else if (trimmed.includes('"name":"web_fetch"')) webFetchRequests++;
+                }
+
+                // Inject server_tool_use into message_delta usage
+                if (trimmed.includes('"type":"message_delta"') && (webSearchRequests > 0 || webFetchRequests > 0)) {
+                    const dataMatch = trimmed.match(/^data: (.*)$/m);
+                    if (dataMatch) {
+                        try {
+                            const parsed = JSON.parse(dataMatch[1]);
+                            if (parsed.usage) {
+                                parsed.usage.server_tool_use = {
+                                    web_search_requests: webSearchRequests,
+                                    web_fetch_requests: webFetchRequests,
+                                };
+                                const eventLine = trimmed.match(/^(event: .*)$/m)?.[1] || '';
+                                const newDataLine = 'data: ' + JSON.stringify(parsed);
+                                if (eventLine) {
+                                    output += eventLine + '\n' + newDataLine + '\n\n';
+                                } else {
+                                    output += newDataLine + '\n\n';
+                                }
+                                continue;
+                            }
+                        } catch (_) { /* fall through to passthrough */ }
+                    }
+                }
+
+                output += trimmed + '\n\n';
+            }
+
+            callback(null, output);
+        }
+
+        _flush(callback: TransformCallback): void {
+            if (buf.trim()) {
+                // Final event — if it's message_delta, inject server_tool_use
+                const trimmed = buf.trim();
+                if (trimmed.includes('"type":"message_delta"') && (webSearchRequests > 0 || webFetchRequests > 0)) {
+                    const dataMatch = trimmed.match(/^data: (.*)$/m);
+                    if (dataMatch) {
+                        try {
+                            const parsed = JSON.parse(dataMatch[1]);
+                            if (parsed.usage) {
+                                parsed.usage.server_tool_use = {
+                                    web_search_requests: webSearchRequests,
+                                    web_fetch_requests: webFetchRequests,
+                                };
+                                const eventLine = trimmed.match(/^(event: .*)$/m)?.[1] || '';
+                                const newDataLine = 'data: ' + JSON.stringify(parsed);
+                                if (eventLine) {
+                                    callback(null, eventLine + '\n' + newDataLine + '\n\n');
+                                    return;
+                                }
+                                callback(null, newDataLine + '\n\n');
+                                return;
+                            }
+                        } catch (_) { /* fall through */ }
+                    }
+                }
+                callback(null, buf);
+            } else {
+                callback(null, '');
+            }
+        }
+    }
+
+    return new Interceptor();
+}
+
