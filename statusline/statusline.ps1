@@ -168,8 +168,8 @@ $ctxStr = if ($tokStr -and $null -ne $pct) { "$tokStr/$pct%" } elseif ($null -ne
 # DeepSeek V4 Pro context-window milestone tags
 $milestone = ''
 if ($modelLookup -eq 'deepseek-v4-pro' -and $tokens) {
-  if ($tokens -ge 400000) { $milestone = " $bold$(fg 255 130 50)FBR$reset" }
-  elseif ($tokens -ge 300000) { $milestone = " $(fg 140 180 220)SR$reset" }
+  if ($tokens -ge 400000) { $milestone = " $bold$(fg 255 100 255)FBR$reset" }
+  elseif ($tokens -ge 300000) { $milestone = " $(fg 200 100 255)SR$reset" }
 }
 
 $effortColor = if ($effort -eq 'high') { fg 255 80 80 } elseif ($effort -eq 'medium') { fg 255 180 50 } else { fg 100 160 255 }
