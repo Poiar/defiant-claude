@@ -375,7 +375,7 @@ function genFlags(): string {
     '--models        List all available model IDs (for /model in CC)',
     '--remote        Browser-based remote control (starts proxy automatically)',
     '--persist       Keep proxy alive after CC exits',
-    '--switch CONFIG  Switch a running persistent proxy to a different config',
+    '--switch CONFIG  Switch a running persistent proxy to a different config (use with --persist)',
     '--set-slot SLOT MODEL  Override a slot (opus/sonnet/haiku/subagent/fable)',
     '--subagent-model MODEL  Set a dedicated subagent model (e.g., oc:big-pickle)',
     '--stop-proxy    Kill the persistent proxy',
