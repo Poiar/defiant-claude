@@ -162,4 +162,4 @@ export function isStreamingClient(headers: Record<string, string | string[] | un
 export function getErrorCode(status: number | null | undefined): string | undefined {
     const entry = STATUS_TO_CODE[status as number];
     return entry ? entry.ecode : undefined;
-};
+}

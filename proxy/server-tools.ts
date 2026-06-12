@@ -257,7 +257,7 @@ async function webFetchImpl(url: string, _depth?: number, _visited?: Set<string>
         if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
             return 'Error: Only http and https URLs are supported.';
         }
-    } catch (e) { return 'Error: Invalid URL.'; }
+    } catch (_e) { return 'Error: Invalid URL.'; }
 
     if (_depth > 5 || _visited.has(url)) return 'Too many redirects fetching: ' + url;
     // Normalize URL for dedup to catch equivalent-form redirects

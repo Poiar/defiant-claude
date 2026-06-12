@@ -84,4 +84,4 @@ export function buildFriendlyStreamEvents(lastStatus: number | null | undefined,
         'event: error\ndata: ' + JSON.stringify(errorEvent) + '\n\n' +
         'event: message_stop\ndata: ' + JSON.stringify(stopEvent) + '\n\n' +
         'data: [DONE]\n\n';
-};
+}

@@ -13,7 +13,7 @@ import { parseArgs, loadConfig, checkReload, validateConfig, resolveKey, getEffe
 import { resolveTarget, ResolvedTarget } from './routing';
 import { classifyRequest, resolvePromptRoute } from './prompt-router';
 import { bodyHash, shouldUseCanary, recordCanaryResult, getOrCreateEntry, type CanaryEntry, type CanaryConfig } from './canary';
-import { tryForward, addFallbackHeaders, sseHeaders, type ForwardHeaders, type ForwardResult } from './forward';
+import { tryForward, addFallbackHeaders, sseHeaders, type ForwardResult } from './forward';
 import { sendProbe } from './probe';
 import type { ProbeSlot } from './probe';
 import { convertServerTools, populateToolResults } from './server-tools';

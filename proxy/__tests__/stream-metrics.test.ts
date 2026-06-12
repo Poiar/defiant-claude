@@ -256,10 +256,8 @@ describe('full lifecycle integration', () => {
     const startTime = timings.startTime;
 
     // Simulate some delay before first token
-    let elapsed = 0;
     while (Date.now() - startTime < 50) {
       /* spin */
-      elapsed = Date.now() - startTime;
     }
 
     recordFirstToken(timings);

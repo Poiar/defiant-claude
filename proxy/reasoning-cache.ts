@@ -32,7 +32,7 @@ export interface Message {
     reasoning_content?: string;
 }
 
-interface ReqBody {
+interface _ReqBody {
     messages?: Message[];
     system?: string | Array<{ type: string; text?: string }>;
 }

@@ -2,11 +2,8 @@
 
 import {
     sanitizeHeaders,
-    SENSITIVE_HEADERS,
-    NOISE_HEADERS,
     MAX_HEADERS,
     MAX_VALUE_LEN,
-    MAX_TOTAL_BYTES,
 } from '../header-sanitizer'
 
 describe('sanitizeHeaders', () => {

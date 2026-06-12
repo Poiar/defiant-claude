@@ -15,7 +15,7 @@ import type { Message as ReasoningMessage } from './reasoning-cache';
 import { describe as describeTransportError } from './transport-errors';
 import { createLogger } from './log';
 import { truncateForLog } from './truncate';
-import { startStreamTimer, recordFirstToken, recordChunk, finalizeMetrics } from './stream-metrics';
+import { startStreamTimer, recordFirstToken, recordChunk } from './stream-metrics';
 import type { StreamTimings, StreamMetrics } from './stream-metrics';
 
 const log = createLogger('forward');
@@ -230,7 +230,6 @@ export function tryForward(
     // Extract slot for timeout differentiation — subagent requests get tighter limits.
     const slot = model ? (model.match(/^(sonnet|opus|haiku|subagent|fable):/) || [null])[1] : null;
     const to = getStreamTimeouts(slot);
-    const forwardStart = Date.now();
 
     return new Promise((resolve) => {
         const streamUsage: { prompt_tokens: number; completion_tokens: number; cache_hit_tokens: number; cache_miss_tokens: number } = { prompt_tokens: 0, completion_tokens: 0, cache_hit_tokens: 0, cache_miss_tokens: 0 };

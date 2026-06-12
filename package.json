@@ -34,6 +34,7 @@
     "llm"
   ],
   "lint-staged": {
+    "*.ts": ["npx eslint --max-warnings 0"],
     "*.mjs": ["node -c"],
     "*.json": ["node -e \"JSON.parse(require('fs').readFileSync(process.argv[1], 'utf-8'))\""]
   },
@@ -70,6 +71,8 @@
     "@babel/preset-typescript": "^7.29.7",
     "@types/jest": "^30.0.0",
     "@types/node": "^25.9.2",
+    "@typescript-eslint/eslint-plugin": "^8.61.0",
+    "@typescript-eslint/parser": "^8.61.0",
     "eslint": "^8.57.1",
     "husky": "^9.1.7",
     "jest": "^30.2.0",

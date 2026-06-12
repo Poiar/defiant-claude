@@ -80,7 +80,7 @@ export function createRateLimiter(opts?: RateLimiterOptions): RateLimiter {
     function check(ip: string): RateLimitResult {
         const key = normalizeIp(ip);
         const now = Date.now();
-        let entry = entries.get(key);
+        const entry = entries.get(key);
 
         if (!entry || now - entry.windowStart >= windowMs) {
             // New window -- evict LRU if at capacity and this is a new IP

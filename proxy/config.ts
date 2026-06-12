@@ -269,7 +269,7 @@ export function loadConfig(parsed: ParsedArgs): ConfigState {
     let providersMtime = 0;
     let slotOverrides: Record<string, string> = {};
     let thinkingConfig: Record<string, ThinkingConfig> = {};
-    let thinkingOverridesMtime = 0;
+    const thinkingOverridesMtime = 0;
 
     if (parsed.routesFile) {
         try {
@@ -284,7 +284,7 @@ export function loadConfig(parsed: ParsedArgs): ConfigState {
         try {
             slotOverrides = readJson(parsed.overridesFile) as Record<string, string>;
             overridesMtime = fs.statSync(parsed.overridesFile).mtimeMs;
-        } catch (e) {
+        } catch (_e) {
             // Overrides file optional -- may not exist yet
         }
     }

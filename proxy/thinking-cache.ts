@@ -27,7 +27,7 @@ export interface Message {
     content: string | MessageBlock[];
 }
 
-interface ReqBody {
+interface _ReqBody {
     messages?: Message[];
     system?: string | Array<{ type: string; text?: string }>;
 }
