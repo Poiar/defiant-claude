@@ -185,6 +185,80 @@ export function convertServerTools(tools: ToolDef[] | null | undefined): Convert
 }
 // --- Web search execution (DuckDuckGo -- free, no API key) ---
 
+// --- DDG Lite HTML scraper ---
+// DuckDuckGo's JSON API only returns instant answers (Wikipedia abstracts).
+// The Lite HTML page (lite.duckduckgo.com) returns real web search results
+// with titles, snippets, and URLs — and is designed to be scraped (no JS,
+// minimal markup). This scraper extracts structured results from that HTML.
+
+interface SearchResult {
+    title: string;
+    url: string;
+    snippet: string;
+}
+
+function ddgLiteSearch(query: string): Promise<SearchResult[]> {
+    return new Promise((resolve) => {
+        const url = `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`;
+        https.get(url, {
+            headers: { 'User-Agent': 'deepclaude-proxy/1.0' },
+            timeout: 15000,
+        }, (res) => {
+            let data = '';
+            let dataSize = 0;
+            res.on('data', (chunk: Buffer) => {
+                dataSize += chunk.length;
+                if (dataSize > 500_000) { resolve([]); res.destroy(); return; }
+                data += chunk.toString();
+            });
+            res.on('end', () => {
+                if (!data) { resolve([]); return; }
+                try {
+                    // Extract titles from <a class='result-link' href="...">Title</a>
+                    const titleRe = /<a[^>]*href="[^"]*uddg=([^"&]+)[^"]*"[^>]*>([\s\S]*?)<\/a>/gi;
+                    const titles: Array<{ title: string; url: string }> = [];
+                    let tm: RegExpExecArray | null;
+                    while ((tm = titleRe.exec(data)) !== null) {
+                        try {
+                            const realUrl = decodeURIComponent(tm[1]);
+                            const title = tm[2].replace(/<[^>]+>/g, '').replace(/&#x27;/g, "'").replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').trim();
+                            if (title && realUrl) titles.push({ title, url: realUrl });
+                        } catch (_) { /* skip malformed */ }
+                    }
+
+                    // Extract snippets from <td class='result-snippet'>...snippet...</td>
+                    const snippetRe = /<td[^>]*class='result-snippet'[^>]*>([\s\S]*?)<\/td>/gi;
+                    const snippets: string[] = [];
+                    let sm: RegExpExecArray | null;
+                    while ((sm = snippetRe.exec(data)) !== null) {
+                        // Snippet may contain <b> and other inline tags
+                        let text = sm[1];
+                        // Remove link-text spans and other nested elements
+                        text = text.replace(/<span[^>]*class='link-text'[^>]*>[\s\S]*?<\/span>/gi, '');
+                        text = text.replace(/<a[^>]*>[\s\S]*?<\/a>/gi, '');
+                        text = text.replace(/<[^>]+>/g, ' ');
+                        text = text.replace(/&#x27;/g, "'").replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
+                        text = text.replace(/\s+/g, ' ').trim();
+                        if (text) snippets.push(text);
+                    }
+
+                    // Pair: first title uses first snippet, etc.
+                    const results: SearchResult[] = [];
+                    for (let i = 0; i < titles.length; i++) {
+                        results.push({
+                            title: titles[i].title,
+                            url: titles[i].url,
+                            snippet: snippets[i] || '',
+                        });
+                    }
+                    resolve(results.slice(0, 10));
+                } catch (_) { resolve([]); }
+            });
+            res.on('error', () => resolve([]));
+        }).on('error', () => resolve([])).on('timeout', () => resolve([]));
+    });
+}
+
 export async function webSearch(query: string): Promise<string> {
     // Check cache first
     const cached = getCachedSearch(query);
@@ -192,6 +266,23 @@ export async function webSearch(query: string): Promise<string> {
 
     await acquireFetchSlot();
     try {
+        // Primary: DDG Lite HTML scraper (real search results, free, no API key)
+        const liteResults = await ddgLiteSearch(query);
+        if (liteResults.length > 0) {
+            const lines: string[] = [];
+            for (let i = 0; i < liteResults.length; i++) {
+                const r = liteResults[i];
+                lines.push(`${i + 1}. ${r.title}`);
+                lines.push(`   ${r.url}`);
+                if (r.snippet) lines.push(`   ${r.snippet}`);
+                lines.push('');
+            }
+            const result = lines.join('\n').trim() || `No results found for query: "${query}"`;
+            setCachedSearch(query, result);
+            return result;
+        }
+
+        // Fallback: DDG JSON API (instant answers for simple factual queries)
         const result = await new Promise<string>((resolve) => {
             const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&no_redirect=1`;
             https.get(url, { headers: { 'User-Agent': 'deepclaude-proxy/1.0' }, timeout: 15000 }, (res) => {
@@ -229,7 +320,7 @@ export async function webSearch(query: string): Promise<string> {
                 resolve(`Web search timed out for query: "${query}"`);
             });
         });
-        // Cache the successful result
+        // Cache the result
         setCachedSearch(query, result);
         return result;
     } finally {
