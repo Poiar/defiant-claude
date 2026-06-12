@@ -744,12 +744,14 @@ export function createAnthropicStreamInterceptor(preExecutedSearches: number = 0
                         } catch (_) { /* fall through to passthrough */ }
                     } else {
                         // Bare event with no data payload — create synthetic data line
+                        log.info(null, '[dbg-interceptor] BARE event — creating synthetic data');
                         const syntheticData = JSON.stringify({
                             type: 'message_delta',
                             delta: { stop_reason: 'end_turn', stop_sequence: null },
                             usage: { output_tokens: 0, server_tool_use: serverToolUse },
                         });
                         output += 'event: message_delta\ndata: ' + syntheticData + '\n\n';
+                        log.info(null, '[dbg-interceptor] emitted synthetic msg_delta: ' + syntheticData.substring(0, 200));
                         this._injected = true;
                         continue;
                     }
