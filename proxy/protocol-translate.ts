@@ -423,7 +423,7 @@ interface TransformerState {
     serverToolUse: { web_search_requests: number; web_fetch_requests: number };
 }
 
-export function createStreamTransformer(model: string): Transform {
+export function createStreamTransformer(model: string, preExecutedSearches: number = 0): Transform {
     const state: TransformerState = {
         started: false,
         finished: false,
@@ -434,7 +434,7 @@ export function createStreamTransformer(model: string): Transform {
         messageId: `msg_${crypto.randomUUID()}`,
         model,
         usage: { input_tokens: 0, output_tokens: 0 },
-        serverToolUse: { web_search_requests: 0, web_fetch_requests: 0 },
+        serverToolUse: { web_search_requests: preExecutedSearches, web_fetch_requests: 0 },
     };
 
     function emit(eventType: string, data: Record<string, unknown>): string {
@@ -670,9 +670,9 @@ export function createStreamTransformer(model: string): Transform {
 // in its Anthropic-format response; this overrides that with the actual count
 // so Claude Code's "Did N searches" display is correct.
 
-export function createAnthropicStreamInterceptor(): Transform {
+export function createAnthropicStreamInterceptor(preExecutedSearches: number = 0): Transform {
     let buf = '';
-    let webSearchRequests = 0;
+    let webSearchRequests = preExecutedSearches;
     let webFetchRequests = 0;
 
     class Interceptor extends Transform {
