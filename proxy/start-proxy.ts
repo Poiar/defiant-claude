@@ -248,7 +248,18 @@ try {
                 let processAlive = false;
                 try {
                     process.kill(existingPid, 0);
-                    processAlive = true;
+                    // PID signal succeeded, but verify it's actually our proxy process.
+                    // After a computer restart PIDs get recycled — a stale proxy.pid
+                    // might reference a completely different process.
+                    try {
+                        const cmd = execSync(
+                            `wmic process where ProcessId=${existingPid} get CommandLine /value`,
+                            { encoding: 'utf8', timeout: 2000, windowsHide: true }
+                        );
+                        if (cmd.includes('start-proxy') || cmd.includes('deepclaude')) {
+                            processAlive = true;
+                        }
+                    } catch { /* wmic failed or PID isn't a proxy — treat as stale */ }
                 } catch { /* process not found */ }
                 if (processAlive) {
                     if (existingPort > 0) {
