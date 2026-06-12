@@ -249,11 +249,10 @@ Per-model context limits are configured automatically:
 | Model | Context |
 |---|---|
 | `deepseek-v4-pro` / `deepseek-v4-flash` (any provider) | 1M |
-| `openai/gpt-oss-120b:free`, `poolside/laguna-m.1:free`, `z-ai/glm-4.5-air:free` | 128K |
+| `z-ai/glm-4.5-air:free` | 128K |
 | `big-pickle` | 128K |
 | `kimi-k2.6`, `umans-kimi-k2.6`, `umans-coder` | 256K |
 | `mimo-v2.5-pro`, `umans-flash`, `umans-glm-5.1` | 128K |
-| `liquid/lfm-2.5-1.2b-instruct:free` | 32K |
 | `groq/llama-4-maverick` | 128K |
 | `groq/deepseek-r1-distill-qwen-32b` | 128K |
 | `mistral/mistral-large` | 128K |
