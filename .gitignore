@@ -12,3 +12,4 @@ proxy.log
 .claude/logs/
 .claude/*.lock
 .husky/_/
+.playwright-mcp/

@@ -82,7 +82,7 @@ async function main() {
   } catch (_) {}
 
   const modelKey = model.replace(/^[a-f0-9]{6,}:/, '');
-  const modelLookup = modelKey.replace(/^[a-z][a-z0-9_-]*:/, '');
+  const modelLookup = modelKey.replace(/^[a-z][a-z0-9_-]*:/, '').replace(/\[\d+[km]\]$/i, '');
 
   // ── Context window ──────────────────────────────────────────
   const tokens = d?.context_window?.total_input_tokens;
