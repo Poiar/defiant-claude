@@ -1,0 +1,270 @@
+# deepclaude
+
+<!-- AUTO:tagline -->
+<!-- /AUTO:tagline -->
+
+## Architecture
+
+DeepClaude runs a local HTTP routing proxy that intercepts Claude Code's Anthropic API calls and dispatches each model slot (Opus, Sonnet, Haiku, subagent) to a different upstream provider.
+
+**Direct DeepSeek (`ds`) uses the `/anthropic` endpoint** — DeepSeek offers an Anthropic-compatible API surface that speaks Claude's protocol natively. The proxy passes messages through unchanged: no format translation, no content flattening, no lossy conversion. Thinking mode (`{type: "enabled", budget_tokens: N}`), structured content blocks, tool use, and streaming all work without transformation. OpenAI-format translation only activates when routing through third-party providers (OpenRouter, Kimi, Mistral, etc.) that don't offer an Anthropic-compatible endpoint.
+
+### Proxy modules (`proxy/`)
+
+<!-- AUTO:modules -->
+<!-- /AUTO:modules -->
+
+### Data-driven provider registry
+
+Both the proxy and the launcher scripts (`deepclaude.ps1`, `deepclaude.sh`) read from a single `proxy/providers.json` file. This eliminates duplicated provider, config, and context-limit definitions across languages.
+
+<!-- AUTO:providers-schema -->
+<!-- /AUTO:providers-schema -->
+
+### Launcher scripts
+
+Two launcher scripts with identical behavior, each loading `providers.json` natively:
+
+- **`deepclaude.ps1`** — PowerShell 7+, uses `ConvertFrom-Json`
+- **`deepclaude.sh`** — Bash 4+, uses `jq` with `@tsv` output to avoid delimiter issues
+
+### Test coverage
+
+<!-- AUTO:test-coverage -->
+<!-- /AUTO:test-coverage -->
+
+### Pre-commit
+
+Husky v9 + lint-staged: syntax check on staged files, TypeScript compilation guard.
+
+## Quick start
+
+```
+# Get a DeepSeek API key: https://platform.deepseek.com
+
+setx DEEPSEEK_API_KEY "sk-your-key"          # Windows
+export DEEPSEEK_API_KEY="sk-your-key"        # macOS/Linux
+
+# Option 1: npm link (creates global deepclaude command)
+npm install -g .
+
+# Option 2: Add repo directory to PATH manually
+# Windows: setx PATH "%PATH%;C:\path\to\deepclaude"
+# macOS/Linux: export PATH="$PATH:/path/to/deepclaude"
+
+deepclaude                                    # Launch with DeepSeek V4 Pro
+```
+
+## Requirements
+
+- **Windows:** PowerShell 7+ ([download](https://github.com/PowerShell/PowerShell))
+- **macOS/Linux:** bash 4+, jq, netcat (nc), Node.js 18+
+- Node.js 18+ (for the proxy)
+
+## Usage
+
+### Named configs (`-b`)
+
+```
+<!-- AUTO:named-configs -->
+<!-- /AUTO:named-configs -->
+```
+
+### Ad-hoc positional configs
+
+Pass 1–4 `providerKey:modelId` specs, mapped to opus/sonnet/haiku/subagent:
+
+```
+deepclaude ds:deepseek-v4-pro                                    # 1 spec → all slots
+deepclaude ds:deepseek-v4-pro oc:big-pickle                      # 2 specs → first half / second half
+deepclaude ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free  # 3 specs → last repeats
+```
+
+### Flags
+
+```
+<!-- AUTO:flags -->
+<!-- /AUTO:flags -->
+```
+
+## Providers and API keys
+
+<!-- AUTO:providers-table -->
+<!-- /AUTO:providers-table -->
+
+Keys are read from both process env and machine/user environment variables.
+
+<!-- AUTO:openai-note -->
+<!-- /AUTO:openai-note -->
+
+## Provider fallback
+
+Providers can specify a `fallback` list — if the primary provider fails (500, 429, timeout, dead stream), the proxy automatically retries with the fallback:
+
+```
+<!-- AUTO:fallback-list -->
+<!-- /AUTO:fallback-list -->
+```
+
+Fallbacks are configured per-provider and transparent to Claude Code. Max 3 attempts per request.
+
+## Named configs reference
+
+```
+<!-- AUTO:configs-reference -->
+<!-- /AUTO:configs-reference -->
+```
+
+Note: `al` (Alibaba/DashScope) is only available via ad-hoc config and fallback, not as a named `-b al` config.
+
+## Slot overrides (`--set-slot`)
+
+Override individual model slots without changing configs. Survives config switches.
+
+```
+deepclaude --set-slot haiku or:z-ai/glm-4.5-air:free   # Set haiku to a free OR model
+deepclaude --set-slot subagent oc:big-pickle            # Set subagent to OpenCode
+deepclaude --set-slot sonnet                            # Clear override (reverts to config default)
+```
+
+Overrides are stored in `~/.deepclaude/slot-overrides.json`. The proxy reloads them on every request — changes take effect immediately in a running session.
+
+Within Claude Code, you can switch the **opus** model directly:
+```
+/model oc:big-pickle               # Switch opus to OpenCode
+/model or:z-ai/glm-4.5-air:free    # Switch opus to a free OR model
+```
+
+## Context window limits
+
+Per-model context limits are configured automatically:
+
+<!-- AUTO:context-table -->
+<!-- /AUTO:context-table -->
+
+Models at 1M tokens get `CLAUDE_CODE_AUTO_COMPACT_WINDOW` set (clamped to 1,000,000 — Claude Code's internal max). Models between 128K–1M get `CLAUDE_CODE_MAX_CONTEXT_TOKENS` with compaction disabled. A `[1m]` suffix is appended to 1M-context model IDs (e.g. `deepseek-v4-pro[1m]`) — this is stripped by the proxy's router and used internally by Claude Code for dynamic context-window detection.
+
+DeepSeek V4 models use a `compactionWindow` of 950K tokens to preserve automatic disk cache hits. Compaction rewrites conversation history, which invalidates the prefix and forces an expensive cache miss ($0.435/M). By delaying compaction to 950K (near the 1M wall), most requests stay within the same prefix and hit the disk cache at $0.0036/M — a 50× discount. The cache persists for hours to days and requires no configuration.
+
+## Persistent proxy workflow
+
+The proxy routes each model name to the right provider. It runs on `127.0.0.1` with a dynamic port.
+
+```
+deepclaude -b ds+oc --persist      # Start with proxy, keep it alive after exit
+
+# Mid-session, from another terminal or within CC via /model:
+deepclaude --switch fw             # Switch everything to Fireworks
+deepclaude --set-slot haiku oc:big-pickle  # Change just the haiku slot
+
+deepclaude --models                # List all available models
+deepclaude --stop-proxy            # Kill the proxy when done
+```
+
+State files live in `~/.deepclaude/`:
+<!-- AUTO:state-files -->
+<!-- /AUTO:state-files -->
+
+## Remote control (`--remote`)
+
+```
+deepclaude --remote                 # Default config via proxy
+deepclaude --remote -b ds+oc        # Named config
+deepclaude --remote ds:deepseek-v4-pro oc:big-pickle  # Ad-hoc
+deepclaude --remote -b anthropic    # Anthropic direct
+```
+
+Starts the routing proxy, prints a `claude.ai/code/session_...` URL. Works on phone, tablet, any browser. Proxy auto-stops on exit (unless `--persist`).
+
+## Doctor
+
+System health check — verifies Node.js, proxy script, state directory, API keys, slot overrides, and runs a proxy startup test:
+
+```
+deepclaude --doctor
+```
+
+## Statusline
+
+Shows the real model, provider, context usage, effort level, and git branch — with slot override resolution so you see what's actually running.
+
+```
+# Windows (PowerShell)
+1. Copy statusline/statusline.ps1 → ~/.claude/statusline.ps1
+2. Add to ~/.claude/settings.json:
+
+  { "statusLine": { "type": "command", "command": "pwsh ~/.claude/statusline.ps1" } }
+
+# macOS/Linux (bash)
+1. Copy statusline/statusline.sh → ~/.claude/statusline.sh
+2. Add to ~/.claude/settings.json:
+
+  { "statusLine": { "type": "command", "command": "bash ~/.claude/statusline.sh" } }
+```
+
+Resolves slot overrides from `~/.deepclaude/slot-overrides.json` and context limits from `~/.deepclaude/current-routes.json`, so the token gauge and model display always reflect reality.
+
+Tip: `deepclaude --install-statusline` automates the manual setup above.
+
+## Environment
+
+<!-- AUTO:env-vars -->
+<!-- /AUTO:env-vars -->
+
+All provider API key env vars (see [Providers table](#providers-and-api-keys)) are pushed into the process so the proxy (child process) inherits them.
+
+## Windows Defender
+
+The proxy starts a local HTTP server and forwards requests — Windows Defender often flags this as suspicious behavior. If the proxy gets blocked:
+
+```
+deepclaude --fix-av       # Prints the exact exclusion commands to run
+```
+
+Then run the printed commands in an **admin** PowerShell window. You'll need to exclude both the `proxy/` directory and potentially `node.exe`.
+
+## Troubleshooting
+
+**npm install fails**
+Ensure Node.js 18+ is installed. Delete node_modules and package-lock.json, then retry.
+
+**tsx not found**
+Run `npm install` from the project root. The proxy uses tsx to run TypeScript directly.
+
+**TypeScript compilation errors**
+Run `npm test` to check for type errors.
+
+**Proxy fails to start on Windows (port not responding)**
+Windows Defender may be blocking the proxy. Run `deepclaude --fix-av` and execute the printed commands in an admin PowerShell window.
+
+**"command not found: deepclaude"**
+The deepclaude directory is not on your PATH. Run `npm install -g .` from the repo directory, or add the repo directory to your PATH manually.
+
+**"DEEPSEEK_API_KEY not set"**
+At minimum you need one provider's API key. See the [Providers table](#providers-and-api-keys). Set keys via environment variables.
+
+**macOS/Linux: "jq: command not found"**
+Install jq: `brew install jq` (macOS) or `sudo apt install jq` (Linux).
+
+**Proxy produces no response / Claude Code hangs**
+Run `deepclaude --doctor` to check system health. Check that your provider API key is valid and has credits. The proxy has built-in protection against silent stream drops: gzip decompression for misconfigured CDNs, heartbeat/deadline detection with byte diagnostics (logged to `~/.deepclaude/proxy.log`), and automatic fallback chain retry. Check the proxy log for stream timeout or transport error messages.
+
+## Similar projects
+
+DeepClaude occupies a specific niche — per-slot Claude Code routing with protocol translation. These projects in the broader LLM proxy/gateway space have informed DeepClaude's design and are worth knowing about:
+
+| Project | Type | Key strength |
+|---|---|---|
+| [LiteLLM](https://github.com/BerriAI/litellm) | OSS AI Gateway (Python) | 9 routing strategies (lowest cost, least busy, budget limiter, latency-based), spend tracking per key, admin dashboard, 8ms P95 at 1k RPS |
+| [Portkey Gateway](https://github.com/portkey-ai/gateway) | OSS AI Gateway (Node.js) | 122KB footprint, <1ms overhead, configurable retry with status code filtering, guardrail pipeline, MCP gateway |
+| [Aider](https://github.com/Aider-AI/aider) | OSS AI coding tool (Python) | Model alias system, coding benchmark leaderboard, reasoning tag extraction, multi-provider via litellm |
+| [Cline](https://github.com/cline/cline) | VS Code AI assistant | Multi-provider with per-model config, implicit slot concept, provider-specific quirk handling |
+| [Continue.dev](https://github.com/continuedev/continue) | OSS IDE AI assistant | Separate model config for chat vs autocomplete, provider profiles, model selector UX |
+| [One API](https://github.com/songquanpeng/one-api) | OSS API management (Go) | Multi-tenant key management, quota tracking, channel load balancing |
+| [Manifest](https://github.com/mnfst/manifest) | AI app framework (TypeScript) | Declarative single-file config, "it just works" DX, provider-agnostic design |
+
+DeepClaude's differentiator: **slot-based routing** — Opus, Sonnet, Haiku, and subagent each dispatched independently. Combined with Anthropic↔OpenAI protocol translation, thinking block caching across providers, and a data-driven provider registry, it's purpose-built for the Claude Code ecosystem rather than general-purpose API forwarding.
+
+## License
+
+MIT

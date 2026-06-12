@@ -1,6 +1,8 @@
 # deepclaude
 
-Provider-agnostic Claude Code wrapper. Route each model slot (Opus, Sonnet, Haiku, subagent) to a different provider. Mix DeepSeek, OpenRouter, Fireworks, OpenCode, Alibaba, Kimi, Mimo, Umans, Groq, Mistral, MiniMax, Z.ai, BytePlus, SiliconFlow, Novita, and Anthropic in one session.
+<!-- AUTO:tagline -->
+Provider-agnostic Claude Code wrapper. Route each model slot (Opus, Sonnet, Haiku, subagent) to a different provider. Mix Alibaba, BytePlus, DeepSeek, Fireworks, Groq, Kimi, Mimo, MiniMax, Mistral, Novita, OpenCode, OpenRouter, SiliconFlow, Umans, Z.ai, Anthropic in one session.
+<!-- /AUTO:tagline -->
 
 ## Architecture
 
@@ -10,57 +12,60 @@ DeepClaude runs a local HTTP routing proxy that intercepts Claude Code's Anthrop
 
 ### Proxy modules (`proxy/`)
 
+<!-- AUTO:modules -->
 | Module | Purpose |
 |---|---|
-| `start-proxy.ts` | Entry point — HTTP server, request lifecycle, health endpoint |
-| `routing.ts` | Slot-based routing with prefix matching, fallback chain construction, circuit breaker |
-| `protocol-translate.ts` | Bidirectional Anthropic Messages ↔ OpenAI Chat Completions format translation (only active for OpenAI-format providers — `ds` bypasses this entirely via DeepSeek's `/anthropic` endpoint) |
-| `forward.ts` | Upstream HTTP forwarding with SSE streaming, gzip decompression, stream heartbeat/deadline timers with byte diagnostics, total-byte cap (500MB), fallback header injection, SSE buffer guarding, usage token extraction, peekFirstChunk with fast-stream race protection |
-| `thinking-cache.ts` | Anthropic-format thinking block extraction, caching, and injection for multi-turn tool conversations |
-| `reasoning-cache.ts` | OpenAI-format reasoning content cache with session-keyed LRU and re-injection (only for OpenAI-format providers — `ds` handles this natively) |
-| `transport-errors.ts` | Network failure classification via ordered signature tuples with cause chain walking |
-| `error-codes.ts` | Structured error codes with template interpolation, dev/production mode, credential scrubbing via data-driven pattern list |
+| `canary.ts` | Canary routing state machine (COLD → WARMING → ACTIVE) with configurable rollout percentages and rollback |
 | `concurrency.ts` | Promise-queue-based semaphore with FIFO ordering and acquire/release pump pattern |
-| `lru-cache.ts` | TTL cache with LRU eviction using delete-then-set MRU promotion and lazy shared cleanup |
-| `server-tools.ts` | Anthropic server tool conversion (web_search, web_fetch, url_fetch, computer, bash, text_editor, memory, tool_search_tool), DuckDuckGo web search, SSRF-protected web fetch, tool result population |
+| `config-lint.ts` | `providers.json` structural validation (used by `--lint-config`) |
 | `config.ts` | CLI argument parsing, JSON config loading with mtime-based hot reload, key resolution with AES-256-GCM decryption |
-| `stats.ts` | Provider health tracking, circuit breaker with 429 exclusion, auto-probe recovery with cooldown backoff, request statistics, token/spend tracking with atomic writes and restart persistence, event loop lag monitoring, provider stats reconciliation on config reload |
-| `util.ts` | Path deduplication for /v1-prefixed providers, safe header construction |
 | `crypto.ts` | AES-256-GCM encryption/decryption for provider API keys with async scrypt (N=131072) key derivation and fingerprint-based key caching |
+| `dashboard.ts` | Health dashboard HTML page with live SSE metrics stream |
+| `dry-run.ts` | Resolved routing table display without starting the proxy (used by `--dry-run`) |
 | `encrypt-key.ts` | CLI tool for encrypting API keys |
+| `error-codes.ts` | Structured error codes with template interpolation, dev/production mode, credential scrubbing via data-driven pattern list |
+| `forward.ts` | Upstream HTTP forwarding with SSE streaming, gzip decompression, stream heartbeat/deadline timers with byte diagnostics, total-byte cap (500MB), fallback header injection, SSE buffer guarding, usage token extraction, peekFirstChunk with fast-stream race protection |
 | `friendly-error.ts` | Conversational error responses for exhausted fallback chains |
 | `header-sanitizer.ts` | Request header sanitization before logging (drops auth, cookies, noise) |
 | `log.ts` | Structured logger with per-module namespacing, request IDs, and env-gated debug level (`DEEPCLAUDE_DEBUG=true`) |
+| `lru-cache.ts` | TTL cache with LRU eviction using delete-then-set MRU promotion and lazy shared cleanup |
 | `momentum.ts` | Session-based provider stickiness (tracks last 5 provider decisions) |
-| `rate-limiter.ts` | Per-IP fixed-window rate limiter with LRU eviction |
-| `ssrf.ts` | URL validation against SSRF/DNS rebinding, blocks private/internal IPs and metadata endpoints |
-| `truncate.ts` | Log/error body length truncation with credential scrubbing |
-| `startup-check.ts` | Startup health probe — concurrent non-streaming + streaming checks per provider before accepting connections |
-| `stream-metrics.ts` | Per-stream timing (TTFB, tokens/sec) and aggregated provider metrics |
-| `request-log.ts` | Opt-in request logging to `~/.deepclaude/requests.log` (`--log-all` or `DEEPCLAUDE_LOG_ALL_REQUESTS=true`) |
-| `session-key.ts` | SHA-256 session key derivation from conversation content, shared by thinking/reasoning caches and momentum |
-| `prompt-router.ts` | Request prompt complexity classification (TRIVIAL/CHAT/CODE/TOOL/HEAVY) for cost-based routing |
-| `canary.ts` | Canary routing state machine (COLD → WARMING → ACTIVE) with configurable rollout percentages and rollback |
 | `probe.ts` | Single-provider health probe with auth failure detection and latency measurement |
-| `dashboard.ts` | Health dashboard HTML page with live SSE metrics stream |
-| `config-lint.ts` | `providers.json` structural validation (used by `--lint-config`) |
-| `dry-run.ts` | Resolved routing table display without starting the proxy (used by `--dry-run`) |
+| `prompt-router.ts` | Request prompt complexity classification (TRIVIAL/CHAT/CODE/TOOL/HEAVY) for cost-based routing |
+| `protocol-translate.ts` | Bidirectional Anthropic Messages ↔ OpenAI Chat Completions format translation (only active for OpenAI-format providers — `ds` bypasses this entirely via DeepSeek's `/anthropic` endpoint) |
+| `rate-limiter.ts` | Per-IP fixed-window rate limiter with LRU eviction |
+| `reasoning-cache.ts` | OpenAI-format reasoning content cache with session-keyed LRU and re-injection (only for OpenAI-format providers — `ds` handles this natively) |
+| `request-log.ts` | Opt-in request logging to `~/.deepclaude/requests.log` (`--log-all` or `DEEPCLAUDE_LOG_ALL_REQUESTS=true`) |
+| `routing.ts` | Slot-based routing with prefix matching, fallback chain construction, circuit breaker |
+| `server-tools.ts` | Anthropic server tool conversion (web_search, web_fetch, url_fetch, computer, bash, text_editor, memory, tool_search_tool), DuckDuckGo web search, SSRF-protected web fetch, tool result population |
+| `session-key.ts` | SHA-256 session key derivation from conversation content, shared by thinking/reasoning caches and momentum |
+| `ssrf.ts` | URL validation against SSRF/DNS rebinding, blocks private/internal IPs and metadata endpoints |
+| `start-proxy.ts` | Entry point — HTTP server, request lifecycle, health endpoint |
+| `startup-check.ts` | Startup health probe — concurrent non-streaming + streaming checks per provider before accepting connections |
+| `stats.ts` | Provider health tracking, circuit breaker with 429 exclusion, auto-probe recovery with cooldown backoff, request statistics, token/spend tracking with atomic writes and restart persistence, event loop lag monitoring, provider stats reconciliation on config reload |
+| `stream-metrics.ts` | Per-stream timing (TTFB, tokens/sec) and aggregated provider metrics |
+| `thinking-cache.ts` | Anthropic-format thinking block extraction, caching, and injection for multi-turn tool conversations |
+| `transport-errors.ts` | Network failure classification via ordered signature tuples with cause chain walking |
+| `truncate.ts` | Log/error body length truncation with credential scrubbing |
+| `util.ts` | Path deduplication for /v1-prefixed providers, safe header construction |
+<!-- /AUTO:modules -->
 
 ### Data-driven provider registry
 
 Both the proxy and the launcher scripts (`deepclaude.ps1`, `deepclaude.sh`) read from a single `proxy/providers.json` file. This eliminates duplicated provider, config, and context-limit definitions across languages.
 
+<!-- AUTO:providers-schema -->
 ```
 providers.json
-├── _comment         →  schema version / description (ignored by code)
-├── providers        →  endpoint, auth, wire format, fallbacks, setup URLs, streamUsageReporting, extraHeaders
-├── contextLimits    →  per-model token windows
-├── compactionWindow →  per-model compaction thresholds (950K for DeepSeek — preserves disk cache hits)
-├── thinking         →  per-model reasoning mode config (type, budget_tokens)
-├── configs          →  named preset configs (slot → provider:model), monthlyBudget
-├── aliases          →  short model aliases (e.g. "v4" → "deepseek-v4-pro")
-└── pricing          →  per-model input/output/cache token pricing ($/MTok)
+├── providers          →  endpoint, auth, wire format, fallbacks, setup URLs, streamUsageReporting, extraHeaders
+├── aliases            →  short model aliases (e.g. "v4" → "deepseek-v4-pro")
+├── contextLimits      →  per-model token windows
+├── thinking           →  per-model reasoning mode config (type, budget_tokens)
+├── compactionWindow   →  per-model compaction thresholds (950K for DeepSeek — preserves disk cache hits)
+├── configs            →  named preset configs (slot → provider:model), monthlyBudget
+└── pricing            →  per-model input/output/cache token pricing ($/MTok)
 ```
+<!-- /AUTO:providers-schema -->
 
 ### Launcher scripts
 
@@ -71,7 +76,9 @@ Two launcher scripts with identical behavior, each loading `providers.json` nati
 
 ### Test coverage
 
+<!-- AUTO:test-coverage -->
 623 tests across 36 test files covering all proxy modules — transport errors, concurrency, LRU cache, provider registry validation, error codes, routing, stats, forwarding, server tools, config, protocol translation, thinking cache, reasoning cache, header sanitization, truncation, crypto, friendly errors, SSRF validation, dead stream detection, startup checks, and stream metrics. Run with `npm test`.
+<!-- /AUTO:test-coverage -->
 
 ### Pre-commit
 
@@ -106,22 +113,24 @@ deepclaude                                    # Launch with DeepSeek V4 Pro
 ### Named configs (`-b`)
 
 ```
+<!-- AUTO:named-configs -->
 deepclaude                  # ds (default) — DeepSeek V4 Pro
-deepclaude -b or            # OpenRouter (DeepSeek)
-deepclaude -b fw            # Fireworks AI
-deepclaude -b oc            # OpenCode Zen
-deepclaude -b km            # Kimi K2.6
-deepclaude -b mm            # Xiaomi Mimo V2.5 Pro
-deepclaude -b um            # Umans AI (Kimi K2.6)
-deepclaude -b gr            # Groq (Llama 4 Maverick)
-deepclaude -b mt            # Mistral Large
-deepclaude -b mx            # MiniMax M1
-deepclaude -b za            # Z.ai GLM 4.5
-deepclaude -b bp            # BytePlus Doubao 1.5 Pro
-deepclaude -b sf            # SiliconFlow (DeepSeek V4 Pro)
-deepclaude -b nv            # Novita (DeepSeek V4 Pro)
-deepclaude -b ds+oc         # DeepSeek main + OpenCode subs
+deepclaude -b bp              # BytePlus Doubao 1.5 Pro
+deepclaude -b ds+oc           # DeepSeek + OpenCode subs
+deepclaude -b fw              # Fireworks AI
+deepclaude -b gr              # Groq (Llama 4 Maverick)
+deepclaude -b km              # Kimi K2.6
+deepclaude -b mx              # MiniMax M1
+deepclaude -b mt              # Mistral Large
+deepclaude -b nv              # Novita (DeepSeek V4 Pro)
+deepclaude -b oc              # OpenCode Zen
+deepclaude -b or              # OpenRouter (DeepSeek)
+deepclaude -b sf              # SiliconFlow (DeepSeek V4 Pro)
+deepclaude -b um              # Umans Coder (Kimi K2.6)
+deepclaude -b mm              # Xiaomi Mimo V2.5 Pro
+deepclaude -b za              # Z.ai GLM 4.5
 deepclaude -b anthropic     # Normal Claude Code
+<!-- /AUTO:named-configs -->
 ```
 
 ### Ad-hoc positional configs
@@ -137,6 +146,7 @@ deepclaude ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free  # 3 specs 
 ### Flags
 
 ```
+<!-- AUTO:flags -->
 --status        Show keys, configs, and active slot mapping
 --doctor        System health check (prereqs, keys, proxy test)
 --cost          Pricing comparison
@@ -164,10 +174,12 @@ deepclaude ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free  # 3 specs 
 --no-thinking        Disable extended thinking for all models (save cost)
 --thinking-budget N  Set thinking budget in tokens (e.g. 64000 for deep reasoning)
 --what-if             Alias for --dry-run
+<!-- /AUTO:flags -->
 ```
 
 ## Providers and API keys
 
+<!-- AUTO:providers-table -->
 | Key | Provider | Flag | Auth |
 |---|---|---|---|
 | `DEEPSEEK_API_KEY` | DeepSeek (direct) | `ds` | x-api-key |
@@ -185,19 +197,31 @@ deepclaude ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free  # 3 specs 
 | `BYTEPLUS_API_KEY` | BytePlus/Doubao | `bp` | bearer |
 | `SILICONFLOW_API_KEY` | SiliconFlow | `sf` | bearer |
 | `NOVITA_API_KEY` | Novita | `nv` | bearer |
+<!-- /AUTO:providers-table -->
 
 Keys are read from both process env and machine/user environment variables.
 
-Providers with `format = "openai"` (OpenRouter, Kimi, Mimo, Alibaba, Groq, Mistral, MiniMax, Z.ai, BytePlus, SiliconFlow, Novita) use OpenAI-compatible endpoints. The proxy automatically translates between Anthropic and OpenAI protocols — including thinking/reasoning, tool calls, streaming, and multi-turn context management. Direct DeepSeek (`ds`) uses the `/anthropic` endpoint and bypasses all translation.
+<!-- AUTO:openai-note -->
+Providers with `format = "openai"` (OpenRouter, Alibaba/DashScope, Kimi/Moonshot, Xiaomi Mimo, Groq, Mistral, MiniMax, Z.ai / GLM, BytePlus/Doubao, SiliconFlow, Novita) use OpenAI-compatible endpoints. The proxy automatically translates between Anthropic and OpenAI protocols — including thinking/reasoning, tool calls, streaming, and multi-turn context management. Direct DeepSeek (`ds`) uses the `/anthropic` endpoint and bypasses all translation.
+<!-- /AUTO:openai-note -->
 
 ## Provider fallback
 
 Providers can specify a `fallback` list — if the primary provider fails (500, 429, timeout, dead stream), the proxy automatically retries with the fallback:
 
 ```
-km → fallback: ds        # Kimi fails → DeepSeek
-mm → fallback: oc        # Mimo fails → OpenCode
-gr → fallback: ds        # Groq fails → DeepSeek
+<!-- AUTO:fallback-list -->
+al → fallback: ds                        # Alibaba/DashScope fails → ds
+km → fallback: ds                        # Kimi/Moonshot fails → ds
+mm → fallback: oc                        # Xiaomi Mimo fails → oc
+gr → fallback: ds                        # Groq fails → ds
+mt → fallback: ds                        # Mistral fails → ds
+mx → fallback: ds                        # MiniMax fails → ds
+za → fallback: ds                        # Z.ai / GLM fails → ds
+bp → fallback: ds                        # BytePlus/Doubao fails → ds
+sf → fallback: ds                        # SiliconFlow fails → ds
+nv → fallback: ds                        # Novita fails → ds
+<!-- /AUTO:fallback-list -->
 ```
 
 Fallbacks are configured per-provider and transparent to Claude Code. Max 3 attempts per request.
@@ -205,21 +229,22 @@ Fallbacks are configured per-provider and transparent to Claude Code. Max 3 atte
 ## Named configs reference
 
 ```
-ds     opus=ds:deepseek-v4-pro     sonnet=ds:deepseek-v4-pro     haiku=ds:deepseek-v4-flash    sub=ds:deepseek-v4-flash
-or     opus=or:deepseek/deepseek-v4-pro  sonnet=or:deepseek/deepseek-v4-pro  haiku=or:deepseek/deepseek-v4-flash  sub=or:deepseek/deepseek-v4-flash
-fw     opus=fw:accounts/fireworks/models/deepseek-v4-pro  (all slots same)
-oc     opus=oc:big-pickle  (all slots same)
-km     opus=km:kimi-k2.6  (all slots same)
-mm     opus=mm:mimo-v2.5-pro  (all slots same)
-um     opus=um:umans-coder  (all slots same)
-gr     opus=gr:groq/llama-4-maverick  sonnet=gr:groq/llama-4-maverick  haiku=gr:groq/deepseek-r1-distill-qwen-32b  sub=gr:groq/deepseek-r1-distill-qwen-32b
-mt     opus=mt:mistral/mistral-large  sonnet=mt:mistral/mistral-large  haiku=mt:mistral/mistral-small  sub=mt:mistral/mistral-small
-mx     opus=mx:minimax/minimax-m1  (all slots same)
-za     opus=za:zai/glm-4.5  (all slots same)
-bp     opus=bp:byteplus/doubao-1.5-pro  (all slots same)
-sf     opus=sf:siliconflow/deepseek-v4-pro  (all slots same)
-nv     opus=nv:novita/deepseek-v4-pro  (all slots same)
-ds+oc  opus=ds:deepseek-v4-pro  sonnet=ds:deepseek-v4-pro  haiku=oc:big-pickle  sub=oc:big-pickle
+<!-- AUTO:configs-reference -->
+or      opus=or:deepseek/deepseek-v4-pro  sonnet=or:deepseek/deepseek-v4-pro  haiku=or:deepseek/deepseek-v4-flash  sub=or:deepseek/deepseek-v4-flash
+fw      opus=fw:accounts/fireworks/models/deepseek-v4-pro  sonnet=fw:accounts/fireworks/models/deepseek-v4-pro  haiku=fw:accounts/fireworks/models/deepseek-v4-pro  sub=fw:accounts/fireworks/models/deepseek-v4-pro  (all slots same)
+oc      opus=oc:big-pickle  sonnet=oc:big-pickle  haiku=oc:big-pickle  sub=oc:big-pickle  (all slots same)
+km      opus=km:kimi-k2.6  sonnet=km:kimi-k2.6  haiku=km:kimi-k2.6  sub=km:kimi-k2.6  (all slots same)
+mm      opus=mm:mimo-v2.5-pro  sonnet=mm:mimo-v2.5-pro  haiku=mm:mimo-v2.5-pro  sub=mm:mimo-v2.5-pro  (all slots same)
+um      opus=um:umans-coder  sonnet=um:umans-coder  haiku=um:umans-coder  sub=um:umans-coder  (all slots same)
+gr      opus=gr:groq/llama-4-maverick  sonnet=gr:groq/llama-4-maverick  haiku=gr:groq/deepseek-r1-distill-qwen-32b  sub=gr:groq/deepseek-r1-distill-qwen-32b
+mt      opus=mt:mistral/mistral-large  sonnet=mt:mistral/mistral-large  haiku=mt:mistral/mistral-small  sub=mt:mistral/mistral-small
+mx      opus=mx:minimax/minimax-m1  sonnet=mx:minimax/minimax-m1  haiku=mx:minimax/minimax-m1  sub=mx:minimax/minimax-m1  (all slots same)
+za      opus=za:zai/glm-4.5  sonnet=za:zai/glm-4.5  haiku=za:zai/glm-4.5  sub=za:zai/glm-4.5  (all slots same)
+bp      opus=bp:byteplus/doubao-1.5-pro  sonnet=bp:byteplus/doubao-1.5-pro  haiku=bp:byteplus/doubao-1.5-pro  sub=bp:byteplus/doubao-1.5-pro  (all slots same)
+sf      opus=sf:siliconflow/deepseek-v4-pro  sonnet=sf:siliconflow/deepseek-v4-pro  haiku=sf:siliconflow/deepseek-v4-pro  sub=sf:siliconflow/deepseek-v4-pro  (all slots same)
+nv      opus=nv:novita/deepseek-v4-pro  sonnet=nv:novita/deepseek-v4-pro  haiku=nv:novita/deepseek-v4-pro  sub=nv:novita/deepseek-v4-pro  (all slots same)
+ds+oc   opus=ds:deepseek-v4-pro  sonnet=ds:deepseek-v4-pro  haiku=oc:big-pickle  sub=oc:big-pickle
+<!-- /AUTO:configs-reference -->
 ```
 
 Note: `al` (Alibaba/DashScope) is only available via ad-hoc config and fallback, not as a named `-b al` config.
@@ -246,22 +271,13 @@ Within Claude Code, you can switch the **opus** model directly:
 
 Per-model context limits are configured automatically:
 
+<!-- AUTO:context-table -->
 | Model | Context |
 |---|---|
-| `deepseek-v4-pro` / `deepseek-v4-flash` (any provider) | 1M |
-| `z-ai/glm-4.5-air:free` | 128K |
-| `big-pickle` | 128K |
-| `kimi-k2.6`, `umans-kimi-k2.6`, `umans-coder` | 256K |
-| `mimo-v2.5-pro`, `umans-flash`, `umans-glm-5.1` | 128K |
-| `groq/llama-4-maverick` | 128K |
-| `groq/deepseek-r1-distill-qwen-32b` | 128K |
-| `mistral/mistral-large` | 128K |
-| `mistral/mistral-small` | 128K |
-| `minimax/minimax-m1` | 256K |
-| `zai/glm-4.5` | 128K |
-| `byteplus/doubao-1.5-pro` | 128K |
-| `siliconflow/deepseek-v4-pro` | 1M |
-| `novita/deepseek-v4-pro` | 1M |
+| `deepseek-v4-pro`, `deepseek-v4-flash`, `deepseek/deepseek-v4-pro`, `deepseek/deepseek-v4-flash`, `accounts/fireworks/models/deepseek-v4-pro`, `siliconflow/deepseek-v4-pro`, `novita/deepseek-v4-pro` | 1M |
+| `kimi-k2.6`, `umans-kimi-k2.6`, `umans-coder`, `minimax/minimax-m1` | 256K |
+| `z-ai/glm-4.5-air:free`, `big-pickle`, `mimo-v2.5-pro`, `umans-flash`, `umans-glm-5.1`, `groq/llama-4-maverick`, `groq/deepseek-r1-distill-qwen-32b`, `mistral/mistral-large`, `mistral/mistral-small`, `zai/glm-4.5`, `byteplus/doubao-1.5-pro` | 128K |
+<!-- /AUTO:context-table -->
 
 Models at 1M tokens get `CLAUDE_CODE_AUTO_COMPACT_WINDOW` set (clamped to 1,000,000 — Claude Code's internal max). Models between 128K–1M get `CLAUDE_CODE_MAX_CONTEXT_TOKENS` with compaction disabled. A `[1m]` suffix is appended to 1M-context model IDs (e.g. `deepseek-v4-pro[1m]`) — this is stripped by the proxy's router and used internally by Claude Code for dynamic context-window detection.
 
@@ -283,6 +299,7 @@ deepclaude --stop-proxy            # Kill the proxy when done
 ```
 
 State files live in `~/.deepclaude/`:
+<!-- AUTO:state-files -->
 - `proxy.json` — PID, port, routes file
 - `proxy.pid` — PID lock file (prevents dual-instance state corruption)
 - `current-routes.json` — active routing table (reloaded on every request)
@@ -291,6 +308,7 @@ State files live in `~/.deepclaude/`:
 - `spend.json` — daily and total spend tracking (atomic write via .tmp + rename)
 - `subagent-model.json` — dedicated subagent model setting
 - `requests.log` — opt-in request logs (JSONL, timestamped rotation, 5 backups)
+<!-- /AUTO:state-files -->
 
 ## Remote control (`--remote`)
 
@@ -335,25 +353,27 @@ Tip: `deepclaude --install-statusline` automates the manual setup above.
 
 ## Environment
 
+<!-- AUTO:env-vars -->
 | Variable | Purpose |
 |---|---|
-| `DEEPCLAUDE_DEFAULT_BACKEND` | Default config name (falls back to `ds`; legacy `CHEAPCLAUDE_DEFAULT_BACKEND` also accepted) |
-| `DEEPCLAUDE_ENCRYPTION_KEY` | Master key for AES-256-GCM API key decryption (used with `--encrypt-key`) |
-| `DEEPCLAUDE_DAILY_BUDGET` | Daily spending cap in dollars (proxy rejects requests when exceeded) |
-| `DEEPCLAUDE_DEV` | Development mode — more verbose error details in responses (`1` or `true`) |
-| `DEEPCLAUDE_DEBUG` | Enable debug-level log output (`true`, `1`, or `yes`, case-insensitive) |
-| `DEEPCLAUDE_LOG_LEVEL` | Set log level (`debug` for verbose output; defaults to `info`) |
-| `DEEPCLAUDE_LOG_ALL_REQUESTS` | Log all requests to `~/.deepclaude/requests.log` (`true` to enable) |
-| `DEEPCLAUDE_SKIP_STARTUP_CHECK` | Skip provider health checks on proxy startup (`true` to skip) |
-| `DEEPCLAUDE_MAX_CONCURRENT` | Max concurrent upstream requests for main slots (default: `25`) |
-| `DEEPCLAUDE_SUBAGENT_MAX_CONCURRENT` | Max concurrent upstream requests for subagent slots (default: `8`) |
-| `DEEPCLAUDE_STREAM_HEARTBEAT_MS` | Stream silence timeout in ms before heartbeat triggers (default: `180000`) |
-| `DEEPCLAUDE_STREAM_DEADLINE_MS` | Hard wall-clock cap on total streaming duration in ms (default: `300000`) |
-| `DEEPCLAUDE_SUBAGENT_STREAM_HEARTBEAT_MS` | Subagent stream heartbeat timeout in ms (default: `90000`) |
-| `DEEPCLAUDE_SUBAGENT_STREAM_DEADLINE_MS` | Hard wall-clock cap on subagent streaming duration in ms (default: `90000`) |
 | `DEEPCLAUDE_BUDGET_WARNING` | Fraction of daily budget at which to emit warnings (default: unset) |
+| `DEEPCLAUDE_DAILY_BUDGET` | Daily spending cap in dollars (proxy rejects requests when exceeded) |
 | `DEEPCLAUDE_DASHBOARD_KEY` | Shared secret for `/dashboard` and `/health/stream` endpoints (unset = no auth) |
+| `DEEPCLAUDE_DEBUG` | Enable debug-level log output (`true`, `1`, or `yes`, case-insensitive) |
+| `DEEPCLAUDE_DEFAULT_BACKEND` | Default config name (falls back to `ds`; legacy `CHEAPCLAUDE_DEFAULT_BACKEND` also accepted) |
+| `DEEPCLAUDE_DEV` | Development mode — more verbose error details in responses (`1` or `true`) |
+| `DEEPCLAUDE_ENCRYPTION_KEY` | Master key for AES-256-GCM API key decryption (used with `--encrypt-key`) |
+| `DEEPCLAUDE_LOG_ALL_REQUESTS` | Log all requests to `~/.deepclaude/requests.log` (`true` to enable) |
+| `DEEPCLAUDE_LOG_LEVEL` | Set log level (`debug` for verbose output; defaults to `info`) |
+| `DEEPCLAUDE_MAX_CONCURRENT` | Max concurrent upstream requests for main slots (default: `25`) |
 | `DEEPCLAUDE_NO_PID_LOCK` | Skip PID file locking at startup (`1` to skip; used by integration tests) |
+| `DEEPCLAUDE_SKIP_STARTUP_CHECK` | Skip provider health checks on proxy startup (`true` to skip) |
+| `DEEPCLAUDE_STREAM_DEADLINE_MS` | Hard wall-clock cap on total streaming duration in ms (default: `300000`) |
+| `DEEPCLAUDE_STREAM_HEARTBEAT_MS` | Stream silence timeout in ms before heartbeat triggers (default: `180000`) |
+| `DEEPCLAUDE_SUBAGENT_MAX_CONCURRENT` | Max concurrent upstream requests for subagent slots (default: `8`) |
+| `DEEPCLAUDE_SUBAGENT_STREAM_DEADLINE_MS` | Hard wall-clock cap on subagent streaming duration in ms (default: `90000`) |
+| `DEEPCLAUDE_SUBAGENT_STREAM_HEARTBEAT_MS` | Subagent stream heartbeat timeout in ms (default: `90000`) |
+<!-- /AUTO:env-vars -->
 
 All provider API key env vars (see [Providers table](#providers-and-api-keys)) are pushed into the process so the proxy (child process) inherits them.
 
