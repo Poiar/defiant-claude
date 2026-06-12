@@ -71,6 +71,7 @@ interface OpenAIRequestBody {
     top_p?: number;
     stop?: string[];
     tool_choice?: unknown;
+    thinking?: { type: string; reasoning_effort?: string };
 }
 
 interface OpenAIChoice {
@@ -315,6 +316,7 @@ function translateToolChoice(tc: unknown): unknown {
         if (obj.type === 'auto') return 'auto';
         // { type: 'any' } → 'required' (same as string 'any' shortcut)
         if (obj.type === 'any') return 'required';
+        if (obj.type === 'none') return 'none';
         if (obj.type === 'tool' && obj.name) {
             return { type: 'function', function: { name: obj.name } };
         }

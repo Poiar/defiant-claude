@@ -43,6 +43,20 @@ function getGitHash(): string {
   return _gitHash;
 }
 
+// Match an upstream model name (e.g. "deepseek/deepseek-v4-pro") against
+// the thinking config keys (e.g. "deepseek-v4-pro") from providers.json.
+// Tries exact match first, then falls back to the last path segment.
+function matchThinkingModel(upstreamModel: string, config: Record<string, { type: string; budget_tokens: number }>): { type: string; budget_tokens: number } | null {
+    const exact = config[upstreamModel];
+    if (exact) return exact;
+    const lastSegment = upstreamModel.split('/').pop();
+    if (lastSegment && lastSegment !== upstreamModel) {
+        const segment = config[lastSegment];
+        if (segment) return segment;
+    }
+    return null;
+}
+
 // Retry config for transient upstream transport errors.
 // Each provider in the fallback chain gets up to 3 retries with exponential
 // backoff before the proxy moves on to the next fallback provider.
@@ -839,7 +853,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                 // extended thinking via the /anthropic endpoint with thinking { type, budget_tokens }.
                 const upstreamModel = target.rewriteModel || model;
                 if (upstreamModel && state.thinkingConfig && target.format === 'anthropic') {
-                    const thinkingCfg = state.thinkingConfig[upstreamModel];
+                    const thinkingCfg = matchThinkingModel(upstreamModel, state.thinkingConfig);
                     if (thinkingCfg) {
                         try {
                             const p = JSON.parse(forwardedBody.toString());
@@ -859,6 +873,14 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                     try {
                         const reqParsed = JSON.parse(forwardedBody.toString());
                         const { openaiBody } = translateRequest(reqParsed);
+                        // Inject thinking mode for OpenAI-format providers (DeepSeek reasoning).
+                        // DeepSeek's OpenAI API uses "thinking": { "type": "enabled", "reasoning_effort": "high" }.
+                        if (upstreamModel && state.thinkingConfig) {
+                            const thinkingCfg = matchThinkingModel(upstreamModel, state.thinkingConfig);
+                            if (thinkingCfg && !openaiBody.thinking) {
+                                openaiBody.thinking = { type: thinkingCfg.type, reasoning_effort: 'high' };
+                            }
+                        }
                         forwardedBody = Buffer.from(JSON.stringify(openaiBody));
                         if (reqParsed.stream) {
                             const transformerModel = target.rewriteModel || model || reqParsed.model;
