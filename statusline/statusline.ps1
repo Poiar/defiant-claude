@@ -88,17 +88,14 @@ if (Test-Path $spendFile) {
       } catch {}
     }
 
-    # Read per-CC-session spend from the proxy — no snapshot math needed.
-    # Each CC window gets only the spend the proxy attributed to its session.
+    # Read per-session spend file: cc-spend-<sessionId>.json contains a single
+    # dollar amount written by the proxy on every flush tick.
     $sessionSpend = 0
     if ($ccSessId) {
-      $ccSpendFile = "$env:USERPROFILE\.deepclaude\cc-spend.json"
+      $ccSpendFile = "$env:USERPROFILE\.deepclaude\cc-spend-$ccSessId.json"
       if (Test-Path $ccSpendFile) {
         try {
-          $ccData = Get-Content $ccSpendFile -Raw | ConvertFrom-Json
-          if ($ccData.sessions -and $ccData.sessions.$ccSessId) {
-            $sessionSpend = [double]$ccData.sessions.$ccSessId
-          }
+          $sessionSpend = [double](Get-Content $ccSpendFile -Raw).Trim()
         } catch {}
       }
     } else {
