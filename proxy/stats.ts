@@ -576,6 +576,15 @@ let lastSpendWrite = 0;
 let spendWriteLock = false;
 const SPEND_WRITE_THROTTLE_MS = 1000;
 
+// --- Per-CC-session spend tracking ---
+// Each CC window heartbeats its session ID to cc-active.json.
+// The proxy attributes accumulated spend to the active session on every flush.
+const ccActiveFile = path.join(os.homedir(), '.deepclaude', 'cc-active.json');
+const ccSpendFile = path.join(os.homedir(), '.deepclaude', 'cc-spend.json');
+const ccSpendTotals: Record<string, number> = {};
+let ccPendingSpend = 0;
+const CC_SESSION_TTL_MS = 120_000;  // 2 min — don't attribute to stale windows
+
 let runningTotal = 0;
 // Load runningTotal from persisted spend file on startup
 try {
@@ -670,6 +679,54 @@ export function recordProviderSpend(providerKey: string, amount: number): void {
   } catch (_) { /* non-fatal */ }
 }
 
+// Read the currently active CC session ID from the heartbeat file.
+// Sessions are considered active for CC_SESSION_TTL_MS after their last heartbeat.
+function readActiveCcSession(): string | null {
+  try {
+    if (fs.existsSync(ccActiveFile)) {
+      const raw = fs.readFileSync(ccActiveFile, 'utf-8');
+      const data = JSON.parse(raw);
+      if (typeof data.sessionId === 'string' && data.sessionId.length > 0
+          && typeof data.timestamp === 'number'
+          && (Date.now() - data.timestamp) < CC_SESSION_TTL_MS) {
+        return data.sessionId;
+      }
+    }
+  } catch (_) { /* non-fatal */ }
+  return null;
+}
+
+// Flush per-CC-session spend to cc-spend.json.
+// Called alongside the main spend.json write in the throttled flush path.
+function writeCcSpend(): void {
+  try {
+    const activeId = readActiveCcSession();
+    if (activeId && ccPendingSpend > 0) {
+      ccSpendTotals[activeId] = parseFloat(((ccSpendTotals[activeId] || 0) + ccPendingSpend).toFixed(6));
+    }
+    ccPendingSpend = 0;
+
+    // Load existing totals from disk and merge (preserve sessions from
+    // previous flush windows that may have been active earlier in this
+    // proxy session).  We don't carry over totals across proxy restarts
+    // — ccSpendTotals starts fresh each time the proxy starts, which is
+    // correct because sessionTotal also resets.
+    const merged: Record<string, number> = {};
+    for (const [sid, total] of Object.entries(ccSpendTotals)) {
+      if (total > 0.0001) merged[sid] = parseFloat(total.toFixed(6));
+    }
+
+    // Stale sessions (not heartbeating) are naturally trimmed on proxy
+    // restart since ccSpendTotals starts fresh.  We keep all totals while
+    // the proxy is running so late-arriving spend is never silently dropped.
+
+    const data = { sessions: merged, active: activeId || null };
+    const tmpFile = ccSpendFile + '.tmp';
+    fs.writeFileSync(tmpFile, JSON.stringify(data) + '\n');
+    fs.renameSync(tmpFile, ccSpendFile);
+  } catch (_) { /* non-fatal — spend tracking survives in memory */ }
+}
+
 export async function recordSpend(modelName: string, usage: { prompt_tokens: number; completion_tokens: number; cache_hit_tokens?: number; cache_miss_tokens?: number }, providerKey?: string): Promise<void> {
   const price = lookupPrice(modelName);
   if (!price) {
@@ -691,6 +748,7 @@ export async function recordSpend(modelName: string, usage: { prompt_tokens: num
   runningTotal += cost;
   sessionTotal += cost;
   dailyAccumulator += cost;
+  ccPendingSpend += cost;
   if (providerKey) {
     recordProviderSpend(providerKey, cost);
     if (typeof usage.cache_hit_tokens === 'number' || typeof usage.cache_miss_tokens === 'number') {
@@ -768,6 +826,9 @@ export async function recordSpend(modelName: string, usage: { prompt_tokens: num
     const tmpFile = spendFile + '.tmp';
     fs.writeFileSync(tmpFile, JSON.stringify(data) + '\n');
     fs.renameSync(tmpFile, spendFile);
+
+    // Flush per-CC-session spend alongside the main spend.json write
+    writeCcSpend();
 
     // Only clear accumulators and truncate journal AFTER successful write
     dailyAccumulator = 0;
