@@ -59,11 +59,11 @@ async function main() {
     const overridesPath = join(deepclaudeDir, 'slot-overrides.json');
     if (existsSync(overridesPath)) {
       const overrides = JSON.parse(readFileSync(overridesPath, 'utf8'));
-      const slotMatch = model && model.match(/^(sonnet|opus|haiku|sub):(.+)$/);
+      const slotMatch = model && model.match(/^(sonnet|opus|haiku|sub|subagent|fable):(.+)$/);
       if (slotMatch) {
         const slot = slotMatch[1];
         const fallback = slotMatch[2];
-        const abbr = { opus: 'o', sonnet: 's', haiku: 'h', subagent: 'sub' };
+        const abbr = { opus: 'o', sonnet: 's', haiku: 'h', sub: 'sub', subagent: 'sub', fable: 'f' };
         slotLabel = (abbr[slot] || slot) + ' ';
         model = overrides[slot] || fallback;
         if (!overrides[slot] && (slot === 'sub' || slot === 'subagent')) {
