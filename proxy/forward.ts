@@ -414,7 +414,7 @@ export function tryForward(
                                 const fullMessages = [...(parsed.messages as Array<Record<string, unknown>>), responseMsg];
                                 const tc = extractThinkingBlocks(fullMessages as ThinkingMessage[]);
                                 if (tc) {
-                                    store(tc.sk, tc.firstToolUseId, tc.blocks, undefined, tc.fp);
+                                    store(tc.sk, tc.firstToolUseId, tc.blocks);
                                 }
                             } catch (e) {
                                 log.error(reqId, 'streaming thinking extraction error: ' + truncateForLog((e as Error).message));
@@ -622,7 +622,7 @@ export function tryForward(
                                         reasoning_content: responseMsg.reasoning_content,
                                     }];
                                     const rc = extractReasoningContent(fullMessages as ReasoningMessage[]);
-                                    if (rc) storeReasoning(rc.sk, rc.firstToolCallId, rc.reasoningContent, fullMessages.length, rc.fp);
+                                    if (rc) storeReasoning(rc.sk, rc.firstToolCallId, rc.reasoningContent, fullMessages.length);
                                 }
                             } catch (_) { /* non-fatal */ }
                             const anthropicResp = translateResponse(openaiResp, model || '');
@@ -643,7 +643,7 @@ export function tryForward(
                                 const fullMessages = parsed && parsed.messages ? [...(parsed.messages as Array<Record<string, unknown>>), responseMsg] : [responseMsg];
                                 const tc = extractThinkingBlocks(fullMessages as ThinkingMessage[]);
                                 if (tc) {
-                                    store(tc.sk, tc.firstToolUseId, tc.blocks, undefined, tc.fp);
+                                    store(tc.sk, tc.firstToolUseId, tc.blocks);
                                     resp.content = resp.content.filter(
                                         (b: { type: string }) => b.type !== 'thinking' && b.type !== 'redacted_thinking'
                                     );

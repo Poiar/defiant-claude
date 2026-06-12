@@ -5,26 +5,6 @@ import { sessionKey } from '../session-key';
 
 // --- Helpers ---
 
-// Replicate the internal DJB2 hash so we can compute fingerprints
-// that match what injectThinkingBlocks computes internally.
-function hash(str: string): string {
-    let h = 5381;
-    for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0;
-    return h.toString(36);
-}
-
-// Replicate the internal computeFingerprint so we can pre-populate the
-// cache with a key that injectThinkingBlocks will look up.
-function computeFingerprint(messages: Message[]): string {
-    if (!messages || !Array.isArray(messages) || messages.length === 0) return '';
-    const recent = messages.slice(-3);
-    const text = recent.map(m => {
-        const c = m.content;
-        return typeof c === 'string' ? c : JSON.stringify(c);
-    }).join('|');
-    return hash(text);
-}
-
 function makeUserMsg(content: string): Message {
     return { role: 'user', content };
 }
@@ -71,7 +51,6 @@ describe('extractThinkingBlocks', () => {
         });
         expect(typeof result!.sk).toBe('string');
         expect(result!.sk.length).toBeGreaterThan(0);
-        expect(typeof result!.fp).toBe('string');
     });
 
     test('extracts multiple thinking blocks when present', () => {
@@ -180,11 +159,10 @@ describe('store + injectThinkingBlocks', () => {
             ]),
         ];
         const sk = sessionKey({ messages })!;
-        const fp = computeFingerprint(messages);
 
         store(sk, 'toolu_inject', [
             { type: 'thinking', thinking: 'cached thinking content', signature: 'sig_abc' },
-        ], messages.length, fp);
+        ], messages.length);
 
         const injected = injectThinkingBlocks(messages);
         expect(injected).toBe(1);
@@ -241,14 +219,13 @@ describe('store + injectThinkingBlocks', () => {
             ]),
         ];
         const sk = sessionKey({ messages })!;
-        const fp = computeFingerprint(messages);
 
         store(sk, 'toolu_count_1', [
             { type: 'thinking', thinking: 'first cached thought', signature: 's1' },
-        ], messages.length, fp);
+        ], messages.length);
         store(sk, 'toolu_count_2', [
             { type: 'thinking', thinking: 'second cached thought', signature: 's2' },
-        ], messages.length, fp);
+        ], messages.length);
 
         const injected = injectThinkingBlocks(messages);
         expect(injected).toBe(2);
@@ -279,12 +256,11 @@ describe('store + injectThinkingBlocks', () => {
             ]),
         ];
         const sk = sessionKey({ messages })!;
-        const fp = computeFingerprint(messages);
 
         // Store with messageCount=99 — far larger than the actual 2 messages
         store(sk, 'toolu_guard', [
             { type: 'thinking', thinking: 'should not appear', signature: 'sig_g' },
-        ], 99, fp);
+        ], 99);
 
         const injected = injectThinkingBlocks(messages);
         expect(injected).toBe(0);
@@ -308,12 +284,11 @@ describe('store + injectThinkingBlocks', () => {
             ]),
         ];
         const sk = sessionKey({ messages })!;
-        const fp = computeFingerprint(messages);
 
         // Store for a different tool id
         store(sk, 'toolu_other', [
             { type: 'thinking', thinking: 'wrong tool', signature: 's1' },
-        ], messages.length, fp);
+        ], messages.length);
 
         const injected = injectThinkingBlocks(messages);
         expect(injected).toBe(0);
@@ -330,11 +305,10 @@ describe('store + injectThinkingBlocks', () => {
             ]),
         ];
         const sk = sessionKey({ messages })!;
-        const fp = computeFingerprint(messages);
 
         store(sk, 'toolu_multi2', [
             { type: 'thinking', thinking: 'injected thought', signature: 's1' },
-        ], messages.length, fp);
+        ], messages.length);
 
         const injected = injectThinkingBlocks(messages);
         expect(injected).toBe(1);
@@ -355,10 +329,10 @@ describe('store + injectThinkingBlocks', () => {
 
 describe('integration: extract -> store -> inject', () => {
     test('full round-trip: extract thinking from response, inject on next request', () => {
-        // Extract fp from responseMessages.slice(0, -1) = the request context.
-        // injectThinkingBlocks computes fp from the request messages directly.
-        // For the round-trip to work we compute the request fp explicitly,
-        // mirroring what injectThinkingBlocks will compute internally.
+        // Round-trip: extract thinking blocks from a response, store them,
+        // then inject into the next request. The cache keys on sessionKey +
+        // firstToolUseId only (no fingerprint), so the message window drift
+        // between extraction and injection doesn't break the lookup.
         const responseMessages: Message[] = [
             makeUserMsg('what is the capital of France'),
             makeAssistantMsg([
@@ -383,10 +357,7 @@ describe('integration: extract -> store -> inject', () => {
             ]),
         ];
 
-        // Compute fp from the request messages so it matches what
-        // injectThinkingBlocks will compute internally.
-        const requestFp = computeFingerprint(requestMessages);
-        store(extracted!.sk, extracted!.firstToolUseId, extracted!.blocks, requestMessages.length, requestFp);
+        store(extracted!.sk, extracted!.firstToolUseId, extracted!.blocks);
 
         // Inject thinking into request messages
         const injected = injectThinkingBlocks(requestMessages);
@@ -403,5 +374,39 @@ describe('integration: extract -> store -> inject', () => {
             type: 'tool_use',
             id: 'toolu_france',
         });
+    });
+
+    test('regression: cache hit even when message window shifts between extract and inject', () => {
+        // This directly reproduces the fingerprint-cache-miss bug:
+        // Extract happens with messages [A, B, C], but injection happens
+        // with messages [B, C, D] — different last-3-message windows.
+        // The old fingerprint-based key would miss; the current UUID-based
+        // key should hit regardless of the shifting window.
+        const extractMessages: Message[] = [
+            makeUserMsg('what is the capital of France'),
+            makeAssistantMsg([
+                { type: 'thinking', thinking: 'Let me look that up.', signature: 'sig1' },
+                { type: 'tool_use', id: 'toolu_shift', name: 'search', input: {} },
+            ]),
+            makeUserMsg('thanks'),
+        ];
+
+        const extracted = extractThinkingBlocks(extractMessages);
+        expect(extracted).not.toBeNull();
+        store(extracted!.sk, extracted!.firstToolUseId, extracted!.blocks);
+
+        // Next turn: different message window — last 3 are not the same
+        const injectMessages: Message[] = [
+            makeUserMsg('what is the capital of France'),
+            makeAssistantMsg([
+                { type: 'tool_use', id: 'toolu_shift', name: 'search', input: {} },
+            ]),
+            makeUserMsg('now ask a different follow-up question here'),
+        ];
+        // Before fix: computeFingerprint(extractMessages.slice(0,-1)) !=
+        //   computeFingerprint(injectMessages) → cache miss → 0 injected
+        // After fix: fingerprints ignored → cache hit → 1 injected
+        const injected = injectThinkingBlocks(injectMessages);
+        expect(injected).toBe(1);
     });
 });

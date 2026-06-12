@@ -34,26 +34,6 @@ function generateBody(messages: Message[]): { messages: Message[] } {
     return { messages }
 }
 
-// Replicate the internal DJB2 hash so we can compute fingerprints
-// that match what reinjectReasoningContent computes internally.
-function hash(str: string): string {
-    let h = 5381;
-    for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0;
-    return h.toString(36);
-}
-
-// Replicate the internal computeFingerprint so we can pre-populate the
-// cache with a key that reinjectReasoningContent will look up.
-function computeFingerprint(messages: Message[]): string {
-    if (!messages || !Array.isArray(messages) || messages.length === 0) return '';
-    const recent = messages.slice(-3);
-    const text = recent.map(m => {
-        const c = m.content;
-        return typeof c === 'string' ? c : JSON.stringify(c);
-    }).join('|');
-    return hash(text);
-}
-
 describe('sessionKey', () => {
     test('returns null for null body', () => {
         expect(sessionKey(null)).toBeNull()
@@ -95,7 +75,6 @@ describe('extractReasoningContent', () => {
         const result = extractReasoningContent(messages)
         expect(result).not.toBeNull()
         expect(result!.sk).toEqual(expect.any(String))
-        expect(result!.fp).toEqual(expect.any(String))
         expect(result!.firstToolCallId).toBe('call_1')
         expect(result!.reasoningContent).toBe('First, I need to look up weather data.')
     })
@@ -174,25 +153,27 @@ describe('store and retrieve (via reinjectReasoningContent)', () => {
             asstMsg('response', [toolCall('call_roundtrip')]),
         ]
         const sk = sessionKey(generateBody(messages))!
-        const fp = computeFingerprint(messages)
-        store(sk, 'call_roundtrip', 'some reasoning content', messages.length, fp)
+        store(sk, 'call_roundtrip', 'some reasoning content', messages.length)
 
         const result = reinjectReasoningContent(messages)
         expect(result.modified).toBe(true)
         expect(result.messages[1].reasoning_content).toBe('some reasoning content')
     })
 
-    test('does not reinject when cache miss (wrong fingerprint)', () => {
+    test('cache works regardless of conversation context (no fingerprint)', () => {
         const messages = [
-            userMsg('cache miss fp test'),
-            asstMsg('response', [toolCall('call_miss_fp')]),
+            userMsg('cache no fp test'),
+            asstMsg('response', [toolCall('call_nofp')]),
         ]
         const sk = sessionKey(generateBody(messages))!
-        // Store with wrong fingerprint — reinject should not find it
-        store(sk, 'call_miss_fp', 'reasoning', messages.length, 'wrong_fp')
+        // Cache keys on sessionKey + firstToolCallId only (UUID is unique).
+        // No fingerprint needed — the old fingerprint-based cache had a bug
+        // where extraction and injection computed different fps across turns.
+        store(sk, 'call_nofp', 'reasoning', messages.length)
 
         const result = reinjectReasoningContent(messages)
-        expect(result.modified).toBe(false)
+        expect(result.modified).toBe(true)
+        expect(result.messages[1].reasoning_content).toBe('reasoning')
     })
 
     test('store with null params does nothing', () => {
@@ -208,11 +189,9 @@ describe('store and retrieve (via reinjectReasoningContent)', () => {
         const messagesB = [userMsg('user b'), asstMsg('r', [toolCall('call_1')])]
         const skA = sessionKey(generateBody(messagesA))!
         const skB = sessionKey(generateBody(messagesB))!
-        const fpA = computeFingerprint(messagesA)
-        const fpB = computeFingerprint(messagesB)
 
-        store(skA, 'call_1', 'content a', messagesA.length, fpA)
-        store(skB, 'call_1', 'content b', messagesB.length, fpB)
+        store(skA, 'call_1', 'content a', messagesA.length)
+        store(skB, 'call_1', 'content b', messagesB.length)
 
         const resultA = reinjectReasoningContent(messagesA)
         expect(resultA.modified).toBe(true)
@@ -233,8 +212,7 @@ describe('reinjectReasoningContent', () => {
             userMsg('inject test'),
             asstMsg('tool response', [toolCall('call_inject')]),
         ]
-        const fp = computeFingerprint(requestMessages)
-        store(sk, 'call_inject', 'cached reasoning', requestMessages.length, fp)
+        store(sk, 'call_inject', 'cached reasoning', requestMessages.length)
 
         const result = reinjectReasoningContent(requestMessages)
         expect(result.modified).toBe(true)
@@ -271,8 +249,7 @@ describe('reinjectReasoningContent', () => {
             userMsg('non-asst'),
             { role: 'user', content: 'user tool result', tool_calls: [toolCall('call_user')] },
         ]
-        const fp = computeFingerprint(testMessages)
-        store(sk, 'call_user', 'should not appear', testMessages.length, fp)
+        store(sk, 'call_user', 'should not appear', testMessages.length)
 
         const result = reinjectReasoningContent(testMessages)
         expect(result.modified).toBe(false)
@@ -296,8 +273,7 @@ describe('reinjectReasoningContent', () => {
             asstMsg('first turn', [toolCall('call_first')]),
             asstMsg('second turn', [toolCall('call_second')]),
         ]
-        const fp = computeFingerprint(requestMessages)
-        store(sk, 'call_first', 'first reasoning', requestMessages.length, fp)
+        store(sk, 'call_first', 'first reasoning', requestMessages.length)
 
         const result = reinjectReasoningContent(requestMessages)
         expect(result.modified).toBe(true)
@@ -314,9 +290,8 @@ describe('reinjectReasoningContent', () => {
             asstMsg('first tool', [toolCall('call_pos_1')]),
             asstMsg('second tool', [toolCall('call_pos_2')]),
         ]
-        const fp = computeFingerprint(requestMessages)
-        store(sk, 'call_pos_1', 'pos 1', requestMessages.length, fp)
-        store(sk, 'call_pos_2', 'pos 2', requestMessages.length, fp)
+        store(sk, 'call_pos_1', 'pos 1', requestMessages.length)
+        store(sk, 'call_pos_2', 'pos 2', requestMessages.length)
 
         const result = reinjectReasoningContent(requestMessages)
         expect(result.modified).toBe(true)
@@ -332,9 +307,8 @@ describe('reinjectReasoningContent', () => {
             userMsg('msgcount guard'),
             asstMsg('tool response', [toolCall('call_guard')]),
         ]
-        const fp = computeFingerprint(requestMessages)
         // Store with messageCount=99 — far larger than the actual 2 messages
-        store(sk, 'call_guard', 'guarded reasoning', 99, fp)
+        store(sk, 'call_guard', 'guarded reasoning', 99)
 
         const result = reinjectReasoningContent(requestMessages)
         expect(result.modified).toBe(false)
@@ -352,19 +326,42 @@ describe('integration: extract → store → reinject round-trip', () => {
         expect(extracted).not.toBeNull()
         expect(extracted!.firstToolCallId).toBe('call_france')
         expect(extracted!.reasoningContent).toBe('I need to recall geographic knowledge.')
-        expect(extracted!.fp).toEqual(expect.any(String))
 
         const nextRequestMessages = [
             userMsg('what is the capital of France'),
             asstMsg('The capital is Paris', [toolCall('call_france')]),
         ]
 
-        // Store with fingerprint computed from request messages so reinject matches
-        const requestFp = computeFingerprint(nextRequestMessages)
-        store(extracted!.sk, extracted!.firstToolCallId, extracted!.reasoningContent, nextRequestMessages.length, requestFp)
+        // Store reasoning content keyed on sessionKey + firstToolCallId
+        store(extracted!.sk, extracted!.firstToolCallId, extracted!.reasoningContent)
 
         const reinjected = reinjectReasoningContent(nextRequestMessages)
         expect(reinjected.modified).toBe(true)
         expect(reinjected.messages[1].reasoning_content).toBe('I need to recall geographic knowledge.')
+    })
+
+    test('regression: cache hit even when message window shifts between extract and inject', () => {
+        // Same bug as thinking-cache: the old fingerprint key would miss
+        // when the last-3-messages window differs between extract and inject.
+        const extractMessages = [
+            userMsg('what is the capital of France'),
+            asstMsg('Looking up...', [toolCall('call_shift_regress')], 'Let me look that up.'),
+            userMsg('thanks'),
+        ]
+
+        const extracted = extractReasoningContent(extractMessages)
+        expect(extracted).not.toBeNull()
+        store(extracted!.sk, extracted!.firstToolCallId, extracted!.reasoningContent)
+
+        // Different message window for injection
+        const injectMessages = [
+            userMsg('what is the capital of France'),
+            asstMsg('Looking up...', [toolCall('call_shift_regress')]),
+            userMsg('now a different follow-up'),
+        ]
+
+        const reinjected = reinjectReasoningContent(injectMessages)
+        expect(reinjected.modified).toBe(true)
+        expect(reinjected.messages[1].reasoning_content).toBe('Let me look that up.')
     })
 })
