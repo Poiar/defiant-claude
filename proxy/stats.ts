@@ -896,32 +896,6 @@ export async function recordSpend(
     return;
   }
 
-  // DEBUG: log first 5 calls to verify cache token fields arrive correctly
-  if (!(recordSpend as unknown as { _dbg?: number })._dbg) {
-    (recordSpend as unknown as { _dbg: number })._dbg = 1;
-  }
-  const _dbg = (recordSpend as unknown as { _dbg: number })._dbg;
-  if (_dbg <= 5) {
-    (recordSpend as unknown as { _dbg: number })._dbg = _dbg + 1;
-    log.warn(
-      null,
-      'recordSpend#' +
-        _dbg +
-        ' model=' +
-        modelName +
-        ' pt=' +
-        usage.prompt_tokens +
-        ' ct=' +
-        usage.completion_tokens +
-        ' hit=' +
-        (usage.cache_hit_tokens ?? 'undef') +
-        ' miss=' +
-        (usage.cache_miss_tokens ?? 'undef') +
-        ' prov=' +
-        (providerKey || 'none'),
-    );
-  }
-
   let cost: number;
   // Use granular cache hit/miss pricing when both the pricing entry and usage data support it
   if (

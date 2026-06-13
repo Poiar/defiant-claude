@@ -445,43 +445,19 @@ export function tryForward(
               // Flush any remaining partial SSE event in the usage buffer
               // (the last received chunk may not end with \n\n).
               if (rawUsageBuf.trim()) {
-                try {
-                  const dataLines = [...rawUsageBuf.matchAll(/^data: ?(.*)$/gm)];
-                  if (dataLines.length) {
-                    const payload = dataLines.map((m) => m[1]).join('\n');
+                const dataLines = [...rawUsageBuf.matchAll(/^data: ?(.*)$/gm)];
+                if (dataLines.length) {
+                  const payload = dataLines.map((m) => m[1]).join('\n');
+                  extractStreamUsage(payload, streamUsage);
+                  // Final content_block_stop if pending (parsed separately for blocks)
+                  try {
                     if (payload !== '[DONE]') {
                       const parsedFinal = JSON.parse(payload);
-                      if (parsedFinal.usage) {
-                        const pt =
-                          parsedFinal.usage.prompt_tokens !== undefined
-                            ? parsedFinal.usage.prompt_tokens
-                            : parsedFinal.usage.input_tokens;
-                        const ct =
-                          parsedFinal.usage.completion_tokens !== undefined
-                            ? parsedFinal.usage.completion_tokens
-                            : parsedFinal.usage.output_tokens;
-                        if (pt !== undefined || ct !== undefined) {
-                          streamUsage.prompt_tokens = pt || 0;
-                          streamUsage.completion_tokens = ct || 0;
-                        }
-                        // Cache tokens: support both OpenAI field names (prompt_cache_hit/miss)
-                        // and Anthropic field names (cache_read/cache_creation_input_tokens).
-                        if (typeof parsedFinal.usage.prompt_cache_hit_tokens === 'number') {
-                          streamUsage.cache_hit_tokens = parsedFinal.usage.prompt_cache_hit_tokens;
-                          streamUsage.cache_miss_tokens =
-                            (parsedFinal.usage.prompt_cache_miss_tokens as number) || 0;
-                        } else if (typeof parsedFinal.usage.cache_read_input_tokens === 'number') {
-                          streamUsage.cache_hit_tokens = parsedFinal.usage.cache_read_input_tokens;
-                          streamUsage.cache_miss_tokens =
-                            (parsedFinal.usage.cache_creation_input_tokens as number) || 0;
-                        }
-                      }
-                      // Final content_block_stop if pending
                       if (parsedFinal.type === 'content_block_stop') pushAccumulatedBlock();
                     }
+                  } catch (_) {
+                    /* non-fatal */
                   }
-                } catch (_) {
-                  /* non-fatal */
                 }
               }
 
@@ -511,6 +487,9 @@ export function tryForward(
             sourceStream.once('error', cancelStreamTimeouts);
             sourceStream.once('close', () => {
               cancelStreamTimeouts();
+              // All SSE events have been processed (end handler fires before close).
+              // Mark streamUsage as complete so callers know cache tokens are populated.
+              (streamUsage as Record<string, unknown>)._complete = true;
               if (streamEndedNormally) {
                 log.info(reqId, 'Stream completed normally, total bytes received: ' + streamBytes);
               }
@@ -596,59 +575,7 @@ export function tryForward(
                 if (!dataLines.length) continue;
                 const payload = dataLines.map((m) => m[1]).join('\n');
                 if (payload === '[DONE]') continue;
-                try {
-                  const parsedPayload = JSON.parse(payload);
-                  if (parsedPayload.usage) {
-                    const pt =
-                      parsedPayload.usage.prompt_tokens !== undefined
-                        ? parsedPayload.usage.prompt_tokens
-                        : parsedPayload.usage.input_tokens;
-                    const ct =
-                      parsedPayload.usage.completion_tokens !== undefined
-                        ? parsedPayload.usage.completion_tokens
-                        : parsedPayload.usage.output_tokens;
-                    if (pt !== undefined || ct !== undefined) {
-                      streamUsage.prompt_tokens = pt || 0;
-                      streamUsage.completion_tokens = ct || 0;
-                    }
-                    // Capture cache hit/miss breakdown for providers that report it (DeepSeek).
-                    // Support both OpenAI field names (prompt_cache_hit/miss) and
-                    // Anthropic field names (cache_read/cache_creation_input_tokens).
-                    if (!(streamUsage as unknown as { _dbg?: number })._dbg) {
-                      (streamUsage as unknown as { _dbg: number })._dbg = 1;
-                    }
-                    const _sdbg = (streamUsage as unknown as { _dbg: number })._dbg;
-                    if (_sdbg <= 3) {
-                      (streamUsage as unknown as { _dbg: number })._dbg = _sdbg + 1;
-                      log.warn(
-                        reqId,
-                        'SSE usage#' +
-                          _sdbg +
-                          ' keys=' +
-                          JSON.stringify(Object.keys(parsedPayload.usage)) +
-                          ' hit=' +
-                          parsedPayload.usage.prompt_cache_hit_tokens +
-                          ' miss=' +
-                          parsedPayload.usage.prompt_cache_miss_tokens +
-                          ' pt=' +
-                          parsedPayload.usage.prompt_tokens +
-                          ' ct=' +
-                          parsedPayload.usage.completion_tokens,
-                      );
-                    }
-                    if (typeof parsedPayload.usage.prompt_cache_hit_tokens === 'number') {
-                      streamUsage.cache_hit_tokens = parsedPayload.usage.prompt_cache_hit_tokens;
-                      streamUsage.cache_miss_tokens =
-                        (parsedPayload.usage.prompt_cache_miss_tokens as number) || 0;
-                    } else if (typeof parsedPayload.usage.cache_read_input_tokens === 'number') {
-                      streamUsage.cache_hit_tokens = parsedPayload.usage.cache_read_input_tokens;
-                      streamUsage.cache_miss_tokens =
-                        (parsedPayload.usage.cache_creation_input_tokens as number) || 0;
-                    }
-                  }
-                } catch (_) {
-                  /* non-fatal */
-                }
+                extractStreamUsage(payload, streamUsage);
 
                 // --- Accumulate content blocks for thinking cache ---
                 // For Anthropic-format providers, reconstruct the response
@@ -1065,4 +992,51 @@ export function addFallbackHeaders(
     result['x-fallback-exhausted'] = 'true';
   }
   return result;
+}
+
+// ── SSE usage extraction ────────────────────────────────────────────
+// Parses a single SSE data payload (one complete event between \n\n
+// delimiters) and updates streamUsage with any token counts found.
+// Handles both OpenAI field names (prompt_cache_hit/miss) and Anthropic
+// field names (cache_read/cache_creation_input_tokens).
+// Exported for testing.
+
+export interface StreamUsageAccumulator {
+  prompt_tokens: number;
+  completion_tokens: number;
+  cache_hit_tokens: number;
+  cache_miss_tokens: number;
+}
+
+export function extractStreamUsage(ssePayload: string, acc: StreamUsageAccumulator): void {
+  if (!ssePayload || ssePayload === '[DONE]') return;
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(ssePayload) as Record<string, unknown>;
+  } catch {
+    return;
+  }
+  const usage = parsed.usage as Record<string, unknown> | null | undefined;
+  if (!usage) return;
+
+  const pt =
+    usage.prompt_tokens !== undefined
+      ? (usage.prompt_tokens as number)
+      : (usage.input_tokens as number);
+  const ct =
+    usage.completion_tokens !== undefined
+      ? (usage.completion_tokens as number)
+      : (usage.output_tokens as number);
+  if (pt !== undefined || ct !== undefined) {
+    acc.prompt_tokens = pt || 0;
+    acc.completion_tokens = ct || 0;
+  }
+
+  if (typeof usage.prompt_cache_hit_tokens === 'number') {
+    acc.cache_hit_tokens = usage.prompt_cache_hit_tokens as number;
+    acc.cache_miss_tokens = (usage.prompt_cache_miss_tokens as number) || 0;
+  } else if (typeof usage.cache_read_input_tokens === 'number') {
+    acc.cache_hit_tokens = usage.cache_read_input_tokens as number;
+    acc.cache_miss_tokens = (usage.cache_creation_input_tokens as number) || 0;
+  }
 }

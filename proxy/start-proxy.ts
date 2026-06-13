@@ -1479,14 +1479,15 @@ if (probeIdx >= 2) {
               recordCanaryResult(true, canaryEntry.state, canaryEntry.config);
             }
             if (result.streamUsage) {
+              // NOTE: recordSpend is deferred to the pipeline completion
+              // callback (Path 2 below) so cache_hit_tokens / cache_miss_tokens
+              // from the final SSE chunk are available. Calling it here would
+              // see all-zero cache fields and miss the ~120× cache discount.
               recordUsage(
                 target.providerKey,
                 result.streamUsage.prompt_tokens || 0,
                 result.streamUsage.completion_tokens || 0,
               );
-              const upstreamModel = target.rewriteModel || model;
-              if (upstreamModel)
-                recordSpend(upstreamModel, result.streamUsage, target.providerKey).catch(() => {});
             }
             if (sk) recordMomentum(sk, target.providerKey, model || '');
 
