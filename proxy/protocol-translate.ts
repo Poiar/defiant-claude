@@ -807,10 +807,16 @@ export function createAnthropicStreamInterceptor(_preExecutedSearches: number = 
             try {
               const parsed = JSON.parse(dataMatch[1]);
               if (!parsed.usage) parsed.usage = {};
-              parsed.usage.server_tool_use = {
-                web_search_requests: wsCount,
-                web_fetch_requests: wfCount,
-              };
+              // Only inject server_tool_use if the upstream provider didn't
+              // include it. Anthropic returns it natively; DeepSeek and other
+              // providers don't. Preferring upstream prevents the interceptor
+              // from ever overwriting a correct count with a wrong one.
+              if (!parsed.usage.server_tool_use) {
+                parsed.usage.server_tool_use = {
+                  web_search_requests: wsCount,
+                  web_fetch_requests: wfCount,
+                };
+              }
               output += heldDelta.replace(dataMatch[1], JSON.stringify(parsed)) + '\n\n';
             } catch (_) {
               output += heldDelta + '\n\n';
@@ -838,10 +844,13 @@ export function createAnthropicStreamInterceptor(_preExecutedSearches: number = 
           try {
             const parsed = JSON.parse(dataMatch[1]);
             if (!parsed.usage) parsed.usage = {};
-            parsed.usage.server_tool_use = {
-              web_search_requests: wsCount,
-              web_fetch_requests: wfCount,
-            };
+            // Same guard as _transform: prefer upstream server_tool_use.
+            if (!parsed.usage.server_tool_use) {
+              parsed.usage.server_tool_use = {
+                web_search_requests: wsCount,
+                web_fetch_requests: wfCount,
+              };
+            }
             this.push(heldDelta.replace(dataMatch[1], JSON.stringify(parsed)) + '\n\n');
           } catch (_) {
             this.push(heldDelta + '\n\n');

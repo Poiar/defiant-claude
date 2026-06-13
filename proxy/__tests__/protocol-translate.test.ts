@@ -1473,4 +1473,28 @@ describe('createAnthropicStreamInterceptor server_tool_use', () => {
     const usage = (deltaEvent!.data as any).usage;
     expect(usage.server_tool_use.web_search_requests).toBe(6); // 5 seed + 1 from stream
   });
+
+  test('preserves upstream server_tool_use when already present (does not overwrite)', async () => {
+    // Simulate a real Anthropic response where server_tool_use is already
+    // in message_delta. The interceptor must not overwrite it with its
+    // own SSE-parsed count, even if they differ (Anthropic is authoritative).
+    const chunks = [
+      `event: message_start\ndata: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":5,"output_tokens":0}}}\n\n`,
+      `event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tool_ws_0","name":"web_search","input":{}}}\n\n`,
+      `event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"query\\":\\"test\\"}"}}\n\n`,
+      `event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n`,
+      // Anthropic provides 3 web_search_requests natively. Interceptor
+      // only counted 1 — must NOT overwrite with 1.
+      `event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":30,"server_tool_use":{"web_search_requests":3,"web_fetch_requests":0}}}\n\n`,
+      `event: message_stop\ndata: {"type":"message_stop"}\n\n`,
+    ];
+    const { events } = await collectAnthroStream(chunks.join(''));
+
+    const deltaEvent = events.find((e) => e.event === 'message_delta');
+    const usage = (deltaEvent!.data as any).usage;
+    // Must preserve Anthropic's count (3), not the interceptor's count (1)
+    expect(usage.server_tool_use.web_search_requests).toBe(3);
+    expect(usage.server_tool_use.web_fetch_requests).toBe(0);
+    expect(usage.output_tokens).toBe(30);
+  });
 });
