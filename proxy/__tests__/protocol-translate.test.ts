@@ -1497,4 +1497,85 @@ describe('createAnthropicStreamInterceptor server_tool_use', () => {
     expect(usage.server_tool_use.web_fetch_requests).toBe(0);
     expect(usage.output_tokens).toBe(30);
   });
+
+  test('rewrites non-claude upstream model in message_start to CC model', async () => {
+    // Simulate DeepSeek v4 Flash returning model "deepseek-v4-flash".
+    // CC sent haiku:claude-haiku-4-5-20251001 — the interceptor should rewrite
+    // the upstream model back so CC trusts server_tool_use.
+    const input =
+      `event: message_start\ndata: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"deepseek-v4-flash","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":5,"output_tokens":0}}}\n\n` +
+      makeAnthroSSE({ tools: [{ name: 'web_search', id: 'call_w1' }] }).replace(
+        /^event: message_start\n.+$/m,
+        '',
+      );
+
+    const { events } = await new Promise<{
+      events: Array<{ event: string; data: Record<string, unknown> }>;
+    }>((resolve, reject) => {
+      const transformer = createAnthropicStreamInterceptor(0, 'haiku:claude-haiku-4-5-20251001');
+      let output = '';
+      transformer.on('data', (chunk: string) => {
+        output += chunk.toString();
+      });
+      transformer.on('end', () => resolve({ events: parseSSE(output) }));
+      transformer.on('error', reject);
+      transformer.write(input);
+      transformer.end();
+    });
+
+    const startEvent = events.find((e) => e.event === 'message_start');
+    expect(startEvent).toBeDefined();
+    expect((startEvent!.data as any).message.model).toBe('claude-haiku-4-5-20251001');
+
+    const deltaEvent = events.find((e) => e.event === 'message_delta');
+    const usage = (deltaEvent!.data as any).usage;
+    expect(usage.server_tool_use.web_search_requests).toBe(1);
+  });
+
+  test('does NOT rewrite model when upstream is already claude-prefixed', async () => {
+    const input = makeAnthroSSE({ tools: [{ name: 'web_search' }] });
+    // makeAnthroSSE uses model "claude-haiku-4-5-20251001" — no rewrite needed.
+
+    const { events } = await new Promise<{
+      events: Array<{ event: string; data: Record<string, unknown> }>;
+    }>((resolve, reject) => {
+      const transformer = createAnthropicStreamInterceptor(0, 'haiku:claude-sonnet-4-6');
+      let output = '';
+      transformer.on('data', (chunk: string) => {
+        output += chunk.toString();
+      });
+      transformer.on('end', () => resolve({ events: parseSSE(output) }));
+      transformer.on('error', reject);
+      transformer.write(input);
+      transformer.end();
+    });
+
+    // Model should stay untouched (already starts with claude-)
+    const startEvent = events.find((e) => e.event === 'message_start');
+    expect((startEvent!.data as any).message.model).toBe('claude-haiku-4-5-20251001');
+  });
+
+  test('does NOT rewrite model when no originalModel is passed (backward compat)', async () => {
+    const input =
+      `event: message_start\ndata: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"deepseek-v4-flash","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":5,"output_tokens":0}}}\n\n` +
+      makeAnthroSSE({ tools: [{ name: 'web_search' }] }).replace(/^event: message_start\n.+$/m, '');
+
+    const { events } = await new Promise<{
+      events: Array<{ event: string; data: Record<string, unknown> }>;
+    }>((resolve, reject) => {
+      const transformer = createAnthropicStreamInterceptor(); // No originalModel
+      let output = '';
+      transformer.on('data', (chunk: string) => {
+        output += chunk.toString();
+      });
+      transformer.on('end', () => resolve({ events: parseSSE(output) }));
+      transformer.on('error', reject);
+      transformer.write(input);
+      transformer.end();
+    });
+
+    // Should keep deepseek-v4-flash — no rewrite without originalModel
+    const startEvent = events.find((e) => e.event === 'message_start');
+    expect((startEvent!.data as any).message.model).toBe('deepseek-v4-flash');
+  });
 });

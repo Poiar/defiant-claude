@@ -810,6 +810,27 @@ export function tryForward(
                         web_search_requests: ws,
                         web_fetch_requests: wf,
                       };
+                      // Rewrite response model so CC trusts server_tool_use.
+                      // CC only reads server_tool_use from Claude models.
+                      const upstreamModel = (resp as Record<string, unknown>).model;
+                      const originalModel =
+                        (parsed && typeof (parsed as Record<string, unknown>).model === 'string'
+                          ? ((parsed as Record<string, unknown>).model as string)
+                          : null) ||
+                        model ||
+                        null;
+                      // Strip slot prefix (haiku:claude-... -> claude-...)
+                      const ccModel = originalModel
+                        ? (originalModel.match(/^[a-z]+:(.+)$/) || [null, originalModel])[1]
+                        : null;
+                      if (
+                        ccModel &&
+                        upstreamModel &&
+                        typeof upstreamModel === 'string' &&
+                        !upstreamModel.startsWith('claude-')
+                      ) {
+                        (resp as Record<string, unknown>).model = ccModel;
+                      }
                     }
                     respModified = true;
                   }
