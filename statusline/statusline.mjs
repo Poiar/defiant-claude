@@ -255,7 +255,7 @@ async function main() {
         if (hasData) {
           if (worstState === 'OPEN') parts.push(bold + fg(255, 80, 80) + '✕' + reset);
           else if (worstState === 'HALF_OPEN') parts.push(bold + fg(255, 180, 50) + '◐' + reset);
-          else parts.push(bold + fg(80, 200, 120) + '·' + reset);
+          // CLOSED is silent — no need for a "normal" indicator.
         }
       }
       if (health && health.lastFallback) {
@@ -296,9 +296,9 @@ async function main() {
   // DeepSeek V4 Pro context-window milestone tags
   if (modelLookup === 'deepseek-v4-pro' && tokens) {
     if (tokens >= 400000) {
-      ctxGroup += ' ' + bold + fg(255, 100, 255) + 'FBR' + reset;
+      ctxGroup += ' ' + bold + fg(255, 80, 80) + 'FBR' + reset;
     } else if (tokens >= 300000) {
-      ctxGroup += ' ' + fg(200, 100, 255) + 'SR' + reset;
+      ctxGroup += ' ' + bold + fg(255, 180, 50) + 'FR' + reset;
     }
   }
 

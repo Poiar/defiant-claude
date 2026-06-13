@@ -391,9 +391,11 @@ describe('statusline DeepSeek milestone tags', () => {
     expect(result.status).toBe(0);
     const plain = stripAnsi(result.stdout);
     expect(plain).toContain('FBR');
+    // FBR uses super-dangerous red: fg(255, 80, 80)
+    expect(result.stdout).toContain('38;2;255;80;80mFBR');
   });
 
-  test('shows SR tag at 300K-399K tokens for deepseek-v4-pro', () => {
+  test('shows FR tag at 300K-399K tokens for deepseek-v4-pro', () => {
     const ccJson = JSON.stringify({
       workspace: { current_dir: '/home/user/proj' },
       model: { id: 'ds:deepseek-v4-pro' },
@@ -413,8 +415,10 @@ describe('statusline DeepSeek milestone tags', () => {
 
     expect(result.status).toBe(0);
     const plain = stripAnsi(result.stdout);
-    expect(plain).toContain('SR');
+    expect(plain).toContain('FR');
     expect(plain).not.toContain('FBR');
+    // FR uses semi-dangerous yellow/orange: fg(255, 180, 50)
+    expect(result.stdout).toContain('38;2;255;180;50mFR');
   });
 
   test('shows no milestone tag below 300K tokens', () => {
@@ -438,7 +442,7 @@ describe('statusline DeepSeek milestone tags', () => {
     expect(result.status).toBe(0);
     const plain = stripAnsi(result.stdout);
     expect(plain).not.toContain('FBR');
-    expect(plain).not.toContain('SR');
+    expect(plain).not.toContain('FR');
   });
 
   test('shows no milestone tag for non-DeepSeek models even at high tokens', () => {
@@ -462,7 +466,7 @@ describe('statusline DeepSeek milestone tags', () => {
     expect(result.status).toBe(0);
     const plain = stripAnsi(result.stdout);
     expect(plain).not.toContain('FBR');
-    expect(plain).not.toContain('SR');
+    expect(plain).not.toContain('FR');
   });
 });
 
