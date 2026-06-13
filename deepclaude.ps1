@@ -334,6 +334,9 @@ $SiliconFlowKey = if ($env:SILICONFLOW_API_KEY) { $env:SILICONFLOW_API_KEY } els
 $NovitaKey = if ($env:NOVITA_API_KEY) { $env:NOVITA_API_KEY } else {
     [Environment]::GetEnvironmentVariable("NOVITA_API_KEY", "User")
 }
+$AnthropicKey = if ($env:ANTHROPIC_API_KEY) { $env:ANTHROPIC_API_KEY } else {
+    [Environment]::GetEnvironmentVariable("ANTHROPIC_API_KEY", "User")
+}
 
 # Set env vars only for providers in the active config
 function Set-UsedProviderEnv {
@@ -487,6 +490,7 @@ $keyLookup = @{
     mm = $MimoKey; um = $UmansKey; gr = $GroqKey
     mt = $MistralKey; mx = $MiniMaxKey; za = $ZaiKey
     bp = $BytePlusKey; sf = $SiliconFlowKey; nv = $NovitaKey
+    an = $AnthropicKey
 }
 
 $Providers = @{}
@@ -878,6 +882,7 @@ if ($Status) {
     Write-Host "    BYTEPLUS_API_KEY:           $(Get-KeyDisplay $BytePlusKey)"
     Write-Host "    SILICONFLOW_API_KEY:        $(Get-KeyDisplay $SiliconFlowKey)"
     Write-Host "    NOVITA_API_KEY:             $(Get-KeyDisplay $NovitaKey)"
+    Write-Host "    ANTHROPIC_API_KEY:          $(Get-KeyDisplay $AnthropicKey)"
     Write-Host "`n  Configurations:" -ForegroundColor Yellow
     foreach ($kv in $Configs.GetEnumerator()) {
         $label = if ($kv.Key -eq "ds") { " (default)" } else { "" }
@@ -1242,7 +1247,7 @@ if ($Doctor) {
 
     # 5. API keys
     Write-Host "`n  API Keys:" -ForegroundColor Yellow
-    $keyProviders = @("ds","or","fw","oc","al","km","mm","um","gr","mt","mx","za","bp","sf","nv")
+    $keyProviders = @("ds","or","fw","oc","an","al","km","mm","um","gr","mt","mx","za","bp","sf","nv")
     $keysOk = 0
     $keysTotal = 0
     foreach ($pk in $keyProviders) {
