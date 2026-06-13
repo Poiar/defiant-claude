@@ -374,7 +374,15 @@ if ($ModelSpecs) { $AllSpecs += $ModelSpecs }
 $AllSpecs = @($AllSpecs | ForEach-Object { $_ -replace '^\s+|\s+$', '' } | Where-Object { $_ -and $_ -notmatch '^-' })
 
 if (-not $AllSpecs -and -not $Status -and -not $Cost -and -not $Benchmark -and -not $Help -and -not $Lint -and -not $LintConfig -and -not $FixAv -and -not $Switch -and -not $SetSlot -and -not $SubagentModel -and -not $Models -and -not $StopProxy -and -not $Version -and -not $Doctor -and -not $Stats -and -not $PSBoundParameters.ContainsKey('ProbeFile') -and -not $DryRun -and -not $Logs -and -not $Health) {
-    $AllSpecs = @(if ($env:DEEPCLAUDE_DEFAULT_BACKEND) { $env:DEEPCLAUDE_DEFAULT_BACKEND } elseif ($env:CHEAPCLAUDE_DEFAULT_BACKEND) { $env:CHEAPCLAUDE_DEFAULT_BACKEND } else { "ds" })
+    if ($env:DEEPCLAUDE_DEFAULT_BACKEND) {
+        $AllSpecs = @($env:DEEPCLAUDE_DEFAULT_BACKEND)
+    } elseif ($env:CHEAPCLAUDE_DEFAULT_BACKEND) {
+        $AllSpecs = @($env:CHEAPCLAUDE_DEFAULT_BACKEND)
+    } else {
+        Write-Host "  WARNING: No config specified and DEEPCLAUDE_DEFAULT_BACKEND not set. Defaulting to 'ds'." -ForegroundColor Yellow
+        Write-Host "  Set `$env:DEEPCLAUDE_DEFAULT_BACKEND to your preferred config to suppress this warning." -ForegroundColor DarkGray
+        $AllSpecs = @("ds")
+    }
 }
 
 # Propagate --log-all to the proxy via environment variable
@@ -640,7 +648,7 @@ foreach ($prop in $Registry.configs.PSObject.Properties) {
 # --- Resolve a config into runtime format ---
 function Resolve-Config($configName) {
     $config = $Configs[$configName]
-    if (-not $config) { return $null }
+    if (-not $config) { throw "Unknown config '$configName'. Known: $($Configs.Keys -join ', ')" }
 
     $resolved = @{
         name         = $config.name
@@ -1085,6 +1093,10 @@ if ($PSBoundParameters.ContainsKey('ProbeFile')) {
         # Build routes from current config
         if ($AllSpecs.Count -eq 1 -and $Configs.Contains($AllSpecs[0])) {
             $r = Resolve-Config $AllSpecs[0]
+        } elseif ($AllSpecs.Count -eq 1 -and $AllSpecs[0] -notmatch '^[a-z][a-z0-9_-]*:.+$') {
+                        [Console]::Error.WriteLine("ERROR: Unknown config '$($AllSpecs[0])'. Known: $($Configs.Keys -join ', ')")
+                        [Console]::Error.WriteLine("  To specify models directly, use providerKey:modelId format (e.g. ds:deepseek-v4-pro)")
+            exit 1
         } elseif ($AllSpecs.Count -gt 0) {
             $r = Build-AdHocConfig $AllSpecs
         } else {
@@ -1113,6 +1125,11 @@ if ($DryRun) {
     if ($AllSpecs.Count -eq 1 -and $Configs.Contains($AllSpecs[0])) {
         $r = Resolve-Config $AllSpecs[0]
         $routesJson = Invoke-LauncherMjs "build-routes", "--name=$($AllSpecs[0])"
+    } elseif ($AllSpecs.Count -eq 1 -and $AllSpecs[0] -notmatch '^[a-z][a-z0-9_-]*:.+$') {
+        # Single arg that isn't a known config and isn't a valid model spec
+                    [Console]::Error.WriteLine("ERROR: Unknown config '$($AllSpecs[0])'. Known: $($Configs.Keys -join ', ')")
+                    [Console]::Error.WriteLine("  To specify models directly, use providerKey:modelId format (e.g. ds:deepseek-v4-pro)")
+        exit 1
     } elseif ($AllSpecs.Count -gt 0) {
         $r = Build-AdHocConfig $AllSpecs
         $routesJson = Invoke-LauncherMjs "build-routes", "--specs=$($AllSpecs -join ',')"
@@ -1414,11 +1431,11 @@ if ($Doctor) {
         $doctorConfigName = $null
         $defaultBackend = if ($env:DEEPCLAUDE_DEFAULT_BACKEND) { $env:DEEPCLAUDE_DEFAULT_BACKEND } elseif ($env:CHEAPCLAUDE_DEFAULT_BACKEND) { $env:CHEAPCLAUDE_DEFAULT_BACKEND } else { $null }
         if ($defaultBackend -and $Configs.Contains($defaultBackend)) {
-            try { $r = Resolve-Config $defaultBackend; if ($r) { $doctorConfigName = $defaultBackend } } catch {}
+            try { $r = Resolve-Config $defaultBackend; if ($r) { $doctorConfigName = $defaultBackend } } catch { Write-Host "    Config '$defaultBackend' not available: $_" -ForegroundColor DarkGray }
         }
         if (-not $doctorConfigName) {
             foreach ($kv in $Configs.GetEnumerator()) {
-                try { $r = Resolve-Config $kv.Key; if ($r) { $doctorConfigName = $kv.Key; break } } catch {}
+                try { $r = Resolve-Config $kv.Key; if ($r) { $doctorConfigName = $kv.Key; break } } catch { Write-Host "    Config '$($kv.Key)' not available: $_" -ForegroundColor DarkGray }
             }
         }
         if (-not $doctorConfigName) { $doctorConfigName = "ds" }
@@ -1880,6 +1897,12 @@ $resolved = $null
 if (-not $IsAnthropic -and $AllSpecs.Count -gt 0) {
     if ($AllSpecs.Count -eq 1 -and $Configs.Contains($AllSpecs[0])) {
         $resolved = Resolve-Config $AllSpecs[0]
+    } elseif ($AllSpecs.Count -eq 1 -and $AllSpecs[0] -notmatch '^[a-z][a-z0-9_-]*:.+$') {
+        # Single arg that isn't a known config name and isn't a valid
+        # providerKey:modelId spec — fail instead of silently falling through.
+                    [Console]::Error.WriteLine("ERROR: Unknown config '$($AllSpecs[0])'. Known: $($Configs.Keys -join ', ')")
+                    [Console]::Error.WriteLine("  To specify models directly, use providerKey:modelId format (e.g. ds:deepseek-v4-pro)")
+        exit 1
     } else {
         $resolved = Build-AdHocConfig $AllSpecs
     }
