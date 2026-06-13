@@ -976,6 +976,28 @@ export async function recordSpend(
       }
     }
 
+    // Migrate legacy da-DK keys (d.m.yyyy) → ISO (yyyy-mm-dd).
+    // Bug: prior to 2026-06-13, journal replay used ISO keys but live
+    // flushes used da-DK, so today's spend was split across two keys.
+    for (const [date, entry] of Object.entries(daily)) {
+      const legacy = date.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+      if (legacy) {
+        const [, dd, mm, yyyy] = legacy;
+        const iso = `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
+        if (iso !== date && daily[iso]) {
+          daily[iso].total = parseFloat((daily[iso].total + entry.total).toFixed(4));
+          for (const [pk, amt] of Object.entries(entry.byProvider)) {
+            daily[iso].byProvider[pk] = parseFloat(
+              ((daily[iso].byProvider[pk] || 0) + amt).toFixed(4),
+            );
+          }
+        } else if (iso !== date) {
+          daily[iso] = entry;
+        }
+        delete daily[date];
+      }
+    }
+
     // Update today's entry with accumulated totals
     const todayEntry = daily[today] || { total: 0, byProvider: {} };
     todayEntry.total = parseFloat((todayEntry.total + dailyAccumulator).toFixed(4));
@@ -1045,14 +1067,27 @@ export function getDailySpend(): number {
     const data = JSON.parse(raw);
     const today = todayISO();
     const daily = data.daily as Record<string, unknown> | undefined;
-    // Handle both legacy number format and new { total, byProvider } format
+    // Handle both legacy number format and new { total, byProvider } format.
+    // Also merge any legacy da-DK key (d.m.yyyy) for today — these were
+    // written by older code before date keys were standardized to ISO.
     let dailyTotal = 0;
-    if (daily?.[today] !== undefined) {
-      const entry = daily[today];
-      if (typeof entry === 'number') {
-        dailyTotal = entry;
-      } else if (typeof entry === 'object' && entry !== null) {
-        dailyTotal = (entry as { total?: number }).total ?? 0;
+    if (daily) {
+      for (const [date, entry] of Object.entries(daily)) {
+        // Primary key: ISO YYYY-MM-DD (new format)
+        if (date === today && entry !== undefined) {
+          const v = entry as { total?: number } | number;
+          dailyTotal += typeof v === 'number' ? v : (v.total ?? 0);
+        }
+        // Legacy key: da-DK d.m.yyyy (old format, to be migrated)
+        const legacy = date.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+        if (legacy) {
+          const [, dd, mm, yyyy] = legacy;
+          const isoDate = `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
+          if (isoDate === today && entry !== undefined) {
+            const v = entry as { total?: number } | number;
+            dailyTotal += typeof v === 'number' ? v : (v.total ?? 0);
+          }
+        }
       }
     }
     cachedDailySpend = dailyTotal + dailyAccumulator;
