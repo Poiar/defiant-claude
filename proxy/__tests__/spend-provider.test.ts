@@ -322,3 +322,113 @@ describe('legacy format backward compatibility', () => {
     expect(spend).toBeGreaterThan(0);
   });
 });
+
+describe('per-model spend tracking', () => {
+  test('recordProviderSpend with modelName creates composite key', () => {
+    _resetBudgetState();
+    setSpendFilePath(tmpFile);
+    recordProviderSpend('ds', 0.5, 'deepseek-v4-pro');
+    recordProviderSpend('ds', 0.2, 'deepseek-v4-flash');
+    // Both accumulate without errors (verified by no crash).
+    // Composite keys are ds:deepseek-v4-pro and ds:deepseek-v4-flash.
+  });
+
+  test('legacy plain provider key still works (backward compat)', () => {
+    _resetBudgetState();
+    setSpendFilePath(tmpFile);
+    recordProviderSpend('ds', 0.3); // no modelName — key is just 'ds'
+    recordProviderSpend('ds', 0.2, 'deepseek-v4-pro'); // composite key 'ds:deepseek-v4-pro'
+    // Both should accumulate without crashing.
+  });
+
+  test('byProvider with composite keys sums correctly in health snapshot', () => {
+    const today = dateISO(new Date());
+    const dailyData: Record<string, { total: number; byProvider: Record<string, number> }> = {};
+    dailyData[today] = {
+      total: 2.0,
+      byProvider: {
+        'ds:deepseek-v4-pro': 1.5,
+        'ds:deepseek-v4-flash': 0.5,
+      },
+    };
+
+    fs.writeFileSync(
+      tmpFile,
+      JSON.stringify({
+        total: 2.0,
+        daily: dailyData,
+        sessions: [],
+        current_model: 'test',
+      }),
+    );
+
+    // Read back and verify
+    const raw = fs.readFileSync(tmpFile, 'utf-8');
+    const data = JSON.parse(raw);
+    expect(data.daily[today].byProvider['ds:deepseek-v4-pro']).toBe(1.5);
+    expect(data.daily[today].byProvider['ds:deepseek-v4-flash']).toBe(0.5);
+  });
+
+  test('health snapshot aggregates per-model keys under base provider', () => {
+    const today = dateISO(new Date());
+    const dailyData: Record<string, { total: number; byProvider: Record<string, number> }> = {};
+    dailyData[today] = {
+      total: 2.5,
+      byProvider: {
+        'ds:deepseek-v4-pro': 1.5,
+        'ds:deepseek-v4-flash': 1.0,
+      },
+    };
+
+    fs.writeFileSync(
+      tmpFile,
+      JSON.stringify({
+        total: 2.5,
+        daily: dailyData,
+        sessions: [],
+        current_model: 'test',
+      }),
+    );
+
+    recordStat('ds', true, 100);
+
+    const snapshot = getFullHealthSnapshot({}, {});
+    const providers = snapshot.providers as Record<string, Record<string, unknown>>;
+    expect(providers['ds']).toBeDefined();
+    // 'ds' daily spend should aggregate all ds:* entries
+    const dsSpend = providers['ds'].dailySpend as { amount: number; currency: string };
+    // Composite keys sum: 1.5 + 1.0 = 2.5
+    expect(dsSpend.amount).toBeCloseTo(2.5, 1);
+  });
+
+  test('mixed legacy and composite keys aggregate correctly', () => {
+    const today = dateISO(new Date());
+    const dailyData: Record<string, { total: number; byProvider: Record<string, number> }> = {};
+    dailyData[today] = {
+      total: 2.0,
+      byProvider: {
+        ds: 0.5, // legacy key
+        'ds:deepseek-v4-pro': 1.0, // composite key
+        'ds:deepseek-v4-flash': 0.5, // composite key
+      },
+    };
+
+    fs.writeFileSync(
+      tmpFile,
+      JSON.stringify({
+        total: 2.0,
+        daily: dailyData,
+        sessions: [],
+        current_model: 'test',
+      }),
+    );
+
+    recordStat('ds', true, 100);
+
+    const snapshot = getFullHealthSnapshot({}, {});
+    const providers = snapshot.providers as Record<string, Record<string, unknown>>;
+    const dsSpend = providers['ds'].dailySpend as { amount: number; currency: string };
+    // All three keys aggregate under 'ds': 0.5 + 1.0 + 0.5 = 2.0
+    expect(dsSpend.amount).toBeCloseTo(2.0, 1);
+  });
+});

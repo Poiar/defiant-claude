@@ -396,9 +396,19 @@ export function getFullHealthSnapshot(
         providers[k].cacheHitRate = parseFloat(((hit / cacheTotal) * 100).toFixed(1));
       }
 
-      // Per-provider daily spend (persisted + pending in-memory)
-      const persistedAmount = spendByProvider?.[k]?.todayAmount || 0;
-      const pendingAmount = providerDailyAccumulators[k] || 0;
+      // Per-provider daily spend (persisted + pending in-memory).
+      // Accumulators may have composite keys like "ds:deepseek-v4-pro" —
+      // aggregate all entries matching this provider key prefix.
+      let persistedAmount = 0;
+      if (spendByProvider) {
+        for (const [spk, spv] of Object.entries(spendByProvider)) {
+          if (spk === k || spk.startsWith(k + ':')) persistedAmount += spv.todayAmount || 0;
+        }
+      }
+      let pendingAmount = 0;
+      for (const [accKey, accAmt] of Object.entries(providerDailyAccumulators)) {
+        if (accKey === k || accKey.startsWith(k + ':')) pendingAmount += accAmt;
+      }
       const totalProviderSpend = parseFloat((persistedAmount + pendingAmount).toFixed(4));
       if (totalProviderSpend > 0) {
         providers[k].dailySpend = { amount: totalProviderSpend, currency: 'USD' };
@@ -410,19 +420,24 @@ export function getFullHealthSnapshot(
         providers[k].monthlyBudget = budget;
       }
 
-      // Average daily spend over last 7 days for days-remaining estimate
-      if (spendByProvider?.[k]) {
+      // Average daily spend over last 7 days for days-remaining estimate.
+      // Aggregate across all per-model entries for this provider (composite keys like "ds:deepseek-v4-pro").
+      if (spendByProvider) {
         let sum = 0;
         let count = 0;
         const today = new Date();
-        for (let i = 0; i < 7; i++) {
-          const d = new Date(today);
-          d.setDate(d.getDate() - i);
-          const ds = dateISO(d);
-          const amt = spendByProvider[k].dailyHistory[ds] || 0;
-          if (amt > 0) {
-            sum += amt;
-            count++;
+        for (const [spk, spv] of Object.entries(spendByProvider)) {
+          if (spk === k || spk.startsWith(k + ':')) {
+            for (let i = 0; i < 7; i++) {
+              const d = new Date(today);
+              d.setDate(d.getDate() - i);
+              const ds = dateISO(d);
+              const amt = spv.dailyHistory[ds] || 0;
+              if (amt > 0) {
+                sum += amt;
+                count++;
+              }
+            }
           }
         }
         if (count > 0) {
@@ -716,8 +731,10 @@ try {
           if (entryDate === today) {
             dailyAccumulator += entry.cost;
             if (entry.providerKey && typeof entry.providerKey === 'string') {
-              providerDailyAccumulators[entry.providerKey] =
-                (providerDailyAccumulators[entry.providerKey] || 0) + entry.cost;
+              const key = entry.modelName
+                ? `${entry.providerKey}:${entry.modelName}`
+                : entry.providerKey;
+              providerDailyAccumulators[key] = (providerDailyAccumulators[key] || 0) + entry.cost;
             }
           }
         }
@@ -796,12 +813,14 @@ function lookupPrice(
   return null;
 }
 
-// Record per-provider spend in the in-memory accumulator.
+// Record per-provider, per-model spend in the in-memory accumulator.
+// Keys are "providerKey:modelName" for granular per-model tracking.
 // Never throws.
-export function recordProviderSpend(providerKey: string, amount: number): void {
+export function recordProviderSpend(providerKey: string, amount: number, modelName?: string): void {
   if (!providerKey || amount <= 0) return;
   try {
-    providerDailyAccumulators[providerKey] = (providerDailyAccumulators[providerKey] || 0) + amount;
+    const key = modelName ? `${providerKey}:${modelName}` : providerKey;
+    providerDailyAccumulators[key] = (providerDailyAccumulators[key] || 0) + amount;
   } catch (_) {
     /* non-fatal */
   }
@@ -900,7 +919,7 @@ export async function recordSpend(
   dailyAccumulator += cost;
   ccPendingSpend += cost;
   if (providerKey) {
-    recordProviderSpend(providerKey, cost);
+    recordProviderSpend(providerKey, cost, modelName);
     if (typeof usage.cache_hit_tokens === 'number' || typeof usage.cache_miss_tokens === 'number') {
       try {
         if (!providerStats[providerKey]) {
