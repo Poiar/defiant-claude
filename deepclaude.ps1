@@ -113,12 +113,12 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
 # a config name like `ds+an` or `ds+oc` looks like a filename and gets
 # eaten, leaving no config spec and falling through to the `ds` default.
 $ScriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
-$_KnownConfigs = @{}
+$_ConfigNames = @{}
 try {
     $_providersRaw = Get-Content (Join-Path $ScriptRoot "proxy\providers.json") -Raw -ErrorAction Stop
     $_providersJson = $_providersRaw | ConvertFrom-Json
     if ($_providersJson.configs) {
-        foreach ($_cn in $_providersJson.configs.PSObject.Properties.Name) { $_KnownConfigs[$_cn] = $true }
+        foreach ($_cn in $_providersJson.configs.PSObject.Properties.Name) { $_ConfigNames[$_cn] = $true }
     }
 } catch { }
 
@@ -166,7 +166,7 @@ if ($Backend -match '^--(.+)$') {
     elseif ($flag -eq 'doctor')          { $Doctor = $true }
     elseif ($flag -eq 'install-statusline') { $InstallStatusline = $true }
     elseif ($flag -eq 'stats')           { $Stats = $true }
-    elseif ($flag -eq 'probe' -and $ModelSpecs -and $ModelSpecs.Count -gt 0 -and $ModelSpecs[0] -notmatch '^-|:' -and -not $_KnownConfigs.ContainsKey($ModelSpecs[0])) {
+    elseif ($flag -eq 'probe' -and $ModelSpecs -and $ModelSpecs.Count -gt 0 -and $ModelSpecs[0] -notmatch '^-|:' -and -not $_ConfigNames.ContainsKey($ModelSpecs[0])) {
         $ProbeFile = $ModelSpecs[0]
         $ModelSpecs = if ($ModelSpecs.Count -gt 1) { $ModelSpecs[1..($ModelSpecs.Count-1)] } else { @() }
     }
@@ -177,7 +177,7 @@ if ($Backend -match '^--(.+)$') {
         # not a model spec (provider:modelId), and not a known config name.
         # Without the config-name check, `--dry-run ds+an` would eat `ds+an`
         # as a filename and fall through to the ds default.
-        if ($ModelSpecs -and $ModelSpecs.Count -gt 0 -and $ModelSpecs[0] -notmatch '^-|:' -and -not $_KnownConfigs.ContainsKey($ModelSpecs[0])) {
+        if ($ModelSpecs -and $ModelSpecs.Count -gt 0 -and $ModelSpecs[0] -notmatch '^-|:' -and -not $_ConfigNames.ContainsKey($ModelSpecs[0])) {
             $DryRunFile = $ModelSpecs[0]
             $ModelSpecs = if ($ModelSpecs.Count -gt 1) { $ModelSpecs[1..($ModelSpecs.Count-1)] } else { @() }
         }
@@ -252,7 +252,7 @@ while ($ModelSpecs -and $ModelSpecs.Count -gt 0 -and $ModelSpecs[0] -match '^--(
     elseif ($flag -eq 'doctor' -and -not $Doctor)           { $Doctor = $true }
     elseif ($flag -eq 'install-statusline' -and -not $InstallStatusline) { $InstallStatusline = $true }
     elseif ($flag -eq 'stats' -and -not $Stats)             { $Stats = $true }
-    elseif ($flag -eq 'probe' -and $ModelSpecs -and $ModelSpecs.Count -gt 0 -and $ModelSpecs[0] -notmatch '^-|:' -and -not $_KnownConfigs.ContainsKey($ModelSpecs[0])) {
+    elseif ($flag -eq 'probe' -and $ModelSpecs -and $ModelSpecs.Count -gt 0 -and $ModelSpecs[0] -notmatch '^-|:' -and -not $_ConfigNames.ContainsKey($ModelSpecs[0])) {
         if (-not $PSBoundParameters.ContainsKey('ProbeFile')) { $ProbeFile = $ModelSpecs[0]; $ModelSpecs = if ($ModelSpecs.Count -gt 1) { $ModelSpecs[1..($ModelSpecs.Count-1)] } else { @() } }
         else { $ModelSpecs = if ($ModelSpecs.Count -gt 1) { $ModelSpecs[1..($ModelSpecs.Count-1)] } else { @() } }
     }
@@ -261,7 +261,7 @@ while ($ModelSpecs -and $ModelSpecs.Count -gt 0 -and $ModelSpecs[0] -match '^--(
         if (-not $DryRun) {
             $DryRun = $true
             # Same guard as first pass: don't eat known config names.
-            if ($ModelSpecs -and $ModelSpecs.Count -gt 0 -and $ModelSpecs[0] -notmatch '^-|:' -and -not $_KnownConfigs.ContainsKey($ModelSpecs[0])) {
+            if ($ModelSpecs -and $ModelSpecs.Count -gt 0 -and $ModelSpecs[0] -notmatch '^-|:' -and -not $_ConfigNames.ContainsKey($ModelSpecs[0])) {
                 if (-not $DryRunFile) { $DryRunFile = $ModelSpecs[0]; $ModelSpecs = if ($ModelSpecs.Count -gt 1) { $ModelSpecs[1..($ModelSpecs.Count-1)] } else { @() } }
             }
         }
@@ -668,7 +668,6 @@ function Stop-PersistentProxy {
 }
 
 # --- Provider Registry (loaded from providers.json) ---
-$ScriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
 $Registry = Get-Content (Join-Path $ScriptRoot "proxy\providers.json") -Raw | ConvertFrom-Json
 
 # Key lookup — resolves keys loaded above from env vars (kept for backward compat)
@@ -1178,7 +1177,7 @@ if ($PSBoundParameters.ContainsKey('ProbeFile')) {
         $routesFile = $ProbeFile
     } else {
         # Build routes from current config
-        if ($AllSpecs.Count -eq 1 -and $_KnownConfigs.ContainsKey($AllSpecs[0])) {
+        if ($AllSpecs.Count -eq 1 -and $Configs.Contains($AllSpecs[0])) {
             $r = Resolve-Config $AllSpecs[0]
         } elseif ($AllSpecs.Count -eq 1 -and $AllSpecs[0] -notmatch '^[a-z][a-z0-9_-]*:.+$') {
                         [Console]::Error.WriteLine("ERROR: Unknown config '$($AllSpecs[0])'. Known: $($Configs.Keys -join ', ')")
@@ -1191,7 +1190,7 @@ if ($PSBoundParameters.ContainsKey('ProbeFile')) {
             $r = Resolve-Config $defaultCfg
         }
         Set-UsedProviderEnv $r
-        if ($AllSpecs.Count -eq 1 -and $_KnownConfigs.ContainsKey($AllSpecs[0])) {
+        if ($AllSpecs.Count -eq 1 -and $Configs.Contains($AllSpecs[0])) {
             $routesJson = Invoke-LauncherMjs "build-routes", "--name=$($AllSpecs[0])"
         } else {
             $routesJson = Invoke-LauncherMjs "build-routes", "--specs=$($AllSpecs -join ',')"
@@ -1209,7 +1208,7 @@ if ($DryRun) {
     $tsxBin = Join-Path $myDir "node_modules\.bin\tsx.cmd"
     $proxyScript = Join-Path $myDir "proxy\start-proxy.ts"
 
-    if ($AllSpecs.Count -eq 1 -and $_KnownConfigs.ContainsKey($AllSpecs[0])) {
+    if ($AllSpecs.Count -eq 1 -and $Configs.Contains($AllSpecs[0])) {
         $r = Resolve-Config $AllSpecs[0]
         $routesJson = Invoke-LauncherMjs "build-routes", "--name=$($AllSpecs[0])"
     } elseif ($AllSpecs.Count -eq 1 -and $AllSpecs[0] -notmatch '^[a-z][a-z0-9_-]*:.+$') {
@@ -1517,7 +1516,7 @@ if ($Doctor) {
         # Find best available config for proxy test
         $doctorConfigName = $null
         $defaultBackend = if ($env:DEEPCLAUDE_DEFAULT_BACKEND) { $env:DEEPCLAUDE_DEFAULT_BACKEND } elseif ($env:CHEAPCLAUDE_DEFAULT_BACKEND) { $env:CHEAPCLAUDE_DEFAULT_BACKEND } else { $null }
-        if ($defaultBackend -and $_KnownConfigs.ContainsKey($defaultBackend)) {
+        if ($defaultBackend -and $Configs.Contains($defaultBackend)) {
             try { $r = Resolve-Config $defaultBackend; if ($r) { $doctorConfigName = $defaultBackend } } catch { Write-Host "    Config '$defaultBackend' not available: $_" -ForegroundColor DarkGray }
         }
         if (-not $doctorConfigName) {
@@ -1774,7 +1773,7 @@ if ($SetSlot -or $PSBoundParameters.ContainsKey('SetSlot')) {
         $colonIdx = $slotModel.IndexOf(':')
         $plainModel = if ($colonIdx -ge 0) { $slotModel.Substring($colonIdx + 1) } else { $slotModel }
         $plainModel = $plainModel -replace '\[1m\]', ''
-        if (-not $ModelCtx.Contains($plainModel)) {
+        if (-not $ModelCtx.ContainsKey($plainModel)) {
             Write-Host "  Note: Model '$plainModel' not in context-limit registry. Statusline won't show context usage." -ForegroundColor DarkYellow
         }
     }
@@ -1925,7 +1924,7 @@ if ($Switch -or $PSBoundParameters.ContainsKey('Switch')) {
         exit 1
     }
 
-    if ($_KnownConfigs.ContainsKey($switchTarget)) {
+    if ($Configs.Contains($switchTarget)) {
         $switchResolved = Resolve-Config $switchTarget
     } else {
         $specs = $switchTarget -split '\s+'
@@ -1943,7 +1942,7 @@ if ($Switch -or $PSBoundParameters.ContainsKey('Switch')) {
     $proxyState = Get-ProxyState
 
     # Build routes and slot overrides via launcher.mjs
-    if ($_KnownConfigs.ContainsKey($switchTarget)) {
+    if ($Configs.Contains($switchTarget)) {
         $routesJson = Invoke-LauncherMjs "build-routes", "--name=$switchTarget"
         Initialize-SlotOverrides -Name $switchTarget | Out-Null
     } else {
@@ -1982,7 +1981,7 @@ $IsAnthropic = ($AllSpecs.Count -eq 1 -and $AllSpecs[0] -eq "anthropic")
 $resolved = $null
 
 if (-not $IsAnthropic -and $AllSpecs.Count -gt 0) {
-    if ($AllSpecs.Count -eq 1 -and $_KnownConfigs.ContainsKey($AllSpecs[0])) {
+    if ($AllSpecs.Count -eq 1 -and $Configs.Contains($AllSpecs[0])) {
         $resolved = Resolve-Config $AllSpecs[0]
     } elseif ($AllSpecs.Count -eq 1 -and $AllSpecs[0] -notmatch '^[a-z][a-z0-9_-]*:.+$') {
         # Single arg that isn't a known config name and isn't a valid
@@ -2022,7 +2021,7 @@ if ($Remote) {
     Write-Host "`n  Starting routing proxy for $($resolved.name)..." -ForegroundColor Cyan
 
     # Build routes and slot overrides via launcher.mjs
-    if ($AllSpecs.Count -eq 1 -and $_KnownConfigs.ContainsKey($AllSpecs[0])) {
+    if ($AllSpecs.Count -eq 1 -and $Configs.Contains($AllSpecs[0])) {
         $routesJson = Invoke-LauncherMjs "build-routes", "--name=$($AllSpecs[0])"
         Initialize-SlotOverrides -Name $AllSpecs[0] | Out-Null
     } else {
@@ -2109,7 +2108,7 @@ foreach ($slot in @("opus","sonnet","haiku","subagent","fable")) {
 Write-Host ""
 
 # Build routes and slot overrides via launcher.mjs
-if ($AllSpecs.Count -eq 1 -and $_KnownConfigs.ContainsKey($AllSpecs[0])) {
+if ($AllSpecs.Count -eq 1 -and $Configs.Contains($AllSpecs[0])) {
     $routesJson = Invoke-LauncherMjs "build-routes", "--name=$($AllSpecs[0])"
     Initialize-SlotOverrides -Name $AllSpecs[0] | Out-Null
 } else {
