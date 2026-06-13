@@ -39,7 +39,6 @@ async function main() {
   const reset = '\x1b[0m';
   const bold = '\x1b[1m';
   const narrow = '  ';
-  const wide = '     ';
 
   // ── Location ─────────────────────────────────────────────────
   const cwd = d?.workspace?.current_dir || d?.cwd || '';
@@ -306,8 +305,6 @@ async function main() {
   }
 
   // ── Output ──────────────────────────────────────────────────
-  // Clean hex strings from each group individually, then join with
-  // the wide separator so CC can render visual separation between groups.
   let output = [locationGroup, modelGroup, ctxGroup, spendGroup]
     .map((g) =>
       g
@@ -316,7 +313,9 @@ async function main() {
         .trim(),
     )
     .filter(Boolean)
-    .join(wide);
+    .join(' ');
+  // CC renders 2+ consecutive spaces as · — normalize to single spaces.
+  output = output.replace(/\s+/g, ' ').trim();
   console.log(output);
 }
 
