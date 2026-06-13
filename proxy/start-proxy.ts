@@ -34,7 +34,7 @@ import {
 import { tryForward, addFallbackHeaders, sseHeaders, type ForwardResult } from './forward';
 import { sendProbe } from './probe';
 import type { ProbeSlot } from './probe';
-import { convertServerTools, populateToolResults } from './server-tools';
+import { convertServerTools, isNativeAnthropicProvider, populateToolResults } from './server-tools';
 import {
   isProviderHealthy,
   recordSpend,
@@ -975,19 +975,29 @@ if (probeIdx >= 2) {
             }
 
             // Handle Anthropic server-side tools for non-Anthropic providers.
-            // Step 1: Convert ALL Anthropic server-side tools to custom tools FIRST.
-            // This includes web_search_*, web_fetch_*, text_editor_, bash_, etc.
-            // Converting before stripping lets web_search/web_fetch survive so
-            // DeepSeek can request them — then the proxy executes them and reports
-            // the count in usage.server_tool_use so Claude Code's "Did N searches"
-            // display is correct.
-            if (parsedBody.tools && Array.isArray(parsedBody.tools)) {
+            // The real Anthropic API natively supports web_search_* and
+            // web_fetch_* as server-side tools — DO NOT convert them to
+            // custom tools or Anthropic won't execute them server-side and
+            // Claude Code's "Did N searches" display will show 0.
+            //
+            // For all other providers (DeepSeek, OpenRouter, etc.) we MUST
+            // convert them to generic custom tools so the proxy can execute
+            // searches locally via DuckDuckGo.
+            const isAnthropic = isNativeAnthropicProvider(
+              resolved.primary?.providerKey,
+              resolved.primary?.targetUrl?.hostname,
+            );
+            if (!isAnthropic && parsedBody.tools && Array.isArray(parsedBody.tools)) {
+              // Step 1: Convert ALL Anthropic server-side tool types to
+              // generic custom tools (web_search_* -> web_search, etc.).
               const conv = convertServerTools(parsedBody.tools as Array<Record<string, unknown>>);
               if (conv.tools !== parsedBody.tools) {
                 parsedBody.tools = conv.tools as Array<Record<string, unknown>>;
                 modified = true;
               }
-              // Strip any remaining unconverted web_search_* tools.
+              // Step 2: Strip any remaining unconverted web_search_* tools
+              // that survived conversion (e.g. unknown prefixes). These
+              // would be unrecognized by non-Anthropic providers.
               const WEB_TOOL_PREFIXES = ['web_search_', 'web_fetch_', 'url_fetch_'];
               const isWebTool = (type: string) => WEB_TOOL_PREFIXES.some((p) => type.startsWith(p));
               type ToolItem = Record<string, unknown>;
