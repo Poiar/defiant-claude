@@ -1332,10 +1332,9 @@ describe('buildRoutesJson includeAllModels', () => {
     expect(routesWithAll.routes['big-pickle']).toBeDefined();
   });
 
-  test('ds+an routes include all providers needed for fallback', () => {
+  test('ds+an routes include both ds and an providers', () => {
     const routes = runLauncherJson('build-routes', '--name=ds+an');
     expect(routes.providers.an).toBeDefined();
-    expect(routes.providers.an.fallback).toEqual(['ds']);
     expect(routes.providers.ds).toBeDefined();
   });
 });
@@ -1631,10 +1630,9 @@ describe('REGRESSION: env-vars correctly reflect resolved config', () => {
 
 // --- Regression: provider fallback chain integrity ---
 describe('REGRESSION: provider fallback chains', () => {
-  test('ds+an routes include an→ds fallback', () => {
+  test('ds+an routes include both ds and an providers', () => {
     const routes = runLauncherJson('build-routes', '--name=ds+an');
     expect(routes.providers.an).toBeDefined();
-    expect(routes.providers.an.fallback).toEqual(['ds']);
     expect(routes.providers.ds).toBeDefined();
   });
 

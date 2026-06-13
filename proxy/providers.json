@@ -49,9 +49,7 @@
       "keyEnv": "ALIBABA_DASHSCOPE_API_KEY",
       "authHeader": "bearer",
       "wireFormat": "openai",
-      "fallback": [
-        "ds"
-      ],
+      "fallback": ["ds"],
       "streamUsageReporting": "openai_stream_options"
     },
     "km": {
@@ -60,9 +58,7 @@
       "keyEnv": "KIMI_API_KEY",
       "authHeader": "bearer",
       "wireFormat": "openai",
-      "fallback": [
-        "ds"
-      ],
+      "fallback": ["ds"],
       "streamUsageReporting": "openai_stream_options"
     },
     "mm": {
@@ -71,9 +67,7 @@
       "keyEnv": "MIMO_API_KEY",
       "authHeader": "bearer",
       "wireFormat": "openai",
-      "fallback": [
-        "oc"
-      ],
+      "fallback": ["oc"],
       "streamUsageReporting": "openai_stream_options"
     },
     "um": {
@@ -92,9 +86,7 @@
       "authHeader": "bearer",
       "wireFormat": "openai",
       "setupUrl": "https://console.groq.com/keys",
-      "fallback": [
-        "ds"
-      ],
+      "fallback": ["ds"],
       "streamUsageReporting": "openai_stream_options"
     },
     "mt": {
@@ -104,9 +96,7 @@
       "authHeader": "bearer",
       "wireFormat": "openai",
       "setupUrl": "https://console.mistral.ai/api-keys",
-      "fallback": [
-        "ds"
-      ],
+      "fallback": ["ds"],
       "streamUsageReporting": "openai_stream_options"
     },
     "mx": {
@@ -115,9 +105,7 @@
       "keyEnv": "MINIMAX_API_KEY",
       "authHeader": "bearer",
       "wireFormat": "openai",
-      "fallback": [
-        "ds"
-      ],
+      "fallback": ["ds"],
       "streamUsageReporting": "openai_stream_options"
     },
     "za": {
@@ -126,9 +114,7 @@
       "keyEnv": "ZAI_API_KEY",
       "authHeader": "bearer",
       "wireFormat": "openai",
-      "fallback": [
-        "ds"
-      ],
+      "fallback": ["ds"],
       "streamUsageReporting": "openai_stream_options"
     },
     "bp": {
@@ -137,9 +123,7 @@
       "keyEnv": "BYTEPLUS_API_KEY",
       "authHeader": "bearer",
       "wireFormat": "openai",
-      "fallback": [
-        "ds"
-      ],
+      "fallback": ["ds"],
       "streamUsageReporting": "openai_stream_options"
     },
     "sf": {
@@ -148,9 +132,7 @@
       "keyEnv": "SILICONFLOW_API_KEY",
       "authHeader": "bearer",
       "wireFormat": "openai",
-      "fallback": [
-        "ds"
-      ],
+      "fallback": ["ds"],
       "streamUsageReporting": "openai_stream_options"
     },
     "nv": {
@@ -159,9 +141,7 @@
       "keyEnv": "NOVITA_API_KEY",
       "authHeader": "bearer",
       "wireFormat": "openai",
-      "fallback": [
-        "ds"
-      ],
+      "fallback": ["ds"],
       "streamUsageReporting": "openai_stream_options"
     },
     "an": {
@@ -172,7 +152,6 @@
       "wireFormat": "anthropic",
       "setupUrl": "https://console.anthropic.com/keys",
       "streamUsageReporting": null,
-      "fallback": ["ds"],
       "noAutoFallback": true
     }
   },
