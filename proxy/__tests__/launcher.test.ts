@@ -1234,6 +1234,17 @@ describe('deepclaude.ps1 end-to-end', () => {
     expect(stdout).toMatch(/haiku\s+or \(OpenRouter/);
   });
 
+  test('--probe ds+an does not eat config name as probe file', () => {
+    // Regression: --probe would consume the next arg as a ProbeFile
+    // if it didn't start with - or contain :. ds+an is a known config
+    // and should NOT be treated as a filename.
+    const { stderr } = runDeepClaude('--probe', 'ds+an');
+    // Must not crash with "file not found" or "cannot find routes"
+    expect(stderr).not.toMatch(/no routes file found|cannot find|ENOENT|file not found/i);
+    // Must NOT print the probe error about missing routes file
+    expect(stderr).not.toMatch(/Usage:.*--probe/);
+  });
+
   // --- Fail-fast: unknown config errors instead of silently falling back ---
   test('-b nonexistent --dry-run fails with Unknown config (no silent fallback)', () => {
     const { stdout, stderr, status } = runDeepClaude('-b', 'nonexistent', '--dry-run');
