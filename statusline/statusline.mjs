@@ -306,11 +306,17 @@ async function main() {
   }
 
   // ── Output ──────────────────────────────────────────────────
-  let output = [locationGroup, modelGroup, ctxGroup, spendGroup].filter(Boolean).join(wide);
-  output = output
-    .replace(/\b[a-f0-9]{6,}\b/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  // Clean hex strings from each group individually, then join with
+  // the wide separator so CC can render visual separation between groups.
+  let output = [locationGroup, modelGroup, ctxGroup, spendGroup]
+    .map((g) =>
+      g
+        .replace(/\b[a-f0-9]{6,}\b/g, '')
+        .replace(/\s+/g, ' ')
+        .trim(),
+    )
+    .filter(Boolean)
+    .join(wide);
   console.log(output);
 }
 
