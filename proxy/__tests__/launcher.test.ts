@@ -1237,6 +1237,7 @@ describe('deepclaude.ps1 end-to-end', () => {
 // ---------------------------------------------------------------------------
 describe('dc.ps1 argument dispatch', () => {
   const DC_PS1 = join(__dirname, '..', '..', 'dc.ps1');
+  const OVERRIDES_FILE = join(homedir(), '.deepclaude', 'slot-overrides.json');
 
   function runDc(...args: string[]): { stdout: string; stderr: string; status: number } {
     const r = spawnSync('pwsh', ['-NoLogo', '-File', DC_PS1, ...args], {
@@ -1251,25 +1252,36 @@ describe('dc.ps1 argument dispatch', () => {
     };
   }
 
+  // Clean up slot-overrides.json before each test. Stale overrides from a
+  // previous config (e.g. ds+an) would poison `dc.ps1`'s own dispatch and
+  // make ds-config tests falsely show Anthropic routing. Removing the file
+  // ensures each test starts from a clean config baseline.
+  beforeEach(() => {
+    try {
+      rmSync(OVERRIDES_FILE, { force: true });
+    } catch {}
+  });
+
   test('no args → defaults to ds config', () => {
+    // dc.ps1 --dry-run: $args[0]='--dry-run' → matches '^-' → branch 4
+    // → deepclaude.ps1 -b ds --dry-run → ds routing table
     const { stdout } = runDc('--dry-run');
-    // --dry-run has -- prefix → hits branch 4 → deepclaude.ps1 -b ds --dry-run
-    // Second-pass scanner in deepclaude.ps1 picks up --dry-run
     expect(stdout).toMatch(/haiku\s+ds \(DeepSeek/);
     expect(stdout).toMatch(/deepseek-v4-flash/);
   });
 
-  // NOTE: Tests through dc.ps1 without --dry-run start real proxies, which is
-  // too slow for CI (~30s timeout per test). The full dc.ps1 dispatch logic
-  // (4 branches: no-args, -b, positional, --flag) is verifiable manually:
-  //   dc               → ds config (branch 1)
-  //   dc -b ds+an      → ds+an config (branch 2)
-  //   dc ds+oc         → ds+oc config (branch 3)
-  //   dc --flags       → ds config + flags (branch 4)
-  // The --dry-run path is tested through deepclaude.ps1 directly.
+  // NOTE: branch 1 (dc with no args) starts a real proxy without --dry-run,
+  // which is too slow for CI (~30s timeout). Branches 2, 3, and 4 all accept
+  // --dry-run and are tested below.
+  //
+  // REGRESSION: branch 3 (dc ds+an → positional shortcut) was broken by a
+  // PowerShell $Args/$args name collision in dc.ps1's param block. The param
+  // named $Args collides with PowerShell's automatic $args variable, silently
+  // swallowing the first positional argument. Renamed to $Remaining to fix.
+  // Tests at line 1288 and 1303 verify the fix.
 
-  test('--dry-run as only arg resolves ds config through dc.ps1', () => {
-    // dc.ps1 --dry-run: Args[0]='--dry-run' contains '-' → branch 4
+  test('--dry-run as only arg resolves ds config through dc.ps1 (branch 4)', () => {
+    // dc.ps1 --dry-run: Remaining[0]='--dry-run' contains '-' → branch 4
     // → deepclaude.ps1 -b ds --dry-run → dry-run table for ds
     const { stdout, stderr } = runDc('--dry-run');
     // Must not crash with invalid spec errors
@@ -1277,6 +1289,153 @@ describe('dc.ps1 argument dispatch', () => {
     // Must produce a valid routing table (SLOT header present)
     expect(stdout).toContain('SLOT');
     expect(stdout).toContain('PROVIDER');
+  });
+
+  test('positional ds+an routes haiku/subagent to Anthropic (branch 3)', () => {
+    // dc.ps1 ds+an --dry-run: Remaining[0]='ds+an' → branch 3 shortcut
+    // → deepclaude.ps1 -b ds+an --dry-run
+    const { stdout, stderr } = runDc('ds+an', '--dry-run');
+    expect(stderr).not.toMatch(/Invalid model spec|Unknown provider/);
+    // Haiku and subagent must route to Anthropic, NOT DeepSeek
+    expect(stdout).toMatch(/haiku\s+an \(Anthropic/);
+    expect(stdout).toMatch(/subagent\s+an \(Anthropic/);
+    expect(stdout).toMatch(/claude-haiku-4-5-20251001/);
+    // Opus/sonnet/fable must route to DeepSeek
+    expect(stdout).toMatch(/opus\s+ds \(DeepSeek/);
+    expect(stdout).toMatch(/sonnet\s+ds \(DeepSeek/);
+    expect(stdout).toMatch(/fable\s+ds \(DeepSeek/);
+  });
+
+  test('positional ds+oc routes haiku/subagent to OpenCode (branch 3)', () => {
+    // dc.ps1 ds+oc --dry-run: Remaining[0]='ds+oc' → branch 3 shortcut
+    const { stdout, stderr } = runDc('ds+oc', '--dry-run');
+    expect(stderr).not.toMatch(/Invalid model spec|Unknown provider/);
+    // Haiku and subagent must route to OpenCode
+    expect(stdout).toMatch(/haiku\s+oc \(OpenCode/);
+    expect(stdout).toMatch(/subagent\s+oc \(OpenCode/);
+    expect(stdout).toMatch(/big-pickle/);
+    // Opus/sonnet/fable must route to DeepSeek
+    expect(stdout).toMatch(/opus\s+ds \(DeepSeek/);
+    expect(stdout).toMatch(/sonnet\s+ds \(DeepSeek/);
+    expect(stdout).toMatch(/fable\s+ds \(DeepSeek/);
+  });
+
+  // -------------------------------------------------------------------------
+  // Regression guard: pwsh -File vs & invocation divergence
+  //
+  // BUG (2026-06-13): dc.ps1 had param([string[]]$Args). In pwsh -File
+  // mode, $Args and the automatic $args variable alias to the SAME object,
+  // so the first positional argument (e.g. ds+an) gets silently swallowed.
+  // The fix: NO param() block — bare $args works identically in both
+  // pwsh -File and & invocation paths.
+  //
+  // If someone re-adds a param() block to dc.ps1, these tests MUST fail.
+  // -------------------------------------------------------------------------
+
+  test('dc.ps1 has no param() block (guard against $args/$Args collision)', () => {
+    const src = readFileSync(DC_PS1, 'utf-8');
+    // Must not contain a param(…) declaration. If this fails, someone
+    // re-added a param block — and the param name must NOT be $Args or
+    // $Remaining, because both fragment differently across pwsh -File vs
+    // & invocation. See long comment in dc.ps1 header for the full story.
+    expect(src).not.toMatch(/^\s*param\s*\(/m);
+  });
+
+  test('positional ds+an with extra flag survives dispatch (flag passthrough)', () => {
+    // dc.ps1 ds+an --dry-run --skip-startup-check: both flags must reach
+    // deepclaude.ps1. If --skip-startup-check is lost (stranded in $args
+    // while a param block captured only ds+an), we'd see a full proxy
+    // launch instead of a dry-run table.
+    const { stdout, stderr } = runDc('ds+an', '--dry-run', '--skip-startup-check');
+    expect(stderr).not.toMatch(/Invalid model spec|Unknown provider/);
+    // Must produce dry-run table, NOT launch a proxy
+    expect(stdout).toContain('SLOT');
+    expect(stdout).toContain('PROVIDER');
+    // Haiku routes to Anthropic (the whole point of ds+an)
+    expect(stdout).toMatch(/haiku\s+an \(Anthropic/);
+    expect(stdout).toMatch(/subagent\s+an \(Anthropic/);
+    // The startup check warning banner must NOT appear (--skip-startup-check
+    // suppressed it in deepclaude.ps1, proving the flag survived dispatch)
+    expect(stdout).not.toMatch(
+      /WINDOWS DEFENDER|fix-av\.cmd|==============================================================================/,
+    );
+  });
+
+  test('branch 2 (-b flag) survives dc.ps1 dispatch via pwsh -File', () => {
+    // dc.ps1 -b ds+an --dry-run: first arg matches ^-b → branch 2
+    // → deepclaude.ps1 @args (all args forwarded verbatim)
+    const { stdout, stderr } = runDc('-b', 'ds+an', '--dry-run');
+    expect(stderr).not.toMatch(/Invalid model spec|Unknown provider/);
+    expect(stdout).toContain('SLOT');
+    expect(stdout).toMatch(/haiku\s+an \(Anthropic/);
+    expect(stdout).toMatch(/subagent\s+an \(Anthropic/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Structural guard: no project .ps1 may use a bare [string[]]$Name param
+// block that risks $args collision. Any [string[]] param MUST be accompanied
+// by a [Parameter(...)] attribute. Without it, pwsh -File invocation strands
+// --flags in the automatic $args while & invocation binds them to the param —
+// splitting the argv differently across call sites. dc.ps1 was broken by this
+// exact pattern (the param was literally named $Args, aliasing the automatic
+// variable). See dc.ps1 header comment for full details.
+// ---------------------------------------------------------------------------
+describe('.ps1 $args collision guard', () => {
+  const PROJECT_PS1 = [
+    join(__dirname, '..', '..', 'dc.ps1'),
+    join(__dirname, '..', '..', 'deepclaude.ps1'),
+    join(__dirname, '..', '..', 'fix-av.ps1'),
+  ];
+
+  test('no project .ps1 has a param() block without [Parameter()] attributes', () => {
+    for (const path of PROJECT_PS1) {
+      const src = readFileSync(path, 'utf-8');
+      // If the file has a param() block at all, verify every [string[]]
+      // param in it is preceded by [Parameter(...)] — not bare.
+      const hasParam = /^\s*param\s*\(/m.test(src);
+      if (!hasParam) continue; // dc.ps1 — correct, uses bare $args
+
+      // Find all [string[]]$Name declarations inside the param block.
+      // A bare [string[]]$Name (no [Parameter(...)] before it on the
+      // same or preceding line) is the dangerous pattern.
+      const lines = src.split('\n');
+      let inParam = false;
+      let parenDepth = 0;
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (/^\s*param\s*\(/.test(line)) {
+          inParam = true;
+          parenDepth = 1;
+          continue;
+        }
+        if (!inParam) continue;
+        // Track paren depth
+        for (const ch of line) {
+          if (ch === '(') parenDepth++;
+          if (ch === ')') {
+            parenDepth--;
+            if (parenDepth <= 0) {
+              inParam = false;
+              break;
+            }
+          }
+        }
+        // Check for bare [string[]] — no [Parameter( on preceding or current line
+        if (/\[string\[\]\]\s*\$/.test(line)) {
+          const prevLine = i > 0 ? lines[i - 1] : '';
+          const hasParameter = /\[Parameter\s*\(/.test(line) || /\[Parameter\s*\(/.test(prevLine);
+          if (!hasParameter) {
+            throw new Error(
+              `${path}:${i + 1}: bare [string[]] param without [Parameter()] attribute.\n` +
+                `  This causes $args fragmentation between pwsh -File and & invocation.\n` +
+                `  Add a [Parameter(ValueFromRemainingArguments)] attribute, or remove\n` +
+                `  the param() block and use bare $args instead (like dc.ps1).`,
+            );
+          }
+        }
+      }
+    }
   });
 });
 
