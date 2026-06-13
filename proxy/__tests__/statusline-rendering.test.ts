@@ -1069,3 +1069,191 @@ describe('statusline malformed / missing file resilience', () => {
     expect(dollars).toEqual([0.0]);
   });
 });
+
+describe('statusline stdin edge cases', () => {
+  test('empty stdin produces no output', () => {
+    const result = runStatusline({
+      stdin: '',
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe('');
+  });
+
+  test('invalid JSON on stdin produces no output', () => {
+    const result = runStatusline({
+      stdin: 'not json at all {{{',
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe('');
+  });
+});
+
+describe('statusline proxy config edge cases', () => {
+  test('proxy.pid without colon is ignored', () => {
+    writeFileSync(join(tmpDir, 'proxy.pid'), '12345');
+    writeFileSync(join(tmpDir, 'spend.json'), JSON.stringify({}));
+
+    const result = runStatusline({
+      stdin: makeCcJson(),
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const plain = stripAnsi(result.stdout);
+    expect(plain).not.toMatch(/\b\d{5}\b/); // no port number
+  });
+
+  test('proxy.pid with non-numeric PID and port is ignored', () => {
+    writeFileSync(join(tmpDir, 'proxy.pid'), 'abc:xyz');
+    writeFileSync(join(tmpDir, 'spend.json'), JSON.stringify({}));
+
+    const result = runStatusline({
+      stdin: makeCcJson(),
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const plain = stripAnsi(result.stdout);
+    expect(plain).not.toMatch(/\b\d{5}\b/);
+  });
+
+  test('proxy.json with port 0 does not trigger health check or show port', () => {
+    writeFileSync(join(tmpDir, 'proxy.json'), JSON.stringify({ pid: 12345, port: 0 }));
+    writeFileSync(join(tmpDir, 'spend.json'), JSON.stringify({}));
+
+    const result = runStatusline({
+      stdin: makeCcJson(),
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const plain = stripAnsi(result.stdout);
+    // No 5-digit port shown (session $0.00 is expected).
+    expect(plain).not.toMatch(/\s\d{5}\b/);
+  });
+
+  test('proxy.pid with trailing whitespace still parses correctly', () => {
+    writeFileSync(join(tmpDir, 'proxy.pid'), '  54321:50999  \n');
+    writeFileSync(join(tmpDir, 'spend.json'), JSON.stringify({}));
+
+    const result = runStatusline({
+      stdin: makeCcJson(),
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const plain = stripAnsi(result.stdout);
+    expect(plain).toContain('50999');
+  });
+});
+
+describe('statusline cc-spend file edge cases', () => {
+  test('cc-spend file that is empty string falls back to 0', () => {
+    const todayKey = new Date().toLocaleDateString('da-DK');
+    const spendJson = { daily: { [todayKey]: { total: 0.05 } } };
+    writeFileSync(join(tmpDir, 'spend.json'), JSON.stringify(spendJson));
+    writeFileSync(join(tmpDir, 'cc-spend-test-empty.json'), '');
+
+    const result = runStatusline({
+      stdin: makeCcJson(),
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        CLAUDE_CODE_SESSION_ID: 'test-empty',
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const dollars = allDollars(stripAnsi(result.stdout));
+    // empty → parseFloat('') → NaN → || 0 → $0.00
+    expect(dollars).toContain(0.0);
+    expect(dollars).toContain(0.05);
+  });
+});
+
+describe('statusline missing optional fields in CC JSON', () => {
+  test('missing model.id and display_name shows no model', () => {
+    const ccJson = JSON.stringify({
+      workspace: { current_dir: '/home/user/proj' },
+      effort: { level: 'medium' },
+      context_window: { total_input_tokens: 500, max_input_tokens: 200000 },
+    });
+
+    const result = runStatusline({
+      stdin: ccJson,
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const plain = stripAnsi(result.stdout);
+    // Has location, effort, context, but no model string.
+    expect(plain).toContain('proj');
+    expect(plain).toContain('medium');
+    expect(plain).toContain('500');
+  });
+
+  test('missing effort level shows no effort', () => {
+    const ccJson = JSON.stringify({
+      workspace: { current_dir: '/home/user/proj' },
+      model: { id: 'sonnet:claude-sonnet-4-6' },
+      context_window: { total_input_tokens: 500, max_input_tokens: 200000 },
+    });
+
+    const result = runStatusline({
+      stdin: ccJson,
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const plain = stripAnsi(result.stdout);
+    expect(plain).not.toContain('medium');
+    expect(plain).not.toContain('high');
+    expect(plain).not.toContain('low');
+  });
+});
