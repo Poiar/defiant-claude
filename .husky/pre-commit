@@ -1,0 +1,40 @@
+#!/bin/sh
+# Pre-commit: format staged files with prettier, then full lint pass.
+# Blocks commit on lint failure.
+
+DIR="$(cd "$(dirname "$0")/.." && pwd)"
+FAIL=0
+
+echo ""
+
+# ── Prettier: format staged files, re-add ──────────────────────
+STAGED_FILES="$(git -C "$DIR" diff --cached --name-only --diff-filter=ACM | grep -E '\.(ts|tsx|js|mjs|json|css|html|yml|yaml)$' || true)"
+
+if [ -n "$STAGED_FILES" ]; then
+  echo "  prettier..."
+  echo "$STAGED_FILES" | xargs -r npx prettier --write 2>&1 | sed 's/^/    /'
+  echo "$STAGED_FILES" | xargs -r git -C "$DIR" add
+fi
+
+# ── ESLint: full scan (not just staged) ────────────────────────
+echo "  eslint..."
+npx eslint "$DIR/proxy/" --max-warnings 0 || FAIL=1
+
+# ── Node syntax check (.mjs files) ─────────────────────────────
+echo "  node --check..."
+node --check "$DIR/proxy/launcher.mjs" || FAIL=1
+node --check "$DIR/statusline/statusline.mjs" || FAIL=1
+
+# ── JSON validity ──────────────────────────────────────────────
+echo "  JSON..."
+node --eval "JSON.parse(require('node:fs').readFileSync(process.argv[1],'utf-8'))" "$DIR/package.json" || FAIL=1
+node --eval "JSON.parse(require('node:fs').readFileSync(process.argv[1],'utf-8'))" "$DIR/proxy/providers.json" || FAIL=1
+
+if [ "$FAIL" -ne 0 ]; then
+  echo ""
+  echo "Commit blocked — linting failed. Fix the above and retry."
+  exit 1
+fi
+
+echo "  OK"
+echo ""
