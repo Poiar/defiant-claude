@@ -34,6 +34,11 @@ function stripAnsi(s: string): string {
   return s.replace(/\x1b\[[0-9;]*m/g, '');
 }
 
+function allDollars(s: string): number[] {
+  const matches = s.match(/\$(\d+\.\d{2})/g);
+  return (matches || []).map((m) => parseFloat(m.replace('$', '')));
+}
+
 function makeCcJson(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({
     workspace: { current_dir: '/home/user/test-project' },
@@ -581,5 +586,486 @@ describe('statusline output assembly', () => {
       expect(result.status).toBe(0);
       expect(stripAnsi(result.stdout)).toContain(effort);
     }
+  });
+
+  test('effort level colors: high=red, medium=yellow, low=blue', () => {
+    const cases: [string, string][] = [
+      ['high', '38;2;255;80;80'],
+      ['medium', '38;2;255;180;50'],
+      ['low', '38;2;100;160;255'],
+    ];
+    for (const [level, color] of cases) {
+      const ccJson = JSON.stringify({
+        workspace: { current_dir: '/home/user/proj' },
+        model: { id: 'an:claude-opus-4-7' },
+        effort: { level },
+        context_window: { total_input_tokens: 500, max_input_tokens: 200000 },
+      });
+
+      const result = runStatusline({
+        stdin: ccJson,
+        env: {
+          ...process.env,
+          DEEPCLAUDE_DIR: tmpDir,
+          GIT_BRANCH: 'main',
+          PATH: process.env.PATH || '',
+        },
+      });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain(color + 'm' + level);
+    }
+  });
+});
+
+describe('statusline model display_name fallback', () => {
+  test('falls back to display_name when model.id is absent', () => {
+    const ccJson = JSON.stringify({
+      workspace: { current_dir: '/home/user/proj' },
+      model: { display_name: 'Fancy Display Model' },
+      effort: { level: 'medium' },
+      context_window: { total_input_tokens: 500, max_input_tokens: 200000 },
+    });
+
+    const result = runStatusline({
+      stdin: ccJson,
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(stripAnsi(result.stdout)).toContain('Fancy Display Model');
+  });
+
+  test('no model slot label when model does not match a known slot prefix', () => {
+    const ccJson = JSON.stringify({
+      workspace: { current_dir: '/home/user/proj' },
+      model: { id: 'ds:deepseek-v4-pro' },
+      effort: { level: 'medium' },
+      context_window: { total_input_tokens: 500, max_input_tokens: 200000 },
+    });
+
+    // slot-overrides.json exists but "ds:deepseek-v4-pro" doesn't start with a slot prefix
+    // like "sonnet:", "opus:", etc. — so no slotLabel is added.
+    writeFileSync(
+      join(tmpDir, 'slot-overrides.json'),
+      JSON.stringify({ sonnet: 'an:claude-sonnet-4-6' }),
+    );
+
+    const result = runStatusline({
+      stdin: ccJson,
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const plain = stripAnsi(result.stdout);
+    // Shows the model id as-is, no "s " or "f " prefix.
+    expect(plain).toContain('ds:deepseek-v4-pro');
+  });
+});
+
+describe('statusline slot variants', () => {
+  test('shows "o " label for opus slot', () => {
+    writeFileSync(
+      join(tmpDir, 'slot-overrides.json'),
+      JSON.stringify({ opus: 'an:claude-opus-4-7' }),
+    );
+    const ccJson = JSON.stringify({
+      workspace: { current_dir: '/home/user/proj' },
+      model: { id: 'opus:claude-opus-4-7' },
+      effort: { level: 'high' },
+      context_window: { total_input_tokens: 500, max_input_tokens: 200000 },
+    });
+
+    const result = runStatusline({
+      stdin: ccJson,
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const plain = stripAnsi(result.stdout);
+    expect(plain).toContain('an:claude-opus-4-7');
+  });
+
+  test('shows "h " label for haiku slot', () => {
+    writeFileSync(
+      join(tmpDir, 'slot-overrides.json'),
+      JSON.stringify({ haiku: 'an:claude-haiku-4-5' }),
+    );
+    const ccJson = JSON.stringify({
+      workspace: { current_dir: '/home/user/proj' },
+      model: { id: 'haiku:claude-haiku-4-5' },
+      effort: { level: 'low' },
+      context_window: { total_input_tokens: 500, max_input_tokens: 200000 },
+    });
+
+    const result = runStatusline({
+      stdin: ccJson,
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const plain = stripAnsi(result.stdout);
+    expect(plain).toContain('an:claude-haiku-4-5');
+  });
+
+  test('subagent slot without override and without subagent-model.json keeps fallback', () => {
+    // slot-overrides.json has no sub/subagent key, and subagent-model.json doesn't exist.
+    writeFileSync(
+      join(tmpDir, 'slot-overrides.json'),
+      JSON.stringify({ sonnet: 'ds:deepseek-v4-pro' }),
+    );
+
+    const ccJson = JSON.stringify({
+      workspace: { current_dir: '/home/user/proj' },
+      model: { id: 'sub:claude-haiku-4-5' },
+      effort: { level: 'medium' },
+      context_window: { total_input_tokens: 500, max_input_tokens: 200000 },
+    });
+
+    const result = runStatusline({
+      stdin: ccJson,
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    // The fallback from the slot match is "claude-haiku-4-5" (the part after "sub:").
+    const plain = stripAnsi(result.stdout);
+    expect(plain).toContain('claude-haiku-4-5');
+  });
+
+  test('subagent-model.json without providerKey does not override', () => {
+    writeFileSync(join(tmpDir, 'slot-overrides.json'), JSON.stringify({}));
+    writeFileSync(join(tmpDir, 'subagent-model.json'), JSON.stringify({ modelId: 'some-model' }));
+
+    const ccJson = JSON.stringify({
+      workspace: { current_dir: '/home/user/proj' },
+      model: { id: 'sub:claude-haiku-4-5' },
+      effort: { level: 'medium' },
+      context_window: { total_input_tokens: 500, max_input_tokens: 200000 },
+    });
+
+    const result = runStatusline({
+      stdin: ccJson,
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const plain = stripAnsi(result.stdout);
+    // Falls back to the original model from the slot match, not subagent-model.json.
+    expect(plain).toContain('claude-haiku-4-5');
+  });
+});
+
+describe('statusline context window edge cases', () => {
+  test('shows red color at >= 80% context', () => {
+    const ccJson = JSON.stringify({
+      workspace: { current_dir: '/home/user/proj' },
+      model: { id: 'sonnet:claude-sonnet-4-6' },
+      effort: { level: 'medium' },
+      context_window: { total_input_tokens: 170000, max_input_tokens: 200000 },
+    });
+
+    const result = runStatusline({
+      stdin: ccJson,
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    // 85% → red
+    expect(result.stdout).toContain('38;2;255;80;80');
+  });
+
+  test('shows yellow color at 50%-79% context', () => {
+    const ccJson = JSON.stringify({
+      workspace: { current_dir: '/home/user/proj' },
+      model: { id: 'sonnet:claude-sonnet-4-6' },
+      effort: { level: 'medium' },
+      context_window: { total_input_tokens: 120000, max_input_tokens: 200000 },
+    });
+
+    const result = runStatusline({
+      stdin: ccJson,
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    // 60% → yellow
+    expect(result.stdout).toContain('38;2;255;180;50');
+  });
+
+  test('shows green color at < 50% context', () => {
+    const ccJson = JSON.stringify({
+      workspace: { current_dir: '/home/user/proj' },
+      model: { id: 'sonnet:claude-sonnet-4-6' },
+      effort: { level: 'medium' },
+      context_window: { total_input_tokens: 40000, max_input_tokens: 200000 },
+    });
+
+    const result = runStatusline({
+      stdin: ccJson,
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    // 20% → green
+    expect(result.stdout).toContain('38;2;80;200;120');
+  });
+
+  test('no percentage when max_input_tokens is 0', () => {
+    const ccJson = JSON.stringify({
+      workspace: { current_dir: '/home/user/proj' },
+      model: { id: 'sonnet:claude-sonnet-4-6' },
+      effort: { level: 'medium' },
+      context_window: { total_input_tokens: 5000, max_input_tokens: 0 },
+    });
+
+    const result = runStatusline({
+      stdin: ccJson,
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const plain = stripAnsi(result.stdout);
+    // Tokens shown but no percentage.
+    expect(plain).toContain('5k');
+    expect(plain).not.toMatch(/\d+%/);
+  });
+});
+
+describe('statusline modelLookup [1m] suffix stripping', () => {
+  test('strips [1m] suffix for DS milestone matching', () => {
+    // When the model has a [1m] flag, modelLookup should strip it so
+    // 'deepseek-v4-pro[1m]' → 'deepseek-v4-pro' for milestone tag matching.
+    const ccJson = JSON.stringify({
+      workspace: { current_dir: '/home/user/proj' },
+      model: { id: 'ds:deepseek-v4-pro[1m]' },
+      effort: { level: 'medium' },
+      context_window: { total_input_tokens: 450000, max_input_tokens: 1000000 },
+    });
+
+    const result = runStatusline({
+      stdin: ccJson,
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const plain = stripAnsi(result.stdout);
+    // 450K with [1m] model should still trigger FBR.
+    expect(plain).toContain('FBR');
+  });
+
+  test('strips [500k] suffix but OR path format does not match milestone literal', () => {
+    // modelLookup strips [500k] → 'deepseek/deepseek-v4-pro'
+    // but milestone check is strict: modelLookup === 'deepseek-v4-pro'
+    // OpenRouter '/deepseek/deepseek-v4-pro' won't match the literal.
+    const ccJson = JSON.stringify({
+      workspace: { current_dir: '/home/user/proj' },
+      model: { id: 'or:deepseek/deepseek-v4-pro[500k]' },
+      effort: { level: 'medium' },
+      context_window: { total_input_tokens: 350000, max_input_tokens: 500000 },
+    });
+
+    const result = runStatusline({
+      stdin: ccJson,
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const plain = stripAnsi(result.stdout);
+    // [500k] stays in the displayed modelKey (only stripped from modelLookup).
+    // OR path format 'deepseek/deepseek-v4-pro' !== 'deepseek-v4-pro' → no milestone.
+    expect(plain).not.toContain('FR');
+    expect(plain).not.toContain('FBR');
+  });
+});
+
+describe('statusline malformed / missing file resilience', () => {
+  test('survives malformed spend.json without crashing', () => {
+    writeFileSync(join(tmpDir, 'spend.json'), 'not valid json {{{');
+
+    const result = runStatusline({
+      stdin: makeCcJson(),
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        CLAUDE_CODE_SESSION_ID: 'test-malformed',
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    // No spend shown.
+    expect(allDollars(stripAnsi(result.stdout))).toEqual([]);
+  });
+
+  test('survives malformed slot-overrides.json without crashing', () => {
+    writeFileSync(join(tmpDir, 'slot-overrides.json'), 'garbage');
+
+    const result = runStatusline({
+      stdin: makeCcJson(),
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    // Still renders normally, just without slot label.
+    expect(stripAnsi(result.stdout)).toContain('sonnet:claude-sonnet-4-6');
+  });
+
+  test('survives malformed current-routes.json without crashing', () => {
+    writeFileSync(join(tmpDir, 'current-routes.json'), '{bad');
+
+    const ccJson = JSON.stringify({
+      workspace: { current_dir: '/home/user/proj' },
+      model: { id: 'sonnet:claude-sonnet-4-6' },
+      effort: { level: 'medium' },
+      context_window: { total_input_tokens: 500, max_input_tokens: 200000 },
+    });
+
+    const result = runStatusline({
+      stdin: ccJson,
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(stripAnsi(result.stdout)).toContain('500/0%');
+  });
+
+  test('survives missing slot-overrides.json gracefully', () => {
+    // No slot-overrides.json at all — model should be shown as-is.
+    const ccJson = JSON.stringify({
+      workspace: { current_dir: '/home/user/proj' },
+      model: { id: 'sonnet:claude-sonnet-4-6' },
+      effort: { level: 'medium' },
+      context_window: { total_input_tokens: 500, max_input_tokens: 200000 },
+    });
+
+    const result = runStatusline({
+      stdin: ccJson,
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(stripAnsi(result.stdout)).toContain('sonnet:claude-sonnet-4-6');
+  });
+
+  test('cc-spend file with garbage content falls back to 0', () => {
+    const todayKey = new Date().toLocaleDateString('da-DK');
+    const spendJson = { daily: { [todayKey]: { total: 0.05 } } };
+    writeFileSync(join(tmpDir, 'spend.json'), JSON.stringify(spendJson));
+    writeFileSync(join(tmpDir, 'cc-spend-test-garbage.json'), 'not-a-number');
+
+    const result = runStatusline({
+      stdin: makeCcJson(),
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        CLAUDE_CODE_SESSION_ID: 'test-garbage',
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const dollars = allDollars(stripAnsi(result.stdout));
+    // garbage → parseFloat(NaN) → || 0 → $0.00 session + $0.05 today
+    expect(dollars).toContain(0.0);
+    expect(dollars).toContain(0.05);
+  });
+
+  test('today spend of exactly 0 is not shown', () => {
+    const todayKey = new Date().toLocaleDateString('da-DK');
+    const spendJson = { daily: { [todayKey]: { total: 0 } } };
+    writeFileSync(join(tmpDir, 'spend.json'), JSON.stringify(spendJson));
+
+    const result = runStatusline({
+      stdin: makeCcJson(),
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        CLAUDE_CODE_SESSION_ID: 'test-zero-today',
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const dollars = allDollars(stripAnsi(result.stdout));
+    // Only $0.00 session spend, no $0.00 for today.
+    expect(dollars).toEqual([0.0]);
   });
 });
