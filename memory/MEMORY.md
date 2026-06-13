@@ -1,0 +1,14 @@
+- [QA Audit 2026-06-12](qa-audit-results.md) — 59 fixes across 14 files, 5 false positives
+- [Never Kill Proxy](project-never-kill-proxy.md) — CRITICAL: killing the proxy kills your session. Hot-reload instead.
+- [Claude Code Compaction Internals](claude-code-compaction-internals.md) — How CC determines context window and auto-compaction (PV, ii, BKH, [1m])
+- [Anthropic Protocol Reference](anthropic-protocol-reference.md) — Messages API: content blocks, streaming, tool use, thinking
+- [DeepSeek Protocol Reference](deepseek-protocol-reference.md) — OpenAI-compatible API: chat completions, reasoning_content, SSE stream
+- [Protocol Translation Issues](protocol-translation-issues.md) — 3 issues fixed (thinking injection, tool_choice none, model name lookup), 1 inherent
+- [Protocol Translation Architecture](protocol-translation-architecture.md) — Two code paths, data flow, key files
+- [DeepSeek Caching](deepseek-caching.md) — Automatic disk cache: 98% hit rate, 50× discount. Empirically verified on /anthropic.
+- [Response Metadata Translation](response-metadata-translation.md) — server_tool_use injection, cache token field mapping, feature parity across 4 code paths
+- [AI Model Lineage Tracking](ai-model-lineage-tracking.md) — What exists (and doesn't) for tracking LLM fine-tuning lineage/family trees
+- [WebSearch Provider Failure](claude-code-websearch-provider-failure.md) — Root cause: thinking block fingerprint cache bug → DeepSeek 400. Fixed in thinking-cache + reasoning-cache.
+- [Fingerprint Cache Key Antipattern](fingerprint-cache-key-antipattern.md) — Don't use last-N-message fingerprints as cache keys. Sliding window shifts between turns.
+- [Model Trust for Server Tool Use](model-trust-for-server-tool-use.md) — CC ignores server_tool_use unless response model starts with claude-; proxy rewrites it
+- [Safe Proxy Restart](safe-proxy-restart.md) — Detached restart kills session; use --watch or restart from another terminal
