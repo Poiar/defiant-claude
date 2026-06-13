@@ -423,7 +423,7 @@ interface TransformerState {
     serverToolUse: { web_search_requests: number; web_fetch_requests: number };
 }
 
-export function createStreamTransformer(model: string, preExecutedSearches: number = 0): Transform {
+export function createStreamTransformer(model: string): Transform {
     const state: TransformerState = {
         started: false,
         finished: false,
@@ -434,7 +434,7 @@ export function createStreamTransformer(model: string, preExecutedSearches: numb
         messageId: `msg_${crypto.randomUUID()}`,
         model,
         usage: { input_tokens: 0, output_tokens: 0 },
-        serverToolUse: { web_search_requests: preExecutedSearches, web_fetch_requests: 0 },
+        serverToolUse: { web_search_requests: 0, web_fetch_requests: 0 },
     };
 
     function emit(eventType: string, data: Record<string, unknown>): string {
