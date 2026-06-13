@@ -1307,7 +1307,13 @@ if (probeIdx >= 2) {
               // Attach Anthropic SSE interceptor for streaming requests so
               // web_search/web_fetch tool counts are injected into usage.
               if (reqParsed.stream && !streamTransformer) {
-                streamTransformer = createAnthropicStreamInterceptor();
+                const ccModel =
+                  (parsedBody && typeof (parsedBody as Record<string, unknown>).model === 'string'
+                    ? ((parsedBody as Record<string, unknown>).model as string)
+                    : null) ||
+                  model ||
+                  null;
+                streamTransformer = createAnthropicStreamInterceptor(0, ccModel);
               }
             } catch (e) {
               log.error(reqId, 'thinking injection error: ' + truncateForLog((e as Error).message));

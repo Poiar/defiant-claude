@@ -752,13 +752,21 @@ export function createStreamTransformer(model: string): Transform {
 // start-proxy.ts (pre-execute → return results immediately), so the
 // interceptor no longer needs to inject server_tool_use counts.
 
-export function createAnthropicStreamInterceptor(_preExecutedSearches: number = 0): Transform {
+export function createAnthropicStreamInterceptor(
+  _preExecutedSearches: number = 0,
+  originalModel?: string | null,
+): Transform {
   let buf = '';
   let wsCount = _preExecutedSearches; // web_search count
   let wfCount = 0; // web_fetch count
   // Hold back the message_delta event so we can inject server_tool_use
   // into its usage field after we've counted all tool_use blocks.
   let heldDelta: string | null = null;
+  // Strip slot prefix (haiku:claude-haiku-4-5-20251001 -> claude-haiku-4-5-20251001)
+  const ccModel = originalModel
+    ? (originalModel.match(/^[a-z]+:(.+)$/) || [null, originalModel])[1]
+    : null;
+  let modelRewritten = false;
 
   class Interceptor extends Transform {
     _transform(chunk: Buffer | string, _encoding: string, callback: TransformCallback): void {
@@ -777,6 +785,29 @@ export function createAnthropicStreamInterceptor(_preExecutedSearches: number = 
         if (!trimmed) {
           output += '\n\n';
           continue;
+        }
+
+        // Rewrite model in message_start so CC trusts server_tool_use.
+        if (!modelRewritten && ccModel) {
+          const msMatch = trimmed.match(/^event: message_start\ndata: (.+)$/m);
+          if (msMatch) {
+            try {
+              const d = JSON.parse(msMatch[1]);
+              const upstreamModel = d.message?.model;
+              if (
+                upstreamModel &&
+                typeof upstreamModel === 'string' &&
+                !upstreamModel.startsWith('claude-')
+              ) {
+                d.message.model = ccModel;
+                modelRewritten = true;
+                output += 'event: message_start\ndata: ' + JSON.stringify(d) + '\n\n';
+                continue;
+              }
+            } catch (_) {
+              /* non-fatal */
+            }
+          }
         }
 
         // Count web_search / web_fetch tool_use blocks
