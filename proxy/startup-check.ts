@@ -6,12 +6,13 @@ import fs from 'fs';
 import path from 'path';
 import { deduplicatePath } from './util';
 import { createLogger } from './log';
+import { resolveProviderKey } from './config';
 
 const log = createLogger('startup-check');
 
 const STARTUP_CHECK_TIMEOUT = 5000;
 const PROBE_BODY_ANTHROPIC = JSON.stringify({
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-sonnet-4-6',
     messages: [{ role: 'user', content: 'hi' }],
     max_tokens: 1,
 });
@@ -21,7 +22,7 @@ const PROBE_BODY_OPENAI = JSON.stringify({
     max_tokens: 1,
 });
 const PROBE_BODY_ANTHROPIC_STREAM = JSON.stringify({
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-sonnet-4-6',
     messages: [{ role: 'user', content: 'hi' }],
     max_tokens: 1,
     stream: true,
@@ -394,7 +395,7 @@ export async function runStartupChecks(): Promise<StartUpCheckSummary> {
     // so it does not double the startup time.
     const probePromises = providerKeys.map((key) => {
         const def = providersData[key];
-        const apiKey = def.keyEnv ? process.env[def.keyEnv] : undefined;
+        const apiKey = def.keyEnv ? resolveProviderKey(def.keyEnv) : undefined;
         const pName = def.displayName || key;
         const pAuth = def.authHeader || def.auth || 'x-api-key';
         const pFmt = def.wireFormat || 'anthropic';
