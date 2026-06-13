@@ -795,15 +795,18 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                             log.info(reqId, 'web search: ' + truncateForLog(searchQuery));
                             const searchResults = await webSearch(searchQuery);
 
-                            // Return SSE with server_tool_use in message_delta.usage
-                            // (CC reads it there for the "Did N searches" counter)
+                            // Return SSE with server_tool_use AND a synthetic
+                            // tool_use block — CC needs both for the counter
                             if (!res.headersSent && !res.destroyed) {
                                 const se = (e: string, d: unknown) => 'event: ' + e + '\ndata: ' + JSON.stringify(d) + '\n\n';
                                 let sse = '';
-                                sse += se('message_start', { type: 'message_start', message: { id: 'msg_search', type: 'message', role: 'assistant', model: model || '', content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 0, output_tokens: 0 } } });
-                                sse += se('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } });
-                                sse += se('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: searchResults } });
+                                sse += se('message_start', { type: 'message_start', message: { id: 'msg_search', type: 'message', role: 'assistant', model: model || '', content: [{ type: 'tool_use', id: 'toolu_search_1', name: 'web_search', input: {} }], stop_reason: null, stop_sequence: null, usage: { input_tokens: 0, output_tokens: 0 } } });
+                                sse += se('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'toolu_search_1', name: 'web_search', input: {} } });
+                                sse += se('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{"query":"' + searchQuery + '"}' } });
                                 sse += se('content_block_stop', { type: 'content_block_stop', index: 0 });
+                                sse += se('content_block_start', { type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } });
+                                sse += se('content_block_delta', { type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: searchResults } });
+                                sse += se('content_block_stop', { type: 'content_block_stop', index: 1 });
                                 sse += se('message_delta', { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 100, server_tool_use: { web_search_requests: 1, web_fetch_requests: 0 } } });
                                 sse += se('message_stop', { type: 'message_stop' });
                                 res.writeHead(200, { 'content-type': 'text/event-stream' });
