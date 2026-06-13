@@ -536,6 +536,114 @@ describe('statusline proxy port', () => {
   });
 });
 
+describe('statusline output format', () => {
+  test('all group separators are single spaces — no consecutive spaces', () => {
+    const result = runStatusline({
+      stdin: makeCcJson(),
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    // CC renders 2+ consecutive spaces as · (visible dot).
+    expect(stripAnsi(result.stdout)).not.toMatch(/\s{2,}/);
+  });
+
+  test('output follows deepclaude <branch> <slot> <model> <effort> <context> <$session> <$today> <port>', () => {
+    const d2 = new Date();
+    const todayKey = `${d2.getFullYear()}-${String(d2.getMonth() + 1).padStart(2, '0')}-${String(d2.getDate()).padStart(2, '0')}`;
+    const spendJson = {
+      daily: {
+        [todayKey]: {
+          total: 1.23,
+          byProvider: { ds: 1.23 },
+        },
+      },
+    };
+    writeFileSync(join(tmpDir, 'proxy.json'), JSON.stringify({ pid: 12345, port: 50000 }));
+    writeFileSync(join(tmpDir, 'spend.json'), JSON.stringify(spendJson));
+    writeFileSync(
+      join(tmpDir, 'slot-overrides.json'),
+      JSON.stringify({ fable: 'ds:deepseek-v4-pro' }),
+    );
+    writeFileSync(join(tmpDir, 'cc-spend-test-fmt.json'), '0.45');
+
+    const ccJson = JSON.stringify({
+      workspace: { current_dir: '/home/user/deepclaude' },
+      model: { id: 'fable:deepseek-v4-pro' },
+      effort: { level: 'max' },
+      context_window: { total_input_tokens: 91000, max_input_tokens: 1000000 },
+    });
+
+    const result = runStatusline({
+      stdin: ccJson,
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        CLAUDE_CODE_SESSION_ID: 'test-fmt',
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const plain = stripAnsi(result.stdout);
+    // Rough structure: dir branch slot model effort context $session $today port
+    expect(plain).toMatch(/deepclaude\s+main\s+f\s+ds:deepseek-v4-pro\s+max\s+\d+k\/\d+%\s+\$/);
+    expect(plain).toContain('$0.45');
+    expect(plain).toContain('$1.23');
+    expect(plain).toContain('50000');
+  });
+
+  test('no doubled spaces when spend group has only session (today is 0)', () => {
+    const d2 = new Date();
+    const todayKey = `${d2.getFullYear()}-${String(d2.getMonth() + 1).padStart(2, '0')}-${String(d2.getDate()).padStart(2, '0')}`;
+    writeFileSync(join(tmpDir, 'proxy.json'), JSON.stringify({ pid: 12345, port: 50000 }));
+    writeFileSync(
+      join(tmpDir, 'spend.json'),
+      JSON.stringify({ daily: { [todayKey]: { total: 0 } } }),
+    );
+    writeFileSync(join(tmpDir, 'cc-spend-test-no-today.json'), '0.45');
+
+    const result = runStatusline({
+      stdin: makeCcJson(),
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        CLAUDE_CODE_SESSION_ID: 'test-no-today',
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    // No doubled spaces.
+    expect(stripAnsi(result.stdout)).not.toMatch(/\s{2,}/);
+  });
+
+  test('no doubled spaces when only proxy port (no spend data at all)', () => {
+    writeFileSync(join(tmpDir, 'proxy.json'), JSON.stringify({ pid: 12345, port: 50000 }));
+    // No spend.json — spend group should have only the port.
+
+    const result = runStatusline({
+      stdin: makeCcJson(),
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(stripAnsi(result.stdout)).not.toMatch(/\s{2,}/);
+  });
+});
+
 describe('statusline output assembly', () => {
   test('strips hex-only model keys from output', () => {
     // A model key that is purely hex (like a hashed key) should be stripped.
@@ -588,8 +696,9 @@ describe('statusline output assembly', () => {
     }
   });
 
-  test('effort level colors: high=red, medium=yellow, low=blue', () => {
+  test('effort level colors: max/high=red, medium=yellow, low=blue', () => {
     const cases: [string, string][] = [
+      ['max', '38;2;255;80;80'],
       ['high', '38;2;255;80;80'],
       ['medium', '38;2;255;180;50'],
       ['low', '38;2;100;160;255'],

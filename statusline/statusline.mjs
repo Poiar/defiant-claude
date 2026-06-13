@@ -121,7 +121,7 @@ async function main() {
 
   // ── Colors ──────────────────────────────────────────────────
   const effortColor =
-    effort === 'high'
+    effort === 'high' || effort === 'max'
       ? fg(255, 80, 80)
       : effort === 'medium'
         ? fg(255, 180, 50)
