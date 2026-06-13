@@ -251,7 +251,7 @@ async function syncProviderInfo(routing: RoutingConfig): Promise<void> {
     for (const [key, provider] of Object.entries(routing.providers)) {
         const rawKey = resolveProviderKey(provider.keyEnv || '') || provider.key;
         const resolvedKey = await resolveKey(rawKey);
-        const probeModel = (provider.format || 'anthropic') === 'openai' ? 'gpt-4o-mini' : 'claude-sonnet-4-20250514';
+        const probeModel = (provider.format || 'anthropic') === 'openai' ? 'gpt-4o-mini' : 'claude-sonnet-4-6';
         registerProviderInfo(key, {
             url: provider.url,
             key: resolvedKey,
