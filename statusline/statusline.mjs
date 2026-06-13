@@ -21,17 +21,25 @@ async function readStdin() {
 async function main() {
   // ── Read CC JSON from stdin ──────────────────────────────────
   let raw;
-  try { raw = await readStdin(); } catch (_) { return; }
+  try {
+    raw = await readStdin();
+  } catch (_) {
+    return;
+  }
   if (!raw) return;
   let d;
-  try { d = JSON.parse(raw); } catch (_) { return; }
+  try {
+    d = JSON.parse(raw);
+  } catch (_) {
+    return;
+  }
 
   // ── Helpers ─────────────────────────────────────────────────
-  const fg    = (r, g, b) => `\x1b[38;2;${r};${g};${b}m`;
+  const fg = (r, g, b) => `\x1b[38;2;${r};${g};${b}m`;
   const reset = '\x1b[0m';
-  const bold  = '\x1b[1m';
+  const bold = '\x1b[1m';
   const narrow = '  ';
-  const wide   = '     ';
+  const wide = '     ';
 
   // ── Location ─────────────────────────────────────────────────
   const cwd = d?.workspace?.current_dir || d?.cwd || '';
@@ -41,10 +49,11 @@ async function main() {
   let branch = process.env.GIT_BRANCH || '';
   if (!branch && cwd) {
     try {
-      branch = execSync(
-        `git -C "${cwd}" --no-optional-locks rev-parse --abbrev-ref HEAD`,
-        { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'], timeout: 2000 }
-      ).trim();
+      branch = execSync(`git -C "${cwd}" --no-optional-locks rev-parse --abbrev-ref HEAD`, {
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'ignore'],
+        timeout: 2000,
+      }).trim();
     } catch (_) {}
   }
 
@@ -63,7 +72,14 @@ async function main() {
       if (slotMatch) {
         const slot = slotMatch[1];
         const fallback = slotMatch[2];
-        const abbr = { opus: 'o', sonnet: 's', haiku: 'h', sub: 'sub', subagent: 'sub', fable: 'f' };
+        const abbr = {
+          opus: 'o',
+          sonnet: 's',
+          haiku: 'h',
+          sub: 'sub',
+          subagent: 'sub',
+          fable: 'f',
+        };
         slotLabel = (abbr[slot] || slot) + ' ';
         model = overrides[slot] || fallback;
         if (!overrides[slot] && (slot === 'sub' || slot === 'subagent')) {
@@ -96,26 +112,27 @@ async function main() {
   } catch (_) {}
 
   const maxTokens = d?.context_window?.max_input_tokens || ctxMap[modelLookup];
-  const tokStr = tokens != null
-    ? (tokens >= 1000 ? Math.round(tokens / 1000) + 'k' : String(tokens))
-    : '';
+  const tokStr =
+    tokens != null ? (tokens >= 1000 ? Math.round(tokens / 1000) + 'k' : String(tokens)) : '';
   let pct = null;
   if (tokens != null && maxTokens != null && maxTokens > 0) {
     pct = Math.round((tokens / maxTokens) * 100);
   }
-  const ctxStr = tokStr + (
-    tokStr && pct != null ? '/' + pct + '%'
-    : pct != null ? pct + '%'
-    : ''
-  );
+  const ctxStr = tokStr + (tokStr && pct != null ? '/' + pct + '%' : pct != null ? pct + '%' : '');
 
   // ── Colors ──────────────────────────────────────────────────
-  const effortColor = effort === 'high' ? fg(255, 80, 80)
-    : effort === 'medium' ? fg(255, 180, 50)
-    : fg(100, 160, 255);
-  const ctxColor = (pct != null && pct >= 80) ? fg(255, 80, 80)
-    : (pct != null && pct >= 50) ? fg(255, 180, 50)
-    : fg(80, 200, 120);
+  const effortColor =
+    effort === 'high'
+      ? fg(255, 80, 80)
+      : effort === 'medium'
+        ? fg(255, 180, 50)
+        : fg(100, 160, 255);
+  const ctxColor =
+    pct != null && pct >= 80
+      ? fg(255, 80, 80)
+      : pct != null && pct >= 50
+        ? fg(255, 180, 50)
+        : fg(80, 200, 120);
 
   // ── Health check (fire now, await later) ───────────────────
   let proxyPort = 0;
@@ -138,21 +155,24 @@ async function main() {
     if (proxyCfg && proxyCfg.port > 0) {
       proxyPort = proxyCfg.port;
       healthPromise = new Promise((resolve) => {
-        const req = get(
-          `http://127.0.0.1:${proxyCfg.port}/health`,
-            { timeout: 1000 },
-            (res) => {
-              let data = '';
-              res.on('data', chunk => data += chunk);
-              res.on('end', () => {
-                try { resolve(JSON.parse(data)); } catch (_) { resolve(null); }
-              });
+        const req = get(`http://127.0.0.1:${proxyCfg.port}/health`, { timeout: 1000 }, (res) => {
+          let data = '';
+          res.on('data', (chunk) => (data += chunk));
+          res.on('end', () => {
+            try {
+              resolve(JSON.parse(data));
+            } catch (_) {
+              resolve(null);
             }
-          );
-          req.on('error', () => resolve(null));
-          req.on('timeout', () => { req.destroy(); resolve(null); });
+          });
         });
-      }
+        req.on('error', () => resolve(null));
+        req.on('timeout', () => {
+          req.destroy();
+          resolve(null);
+        });
+      });
+    }
   } catch (_) {}
 
   // ── Spend data (while health check is in-flight) ───────────
@@ -167,15 +187,10 @@ async function main() {
         try {
           writeFileSync(
             join(deepclaudeDir, 'cc-active.json'),
-            JSON.stringify({ sessionId: ccSessId, timestamp: Date.now() })
+            JSON.stringify({ sessionId: ccSessId, timestamp: Date.now() }),
           );
         } catch (_) {}
       }
-
-      const proxySessionTotal =
-        (spendData.sessions && spendData.sessions[0] && spendData.sessions[0].total)
-          ? spendData.sessions[0].total
-          : (spendData.total || 0);
 
       let sessionSpend = 0;
       if (ccSessId) {
@@ -183,37 +198,37 @@ async function main() {
         try {
           if (existsSync(ccSpendPath)) {
             sessionSpend = parseFloat(readFileSync(ccSpendPath, 'utf8').trim()) || 0;
-          } else {
-            sessionSpend = proxySessionTotal;
           }
-        } catch (_) { sessionSpend = proxySessionTotal; }
-      } else {
-        sessionSpend = proxySessionTotal;
+          // No fallback: a fresh session starts at $0.00.
+          // The cc-spend file is created on the first spend flush.
+        } catch (_) {
+          /* stay 0 */
+        }
       }
 
       // Use local date (da-DK locale = YYYY-MM-DD) to match stats.ts writer.
       // toISOString() would give UTC which can differ from local by a day.
       const todayKey = new Date().toLocaleDateString('da-DK');
       const todaySpend =
-        (spendData.daily && spendData.daily[todayKey] && spendData.daily[todayKey].total)
-          ? spendData.daily[todayKey].total : 0;
+        spendData.daily && spendData.daily[todayKey] && spendData.daily[todayKey].total
+          ? spendData.daily[todayKey].total
+          : 0;
 
-      // Session spend (yellow, left) — resets on proxy restart.
+      // Session spend (yellow, left) — per-session, resets on new CC window.
       // Today's spend (grey, right) — resets at midnight local time.
-      // These are independent; show whichever is available.
-      if (sessionSpend > 0 || todaySpend > 0) {
-        const parts = [];
-        if (sessionSpend > 0) {
-          parts.push(bold + fg(255, 210, 80) + '$' + Number(sessionSpend).toFixed(2) + reset);
-        }
-        if (todaySpend > 0) {
-          parts.push(fg(120, 120, 120) + '$' + Number(todaySpend).toFixed(2) + reset);
-        }
-        spendGroup = parts.join(' ');
+      // Show session spend at $0.00 for active sessions so the user sees tracking is live.
+      const parts = [];
+      if (ccSessId) {
+        parts.push(bold + fg(255, 210, 80) + '$' + Number(sessionSpend).toFixed(2) + reset);
       }
-      if (proxyPort > 0) spendGroup = spendGroup
-        ? spendGroup + ' ' + fg(90, 90, 90) + proxyPort + reset
-        : fg(90, 90, 90) + proxyPort + reset;
+      if (todaySpend > 0) {
+        parts.push(fg(120, 120, 120) + '$' + Number(todaySpend).toFixed(2) + reset);
+      }
+      if (parts.length > 0) spendGroup = parts.join(' ');
+      if (proxyPort > 0)
+        spendGroup = spendGroup
+          ? spendGroup + ' ' + fg(90, 90, 90) + proxyPort + reset
+          : fg(90, 90, 90) + proxyPort + reset;
     }
   } catch (_) {}
 
@@ -229,7 +244,10 @@ async function main() {
         let hasData = false;
         for (const v of Object.values(health.providers)) {
           if (v.requests > 0) hasData = true;
-          if (v.circuitBreaker === 'OPEN') { worstState = 'OPEN'; break; }
+          if (v.circuitBreaker === 'OPEN') {
+            worstState = 'OPEN';
+            break;
+          }
           if (v.circuitBreaker === 'HALF_OPEN' && worstState !== 'OPEN') {
             worstState = 'HALF_OPEN';
           }
@@ -242,15 +260,14 @@ async function main() {
       }
       if (health && health.lastFallback) {
         const ageMin = Math.round(
-          (Date.now() - new Date(health.lastFallback.at).getTime()) / 60000
+          (Date.now() - new Date(health.lastFallback.at).getTime()) / 60000,
         );
         if (ageMin < 10) {
           parts.push(bold + fg(255, 180, 50) + '↳' + health.lastFallback.to + reset);
         }
       }
       if (health && health.budgetWarning && health.budgetWarning.level !== 'info') {
-        const color = health.budgetWarning.level === 'red'
-          ? fg(255, 80, 80) : fg(255, 180, 50);
+        const color = health.budgetWarning.level === 'red' ? fg(255, 80, 80) : fg(255, 180, 50);
         parts.push(bold + color + '⚠ ' + health.budgetWarning.message + reset);
       }
     } catch (_) {}
@@ -260,16 +277,19 @@ async function main() {
   // ── Assemble groups ────────────────────────────────────────
   const locationGroup = [
     dirName ? bold + fg(100, 180, 255) + dirName + reset : '',
-    branch  ? bold + fg(255, 80, 180)  + branch + reset : '',
-  ].filter(Boolean).join(narrow);
+    branch ? bold + fg(255, 80, 180) + branch + reset : '',
+  ]
+    .filter(Boolean)
+    .join(narrow);
 
   const displayModel = /^[a-f0-9]{6,}$/.test(modelKey) ? '' : modelKey;
   const modelGroup = [
-    (slotLabel || model)
-      ? bold + fg(200, 100, 255) + slotLabel + displayModel + reset : '',
+    slotLabel || model ? bold + fg(200, 100, 255) + slotLabel + displayModel + reset : '',
     effort ? bold + effortColor + effort + reset : '',
     cbIndicator,
-  ].filter(Boolean).join(narrow);
+  ]
+    .filter(Boolean)
+    .join(narrow);
 
   let ctxGroup = ctxStr ? bold + ctxColor + ctxStr + reset : '';
 
@@ -283,9 +303,11 @@ async function main() {
   }
 
   // ── Output ──────────────────────────────────────────────────
-  let output = [locationGroup, modelGroup, ctxGroup, spendGroup]
-    .filter(Boolean).join(wide);
-  output = output.replace(/\b[a-f0-9]{6,}\b/g, '').replace(/\s+/g, ' ').trim();
+  let output = [locationGroup, modelGroup, ctxGroup, spendGroup].filter(Boolean).join(wide);
+  output = output
+    .replace(/\b[a-f0-9]{6,}\b/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
   console.log(output);
 }
 
