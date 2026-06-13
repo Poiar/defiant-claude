@@ -9,658 +9,741 @@ const log = createLogger('protocol-translate');
 // --- Types ---
 
 interface ContentBlock {
-    type: string;
-    text?: string;
-    source?: { type?: string; media_type?: string; data?: string; url?: string };
-    name?: string;
-    id?: string;
-    input?: Record<string, unknown>;
-    thinking?: string;
-    signature?: string;
-    content?: string | ContentBlock[];
-    tool_use_id?: string;
-    title?: string;
-    file_name?: string;
+  type: string;
+  text?: string;
+  source?: { type?: string; media_type?: string; data?: string; url?: string };
+  name?: string;
+  id?: string;
+  input?: Record<string, unknown>;
+  thinking?: string;
+  signature?: string;
+  content?: string | ContentBlock[];
+  tool_use_id?: string;
+  title?: string;
+  file_name?: string;
 }
 
 interface AnthropicMessage {
-    role: string;
-    content: string | ContentBlock[];
+  role: string;
+  content: string | ContentBlock[];
 }
 
 interface AnthropicTool {
-    name: string;
-    description?: string;
-    input_schema: Record<string, unknown>;
+  name: string;
+  description?: string;
+  input_schema: Record<string, unknown>;
 }
 
 interface AnthropicRequestBody {
-    model: string;
-    messages: AnthropicMessage[];
-    stream?: boolean;
-    system?: string | ContentBlock[];
-    tools?: AnthropicTool[];
-    max_tokens?: number;
-    temperature?: number;
-    top_p?: number;
-    stop_sequences?: string[];
-    tool_choice?: unknown;
-    thinking?: { type: string; budget_tokens?: number };
+  model: string;
+  messages: AnthropicMessage[];
+  stream?: boolean;
+  system?: string | ContentBlock[];
+  tools?: AnthropicTool[];
+  max_tokens?: number;
+  temperature?: number;
+  top_p?: number;
+  stop_sequences?: string[];
+  tool_choice?: unknown;
+  thinking?: { type: string; budget_tokens?: number };
 }
 
 interface OpenAIToolCall {
-    id: string;
-    type: string;
-    function: { name: string; arguments: string };
+  id: string;
+  type: string;
+  function: { name: string; arguments: string };
 }
 
 interface OpenAIMessage {
-    role: string;
-    content?: string | Array<{ type: string; text?: string; image_url?: { url: string } }>;
-    tool_calls?: OpenAIToolCall[];
-    reasoning_content?: string;
+  role: string;
+  content?: string | Array<{ type: string; text?: string; image_url?: { url: string } }>;
+  tool_calls?: OpenAIToolCall[];
+  reasoning_content?: string;
 }
 
 interface OpenAIRequestBody {
-    model: string;
-    messages: OpenAIMessage[];
-    stream?: boolean;
-    stream_options?: { include_usage: boolean };
-    tools?: Array<{ type: string; function: { name: string; description: string; parameters: Record<string, unknown> } }>;
-    max_tokens?: number;
-    temperature?: number;
-    top_p?: number;
-    stop?: string[];
-    tool_choice?: unknown;
-    thinking?: { type: string; reasoning_effort?: string };
+  model: string;
+  messages: OpenAIMessage[];
+  stream?: boolean;
+  stream_options?: { include_usage: boolean };
+  tools?: Array<{
+    type: string;
+    function: { name: string; description: string; parameters: Record<string, unknown> };
+  }>;
+  max_tokens?: number;
+  temperature?: number;
+  top_p?: number;
+  stop?: string[];
+  tool_choice?: unknown;
+  thinking?: { type: string; reasoning_effort?: string };
 }
 
 interface OpenAIChoice {
-    index: number;
-    message?: OpenAIMessage;
-    finish_reason?: string;
-    delta?: {
-        role?: string;
-        content?: string;
-        reasoning_content?: string;
-        tool_calls?: Array<{
-            index?: number;
-            id?: string;
-            type?: string;
-            function?: { name?: string; arguments?: string };
-        }>;
-    };
+  index: number;
+  message?: OpenAIMessage;
+  finish_reason?: string;
+  delta?: {
+    role?: string;
+    content?: string;
+    reasoning_content?: string;
+    tool_calls?: Array<{
+      index?: number;
+      id?: string;
+      type?: string;
+      function?: { name?: string; arguments?: string };
+    }>;
+  };
 }
 
 interface OpenAIResponseBody {
-    id?: string;
-    choices?: OpenAIChoice[];
-    usage?: {
-        prompt_tokens?: number;
-        completion_tokens?: number;
-        total_tokens?: number;
-    };
-    model?: string;
+  id?: string;
+  choices?: OpenAIChoice[];
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+  };
+  model?: string;
 }
 
 // --- Translation helpers ---
 
 function mapFinishReason(reason: string | null | undefined): string {
-    const map: Record<string, string> = { stop: 'end_turn', tool_calls: 'tool_use', length: 'max_tokens', content_filter: 'content_filter' };
-    return (reason && map[reason]) || 'end_turn';
+  const map: Record<string, string> = {
+    stop: 'end_turn',
+    tool_calls: 'tool_use',
+    length: 'max_tokens',
+    content_filter: 'content_filter',
+  };
+  return (reason && map[reason]) || 'end_turn';
 }
 
 function stringifyContent(content: string | ContentBlock[] | null | undefined): string {
-    if (typeof content === 'string') return content;
-    if (Array.isArray(content)) {
-        // When content contains non-text blocks (tool_use, image), serialize
-        // the full structure as JSON so downstream models receive complete data.
-        const hasNonText = content.some(b => b.type !== 'text');
-        if (hasNonText) {
-            return JSON.stringify(content);
-        }
-        const parts: string[] = [];
-        for (const b of content) {
-            if (b.type === 'text') {
-                parts.push(b.text || '');
-            } else if (b.type === 'image' && b.source) {
-                parts.push(`[Image: ${b.source.type || 'base64'}, data length: ${(b.source.data || '').length}]`);
-            } else if (b.type === 'tool_use') {
-                parts.push(`[Tool call: ${b.name || 'unknown'}(${JSON.stringify(b.input || {})})]`);
-            }
-        }
-        return parts.join('\n');
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    // When content contains non-text blocks (tool_use, image), serialize
+    // the full structure as JSON so downstream models receive complete data.
+    const hasNonText = content.some((b) => b.type !== 'text');
+    if (hasNonText) {
+      return JSON.stringify(content);
     }
-    return String(content);
+    const parts: string[] = [];
+    for (const b of content) {
+      if (b.type === 'text') {
+        parts.push(b.text || '');
+      } else if (b.type === 'image' && b.source) {
+        parts.push(
+          `[Image: ${b.source.type || 'base64'}, data length: ${(b.source.data || '').length}]`,
+        );
+      } else if (b.type === 'tool_use') {
+        parts.push(`[Tool call: ${b.name || 'unknown'}(${JSON.stringify(b.input || {})})]`);
+      }
+    }
+    return parts.join('\n');
+  }
+  return String(content);
 }
 
 // --- Request translation ---
 
-export function translateRequest(anthropicBody: AnthropicRequestBody): { openaiBody: OpenAIRequestBody; model: string } {
-    const model = anthropicBody.model;
-    const openaiBody: OpenAIRequestBody = {
-        model,
-        messages: [],
-        stream: anthropicBody.stream || false,
-    };
+export function translateRequest(anthropicBody: AnthropicRequestBody): {
+  openaiBody: OpenAIRequestBody;
+  model: string;
+} {
+  const model = anthropicBody.model;
+  const openaiBody: OpenAIRequestBody = {
+    model,
+    messages: [],
+    stream: anthropicBody.stream || false,
+  };
 
-    if (anthropicBody.system) {
-        let systemContent = '';
-        if (typeof anthropicBody.system === 'string') {
-            systemContent = anthropicBody.system;
-        } else if (Array.isArray(anthropicBody.system)) {
-            const textBlocks = anthropicBody.system.filter((b: ContentBlock) => b.type === 'text');
-            if (textBlocks.length < anthropicBody.system.length) {
-                log.warn(null, 'system prompt: ' + (anthropicBody.system.length - textBlocks.length) + ' non-text block(s) filtered out (only text blocks are forwarded to OpenAI-compatible providers)');
-            }
-            systemContent = textBlocks
-                .map((b: ContentBlock) => b.text)
-                .join('\n');
-        }
-        if (systemContent) {
-            openaiBody.messages.unshift({ role: 'system', content: systemContent });
-        }
+  if (anthropicBody.system) {
+    let systemContent = '';
+    if (typeof anthropicBody.system === 'string') {
+      systemContent = anthropicBody.system;
+    } else if (Array.isArray(anthropicBody.system)) {
+      const textBlocks = anthropicBody.system.filter((b: ContentBlock) => b.type === 'text');
+      if (textBlocks.length < anthropicBody.system.length) {
+        log.warn(
+          null,
+          'system prompt: ' +
+            (anthropicBody.system.length - textBlocks.length) +
+            ' non-text block(s) filtered out (only text blocks are forwarded to OpenAI-compatible providers)',
+        );
+      }
+      systemContent = textBlocks.map((b: ContentBlock) => b.text).join('\n');
     }
-
-    for (const msg of anthropicBody.messages) {
-        const converted = convertMessage(msg);
-        if (Array.isArray(converted)) {
-            openaiBody.messages.push(...converted);
-        } else {
-            openaiBody.messages.push(converted);
-        }
+    if (systemContent) {
+      openaiBody.messages.unshift({ role: 'system', content: systemContent });
     }
+  }
 
-    if (anthropicBody.tools && anthropicBody.tools.length) {
-        openaiBody.tools = anthropicBody.tools.map(t => ({
-            type: 'function',
-            function: { name: t.name, description: t.description || '', parameters: t.input_schema },
-        }));
+  for (const msg of anthropicBody.messages) {
+    const converted = convertMessage(msg);
+    if (Array.isArray(converted)) {
+      openaiBody.messages.push(...converted);
+    } else {
+      openaiBody.messages.push(converted);
     }
+  }
 
-    if (anthropicBody.max_tokens !== undefined) openaiBody.max_tokens = anthropicBody.max_tokens;
-    if (anthropicBody.temperature !== undefined) openaiBody.temperature = anthropicBody.temperature;
-    if (anthropicBody.top_p !== undefined) openaiBody.top_p = anthropicBody.top_p;
-    // top_k and metadata are Anthropic-specific — not forwarded to OpenAI providers
-    // as they cause 400 errors on standard OpenAI-compatible endpoints.
-    if (anthropicBody.stop_sequences && anthropicBody.stop_sequences.length) {
-        openaiBody.stop = anthropicBody.stop_sequences;
-    }
-    if (anthropicBody.tool_choice !== undefined) {
-        openaiBody.tool_choice = translateToolChoice(anthropicBody.tool_choice);
-    }
+  if (anthropicBody.tools && anthropicBody.tools.length) {
+    openaiBody.tools = anthropicBody.tools.map((t) => ({
+      type: 'function',
+      function: { name: t.name, description: t.description || '', parameters: t.input_schema },
+    }));
+  }
 
-    // Request stream usage reporting from OpenAI-compatible providers.
-    // This adds `usage` to the final SSE chunk, which forward.ts extracts.
-    if (openaiBody.stream) {
-        openaiBody.stream_options = { include_usage: true };
-    }
+  if (anthropicBody.max_tokens !== undefined) openaiBody.max_tokens = anthropicBody.max_tokens;
+  if (anthropicBody.temperature !== undefined) openaiBody.temperature = anthropicBody.temperature;
+  if (anthropicBody.top_p !== undefined) openaiBody.top_p = anthropicBody.top_p;
+  // top_k and metadata are Anthropic-specific — not forwarded to OpenAI providers
+  // as they cause 400 errors on standard OpenAI-compatible endpoints.
+  if (anthropicBody.stop_sequences && anthropicBody.stop_sequences.length) {
+    openaiBody.stop = anthropicBody.stop_sequences;
+  }
+  if (anthropicBody.tool_choice !== undefined) {
+    openaiBody.tool_choice = translateToolChoice(anthropicBody.tool_choice);
+  }
 
-    // Note: thinking is NOT passed through to openaiBody here.
-    // start-proxy.ts reads budget_tokens from the original Anthropic request
-    // body and derives the correct reasoning_effort for the target provider.
-    // Passing it here would prevent start-proxy.ts from applying the mapping
-    // (the !openaiBody.thinking guard would short-circuit).
+  // Request stream usage reporting from OpenAI-compatible providers.
+  // This adds `usage` to the final SSE chunk, which forward.ts extracts.
+  if (openaiBody.stream) {
+    openaiBody.stream_options = { include_usage: true };
+  }
 
-    return { openaiBody, model };
+  // Note: thinking is NOT passed through to openaiBody here.
+  // start-proxy.ts reads budget_tokens from the original Anthropic request
+  // body and derives the correct reasoning_effort for the target provider.
+  // Passing it here would prevent start-proxy.ts from applying the mapping
+  // (the !openaiBody.thinking guard would short-circuit).
+
+  return { openaiBody, model };
 }
 
 function convertMessage(msg: AnthropicMessage): OpenAIMessage | OpenAIMessage[] {
-    if (msg.role === 'user') {
-        if (typeof msg.content === 'string') {
-            return { role: 'user', content: msg.content };
-        }
-        const contentBlocks = msg.content as ContentBlock[];
-        const toolResults = contentBlocks.filter(b => b.type === 'tool_result');
-        const textBlocks = contentBlocks.filter(b => b.type === 'text' && b.text);
-        if (toolResults.length > 0) {
-            // Filter out tool results without a valid tool_use_id to avoid
-            // OpenAI API 400 errors from an empty tool_call_id string.
-            const validToolResults = toolResults.filter(block => block.tool_use_id);
-            if (validToolResults.length < toolResults.length) {
-                log.warn(null, 'dropping ' + (toolResults.length - validToolResults.length) + ' tool_result(s) with missing tool_use_id');
-            }
-            const result: OpenAIMessage[] = validToolResults.map(block => {
-                // Normalize content before stringifyContent: null → '', string → pass,
-                // array → pass. Avoids producing the string "null" for undefined content.
-                const raw = block.content;
-                const normalized = (raw == null) ? '' : raw;
-                return {
-                    role: 'tool',
-                    tool_call_id: block.tool_use_id,
-                    content: stringifyContent(normalized as string | ContentBlock[]) || '',
-                };
-            });
-            if (textBlocks.length > 0) {
-                result.push({ role: 'user', content: textBlocks.map(b => b.text).join('\n') });
-            }
-            return result;
-        }
-        const hasImage = contentBlocks.some(b => b.type === 'image');
-        const hasDocument = contentBlocks.some(b => b.type === 'document');
-        if (hasImage || hasDocument) {
-            const content: Array<{ type: string; text?: string; image_url?: { url: string } }> = [];
-            for (const block of contentBlocks) {
-                if (block.type === 'text') {
-                    content.push({ type: 'text', text: block.text });
-                } else if (block.type === 'image' && block.source) {
-                    // Anthropic supports both 'base64' and 'url' source types.
-                    // URL sources pass the URL directly; base64 sources construct a data URI.
-                    if (block.source.type === 'url' && block.source.url) {
-                        content.push({
-                            type: 'image_url',
-                            image_url: { url: block.source.url as string },
-                        });
-                    } else {
-                        content.push({
-                            type: 'image_url',
-                            image_url: { url: `data:${block.source.media_type};base64,${block.source.data}` },
-                        });
-                    }
-                } else if (block.type === 'document' && block.source) {
-                    // Anthropic document blocks (PDFs, etc.) — pass as file data URIs.
-                    // OpenAI Chat Completions doesn't have a standard document content part,
-                    // so we emit a text annotation AND a data URI for providers that support it.
-                    const mediaType = block.source.media_type || 'application/octet-stream';
-                    const docName = block.title || block.file_name || 'document';
-                    if (block.source.type === 'url' && block.source.url) {
-                        const docUrl = block.source.url as string;
-                        content.push({ type: 'text', text: '[Attached document: ' + docName + ' (' + mediaType + ')]' });
-                        content.push({ type: 'image_url', image_url: { url: docUrl } });
-                    } else {
-                        content.push({
-                            type: 'image_url',
-                            image_url: { url: `data:${mediaType};base64,${block.source.data}` },
-                        });
-                        content.push({ type: 'text', text: '[Attached document: ' + docName + ' (' + mediaType + ', ' + Math.round((block.source.data || '').length * 3 / 4) + ' bytes)]' });
-                    }
-                }
-            }
-            return { role: 'user', content };
-        }
+  if (msg.role === 'user') {
+    if (typeof msg.content === 'string') {
+      return { role: 'user', content: msg.content };
+    }
+    const contentBlocks = msg.content as ContentBlock[];
+    const toolResults = contentBlocks.filter((b) => b.type === 'tool_result');
+    const textBlocks = contentBlocks.filter((b) => b.type === 'text' && b.text);
+    if (toolResults.length > 0) {
+      // Filter out tool results without a valid tool_use_id to avoid
+      // OpenAI API 400 errors from an empty tool_call_id string.
+      const validToolResults = toolResults.filter((block) => block.tool_use_id);
+      if (validToolResults.length < toolResults.length) {
+        log.warn(
+          null,
+          'dropping ' +
+            (toolResults.length - validToolResults.length) +
+            ' tool_result(s) with missing tool_use_id',
+        );
+      }
+      const result: OpenAIMessage[] = validToolResults.map((block) => {
+        // Normalize content before stringifyContent: null → '', string → pass,
+        // array → pass. Avoids producing the string "null" for undefined content.
+        const raw = block.content;
+        const normalized = raw == null ? '' : raw;
         return {
-            role: 'user',
-            content: contentBlocks.filter(b => b.type === 'text').map(b => b.text || '').join('\n'),
+          role: 'tool',
+          tool_call_id: block.tool_use_id,
+          content: stringifyContent(normalized as string | ContentBlock[]) || '',
         };
+      });
+      if (textBlocks.length > 0) {
+        result.push({ role: 'user', content: textBlocks.map((b) => b.text).join('\n') });
+      }
+      return result;
     }
-
-    if (msg.role === 'assistant') {
-        if (typeof msg.content === 'string') {
-            return { role: 'assistant', content: msg.content };
+    const hasImage = contentBlocks.some((b) => b.type === 'image');
+    const hasDocument = contentBlocks.some((b) => b.type === 'document');
+    if (hasImage || hasDocument) {
+      const content: Array<{ type: string; text?: string; image_url?: { url: string } }> = [];
+      for (const block of contentBlocks) {
+        if (block.type === 'text') {
+          content.push({ type: 'text', text: block.text });
+        } else if (block.type === 'image' && block.source) {
+          // Anthropic supports both 'base64' and 'url' source types.
+          // URL sources pass the URL directly; base64 sources construct a data URI.
+          if (block.source.type === 'url' && block.source.url) {
+            content.push({
+              type: 'image_url',
+              image_url: { url: block.source.url as string },
+            });
+          } else {
+            content.push({
+              type: 'image_url',
+              image_url: { url: `data:${block.source.media_type};base64,${block.source.data}` },
+            });
+          }
+        } else if (block.type === 'document' && block.source) {
+          // Anthropic document blocks (PDFs, etc.) — pass as file data URIs.
+          // OpenAI Chat Completions doesn't have a standard document content part,
+          // so we emit a text annotation AND a data URI for providers that support it.
+          const mediaType = block.source.media_type || 'application/octet-stream';
+          const docName = block.title || block.file_name || 'document';
+          if (block.source.type === 'url' && block.source.url) {
+            const docUrl = block.source.url as string;
+            content.push({
+              type: 'text',
+              text: '[Attached document: ' + docName + ' (' + mediaType + ')]',
+            });
+            content.push({ type: 'image_url', image_url: { url: docUrl } });
+          } else {
+            content.push({
+              type: 'image_url',
+              image_url: { url: `data:${mediaType};base64,${block.source.data}` },
+            });
+            content.push({
+              type: 'text',
+              text:
+                '[Attached document: ' +
+                docName +
+                ' (' +
+                mediaType +
+                ', ' +
+                Math.round(((block.source.data || '').length * 3) / 4) +
+                ' bytes)]',
+            });
+          }
         }
-        const contentBlocks = msg.content as ContentBlock[];
-        const textParts: string[] = [];
-        const toolCalls: OpenAIToolCall[] = [];
-        for (const block of contentBlocks) {
-            if (block.type === 'text') {
-                textParts.push(block.text || '');
-            } else if (block.type === 'tool_use') {
-                toolCalls.push({
-                    id: block.id || '',
-                    type: 'function',
-                    function: { name: block.name || '', arguments: JSON.stringify(block.input || {}) },
-                });
-            }
-        }
-        const result: OpenAIMessage = { role: 'assistant' };
-        if (textParts.length) result.content = textParts.join('\n');
-        if (toolCalls.length) result.tool_calls = toolCalls;
-        return result;
+      }
+      return { role: 'user', content };
     }
+    return {
+      role: 'user',
+      content: contentBlocks
+        .filter((b) => b.type === 'text')
+        .map((b) => b.text || '')
+        .join('\n'),
+    };
+  }
 
-    // Null/undefined content → omit content field entirely (valid OpenAI shape for
-    // pure tool_calls responses). String(content) would produce "null" or "undefined".
-    if (msg.content == null) return { role: msg.role };
-    return { role: msg.role, content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content) };
+  if (msg.role === 'assistant') {
+    if (typeof msg.content === 'string') {
+      return { role: 'assistant', content: msg.content };
+    }
+    const contentBlocks = msg.content as ContentBlock[];
+    const textParts: string[] = [];
+    const toolCalls: OpenAIToolCall[] = [];
+    for (const block of contentBlocks) {
+      if (block.type === 'text') {
+        textParts.push(block.text || '');
+      } else if (block.type === 'tool_use') {
+        toolCalls.push({
+          id: block.id || '',
+          type: 'function',
+          function: { name: block.name || '', arguments: JSON.stringify(block.input || {}) },
+        });
+      }
+    }
+    const result: OpenAIMessage = { role: 'assistant' };
+    if (textParts.length) result.content = textParts.join('\n');
+    if (toolCalls.length) result.tool_calls = toolCalls;
+    return result;
+  }
+
+  // Null/undefined content → omit content field entirely (valid OpenAI shape for
+  // pure tool_calls responses). String(content) would produce "null" or "undefined".
+  if (msg.content == null) return { role: msg.role };
+  return {
+    role: msg.role,
+    content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
+  };
 }
 
 function translateToolChoice(tc: unknown): unknown {
-    if (tc === 'auto' || tc === 'any') {
-        return tc === 'any' ? 'required' : 'auto';
+  if (tc === 'auto' || tc === 'any') {
+    return tc === 'any' ? 'required' : 'auto';
+  }
+  if (tc && typeof tc === 'object') {
+    const obj = tc as { type?: string; name?: string };
+    if (obj.type === 'auto') return 'auto';
+    // { type: 'any' } → 'required' (same as string 'any' shortcut)
+    if (obj.type === 'any') return 'required';
+    if (obj.type === 'none') return 'none';
+    if (obj.type === 'tool' && obj.name) {
+      return { type: 'function', function: { name: obj.name } };
     }
-    if (tc && typeof tc === 'object') {
-        const obj = tc as { type?: string; name?: string };
-        if (obj.type === 'auto') return 'auto';
-        // { type: 'any' } → 'required' (same as string 'any' shortcut)
-        if (obj.type === 'any') return 'required';
-        if (obj.type === 'none') return 'none';
-        if (obj.type === 'tool' && obj.name) {
-            return { type: 'function', function: { name: obj.name } };
-        }
-    }
-    return 'auto';
+  }
+  return 'auto';
 }
 
 // --- Response translation ---
 
-export function translateResponse(openaiBody: OpenAIResponseBody, model: string): Record<string, unknown> {
-    const choice = openaiBody.choices && openaiBody.choices[0];
-    const message: OpenAIMessage | undefined = choice ? choice.message : undefined;
-    const finishReason = choice ? choice.finish_reason : null;
-    const usage = openaiBody.usage || {};
+export function translateResponse(
+  openaiBody: OpenAIResponseBody,
+  model: string,
+): Record<string, unknown> {
+  const choice = openaiBody.choices && openaiBody.choices[0];
+  const message: OpenAIMessage | undefined = choice ? choice.message : undefined;
+  const finishReason = choice ? choice.finish_reason : null;
+  const usage = openaiBody.usage || {};
 
-    const content: ContentBlock[] = [];
+  const content: ContentBlock[] = [];
 
-    // Emit thinking block for non-streaming reasoning_content (DeepSeek R1, etc.)
-    if (message && message.reasoning_content && message.reasoning_content.length > 0) {
-        content.push({ type: 'thinking', thinking: message.reasoning_content, signature: '' });
+  // Emit thinking block for non-streaming reasoning_content (DeepSeek R1, etc.)
+  if (message && message.reasoning_content && message.reasoning_content.length > 0) {
+    content.push({ type: 'thinking', thinking: message.reasoning_content, signature: '' });
+  }
+
+  if (message && message.content != null) {
+    let contentText: string;
+    if (typeof message.content === 'string') {
+      contentText = message.content;
+    } else if (Array.isArray(message.content)) {
+      contentText = message.content.map((b: any) => b.text || '').join('\n');
+    } else {
+      contentText = String(message.content);
     }
-
-    if (message && message.content != null) {
-        let contentText: string;
-        if (typeof message.content === 'string') {
-            contentText = message.content;
-        } else if (Array.isArray(message.content)) {
-            contentText = message.content.map((b: any) => b.text || '').join('\n');
-        } else {
-            contentText = String(message.content);
-        }
-        // Skip empty text block when tool_calls are present — Anthropic clients
-        // expect content to contain only tool_use blocks for pure tool-call responses.
-        if (contentText.length > 0 || !(message.tool_calls && message.tool_calls.length > 0)) {
-            content.push({ type: 'text', text: contentText });
-        }
+    // Skip empty text block when tool_calls are present — Anthropic clients
+    // expect content to contain only tool_use blocks for pure tool-call responses.
+    if (contentText.length > 0 || !(message.tool_calls && message.tool_calls.length > 0)) {
+      content.push({ type: 'text', text: contentText });
     }
-    if (message && message.tool_calls) {
-        for (const tc of message.tool_calls) {
-            let input: Record<string, unknown> = {};
-            try { input = JSON.parse(tc.function.arguments || '{}'); } catch { /* malformed JSON, use default */ }
-            content.push({ type: 'tool_use', id: tc.id, name: tc.function.name, input });
-        }
+  }
+  if (message && message.tool_calls) {
+    for (const tc of message.tool_calls) {
+      let input: Record<string, unknown> = {};
+      try {
+        input = JSON.parse(tc.function.arguments || '{}');
+      } catch {
+        /* malformed JSON, use default */
+      }
+      content.push({ type: 'tool_use', id: tc.id, name: tc.function.name, input });
     }
+  }
 
-    // Count server-side tool use for Claude Code's "Did N searches" display.
-    // Claude Code reads usage.server_tool_use from the Anthropic response to set
-    // searchCount in toolUseResult. Without this the display always shows 0.
-    let webSearchRequests = 0;
-    let webFetchRequests = 0;
-    for (const block of content) {
-        if (block.type === 'tool_use') {
-            if (block.name === 'web_search') webSearchRequests++;
-            else if (block.name === 'web_fetch') webFetchRequests++;
-        }
+  // Count server-side tool use for Claude Code's "Did N searches" display.
+  // Claude Code reads usage.server_tool_use from the Anthropic response to set
+  // searchCount in toolUseResult. Without this the display always shows 0.
+  let webSearchRequests = 0;
+  let webFetchRequests = 0;
+  for (const block of content) {
+    if (block.type === 'tool_use') {
+      if (block.name === 'web_search') webSearchRequests++;
+      else if (block.name === 'web_fetch') webFetchRequests++;
     }
+  }
 
-    // Map cache tokens from OpenAI field names (prompt_cache_hit/miss) to
-    // Anthropic field names (cache_read/cache_creation_input_tokens) when present.
-    const usageAny = usage as any;
-    const hasCache = typeof usageAny.prompt_cache_hit_tokens === 'number';
+  // Map cache tokens from OpenAI field names (prompt_cache_hit/miss) to
+  // Anthropic field names (cache_read/cache_creation_input_tokens) when present.
+  const usageAny = usage as any;
+  const hasCache = typeof usageAny.prompt_cache_hit_tokens === 'number';
 
-    return {
-        id: openaiBody.id || `msg_${crypto.randomUUID()}`,
-        type: 'message',
-        model,
-        role: 'assistant',
-        content,
-        stop_reason: mapFinishReason(finishReason),
-        stop_sequence: null,
-        usage: {
-            input_tokens: usage.prompt_tokens || 0,
-            output_tokens: usage.completion_tokens || 0,
-            ...(hasCache ? {
-                cache_read_input_tokens: usageAny.prompt_cache_hit_tokens,
-                cache_creation_input_tokens: usageAny.prompt_cache_miss_tokens || 0,
-            } : {}),
-            ...(webSearchRequests > 0 || webFetchRequests > 0 ? {
-                server_tool_use: { web_search_requests: webSearchRequests, web_fetch_requests: webFetchRequests },
-            } : {}),
-        },
-    };
+  return {
+    id: openaiBody.id || `msg_${crypto.randomUUID()}`,
+    type: 'message',
+    model,
+    role: 'assistant',
+    content,
+    stop_reason: mapFinishReason(finishReason),
+    stop_sequence: null,
+    usage: {
+      input_tokens: usage.prompt_tokens || 0,
+      output_tokens: usage.completion_tokens || 0,
+      ...(hasCache
+        ? {
+            cache_read_input_tokens: usageAny.prompt_cache_hit_tokens,
+            cache_creation_input_tokens: usageAny.prompt_cache_miss_tokens || 0,
+          }
+        : {}),
+      ...(webSearchRequests > 0 || webFetchRequests > 0
+        ? {
+            server_tool_use: {
+              web_search_requests: webSearchRequests,
+              web_fetch_requests: webFetchRequests,
+            },
+          }
+        : {}),
+    },
+  };
 }
 
 // --- Streaming transformer ---
 
 interface TransformerState {
-    started: boolean;
-    finished: boolean;
-    blockIndex: number;
-    currentBlockType: string | null;
-    toolCallMap: Record<number, number>;
-    lastToolUseIdx: number;
-    messageId: string;
-    model: string;
-    usage: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number };
-    serverToolUse: { web_search_requests: number; web_fetch_requests: number };
+  started: boolean;
+  finished: boolean;
+  blockIndex: number;
+  currentBlockType: string | null;
+  toolCallMap: Record<number, number>;
+  lastToolUseIdx: number;
+  messageId: string;
+  model: string;
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
+  };
+  serverToolUse: { web_search_requests: number; web_fetch_requests: number };
 }
 
 export function createStreamTransformer(model: string): Transform {
-    const state: TransformerState = {
-        started: false,
-        finished: false,
-        blockIndex: 0,
-        currentBlockType: null,
-        toolCallMap: {},
-        lastToolUseIdx: -1,
-        messageId: `msg_${crypto.randomUUID()}`,
-        model,
+  const state: TransformerState = {
+    started: false,
+    finished: false,
+    blockIndex: 0,
+    currentBlockType: null,
+    toolCallMap: {},
+    lastToolUseIdx: -1,
+    messageId: `msg_${crypto.randomUUID()}`,
+    model,
+    usage: { input_tokens: 0, output_tokens: 0 },
+    serverToolUse: { web_search_requests: 0, web_fetch_requests: 0 },
+  };
+
+  function emit(eventType: string, data: Record<string, unknown>): string {
+    return `event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`;
+  }
+
+  function closeBlock(): string {
+    if (!state.currentBlockType) return '';
+    const idx = state.blockIndex - 1;
+    const blockType = state.currentBlockType;
+    state.currentBlockType = null;
+    let output = '';
+    if (blockType === 'thinking') {
+      output += emit('content_block_delta', {
+        type: 'content_block_delta',
+        index: idx,
+        delta: { type: 'signature_delta', signature: '' },
+      });
+    }
+    output += emit('content_block_stop', { type: 'content_block_stop', index: idx });
+    return output;
+  }
+
+  function openBlock(type: string, contentBlock: Record<string, unknown>): string {
+    const idx = state.blockIndex++;
+    state.currentBlockType = type;
+    return emit('content_block_start', {
+      type: 'content_block_start',
+      index: idx,
+      content_block: contentBlock,
+    });
+  }
+
+  function appendBlock(deltaType: string, delta: Record<string, unknown>): string {
+    const idx = state.blockIndex - 1;
+    return emit('content_block_delta', {
+      type: 'content_block_delta',
+      index: idx,
+      delta: { type: deltaType, ...delta },
+    });
+  }
+
+  function emitMessageStart(): string {
+    state.started = true;
+    return emit('message_start', {
+      type: 'message_start',
+      message: {
+        id: state.messageId,
+        type: 'message',
+        role: 'assistant',
+        content: [],
+        model: state.model,
+        stop_reason: null,
+        stop_sequence: null,
         usage: { input_tokens: 0, output_tokens: 0 },
-        serverToolUse: { web_search_requests: 0, web_fetch_requests: 0 },
-    };
+      },
+    });
+  }
 
-    function emit(eventType: string, data: Record<string, unknown>): string {
-        return `event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`;
+  function finishStream(stopReason: string): string {
+    let output = closeBlock();
+    const srv = state.serverToolUse;
+    const hasServerTools = srv.web_search_requests > 0 || srv.web_fetch_requests > 0;
+    const hasCache = typeof state.usage.cache_read_input_tokens === 'number';
+    output += emit('message_delta', {
+      type: 'message_delta',
+      delta: { stop_reason: stopReason, stop_sequence: null },
+      usage: {
+        output_tokens: state.usage.output_tokens,
+        ...(hasCache
+          ? {
+              cache_read_input_tokens: state.usage.cache_read_input_tokens,
+              cache_creation_input_tokens: state.usage.cache_creation_input_tokens,
+            }
+          : {}),
+        ...(hasServerTools ? { server_tool_use: srv } : {}),
+      },
+    });
+    output += emit('message_stop', { type: 'message_stop' });
+    state.finished = true;
+    return output;
+  }
+
+  function processEvent(eventBlock: string): string {
+    const dataLines = [...eventBlock.matchAll(/^data: ?(.*)$/gm)];
+    if (!dataLines.length) return '';
+    const payload = dataLines.map((m) => m[1]).join('\n');
+
+    if (payload === '[DONE]') {
+      let output = '';
+      if (!state.started) output += emitMessageStart();
+      return output + finishStream('end_turn');
     }
 
-    function closeBlock(): string {
-        if (!state.currentBlockType) return '';
-        const idx = state.blockIndex - 1;
-        const blockType = state.currentBlockType;
-        state.currentBlockType = null;
-        let output = '';
-        if (blockType === 'thinking') {
-            output += emit('content_block_delta', {
-                type: 'content_block_delta', index: idx,
-                delta: { type: 'signature_delta', signature: '' },
-            });
+    let parsed: OpenAIResponseBody;
+    try {
+      parsed = JSON.parse(payload);
+    } catch {
+      return '';
+    }
+
+    // Propagate upstream SSE error events (content filter, rate limit mid-stream, etc.)
+    if (parsed.error) {
+      const upstreamError = parsed.error;
+      const apiError =
+        upstreamError.type === 'api_error'
+          ? { type: 'error', error: upstreamError }
+          : {
+              type: 'error',
+              error: { type: 'api_error', message: upstreamError.message || String(upstreamError) },
+            };
+      let output = emit('error', apiError);
+      if (!state.started) output += emitMessageStart();
+      output += finishStream('end_turn');
+      return output;
+    }
+
+    const choice = parsed.choices && parsed.choices[0];
+    if (!choice) return '';
+
+    const delta = choice.delta || {};
+    let output = '';
+
+    if (!state.started) {
+      output += emitMessageStart();
+    }
+
+    if (parsed.usage) {
+      const usageAny = parsed.usage as any;
+      state.usage = {
+        input_tokens: parsed.usage.prompt_tokens || 0,
+        output_tokens: parsed.usage.completion_tokens || 0,
+      };
+      // Map cache tokens from OpenAI field names (prompt_cache_hit/miss) to
+      // Anthropic field names (cache_read/cache_creation_input_tokens).
+      if (typeof usageAny.prompt_cache_hit_tokens === 'number') {
+        state.usage.cache_read_input_tokens = usageAny.prompt_cache_hit_tokens;
+        state.usage.cache_creation_input_tokens = usageAny.prompt_cache_miss_tokens || 0;
+      }
+    }
+
+    if (delta.reasoning_content !== undefined && delta.reasoning_content !== null) {
+      if (state.currentBlockType && state.currentBlockType !== 'thinking') output += closeBlock();
+      if (state.currentBlockType !== 'thinking')
+        output += openBlock('thinking', { type: 'thinking', thinking: '', signature: '' });
+      output += appendBlock('thinking_delta', { thinking: delta.reasoning_content });
+    }
+
+    if (delta.content) {
+      if (state.currentBlockType && state.currentBlockType !== 'text') output += closeBlock();
+      if (state.currentBlockType !== 'text')
+        output += openBlock('text', { type: 'text', text: '' });
+      output += appendBlock('text_delta', { text: delta.content });
+    }
+
+    if (delta.tool_calls) {
+      for (const tc of delta.tool_calls) {
+        if (tc.function && tc.function.name) {
+          if (state.currentBlockType) output += closeBlock();
+          const idx = state.blockIndex++;
+          state.currentBlockType = 'tool_use';
+          state.lastToolUseIdx = idx;
+          if (tc.index !== undefined) state.toolCallMap[tc.index] = idx;
+          // Track server-side tool requests for usage.server_tool_use
+          if (tc.function.name === 'web_search') state.serverToolUse.web_search_requests++;
+          else if (tc.function.name === 'web_fetch') state.serverToolUse.web_fetch_requests++;
+          output += emit('content_block_start', {
+            type: 'content_block_start',
+            index: idx,
+            content_block: { type: 'tool_use', id: tc.id, name: tc.function.name, input: {} },
+          });
         }
-        output += emit('content_block_stop', { type: 'content_block_stop', index: idx });
-        return output;
+        if (tc.function && tc.function.arguments) {
+          const idx =
+            tc.index !== undefined && state.toolCallMap[tc.index] !== undefined
+              ? state.toolCallMap[tc.index]
+              : state.lastToolUseIdx;
+          if (idx >= 0) {
+            output += emit('content_block_delta', {
+              type: 'content_block_delta',
+              index: idx,
+              delta: { type: 'input_json_delta', partial_json: tc.function.arguments },
+            });
+          }
+        }
+      }
     }
 
-    function openBlock(type: string, contentBlock: Record<string, unknown>): string {
-        const idx = state.blockIndex++;
-        state.currentBlockType = type;
-        return emit('content_block_start', {
-            type: 'content_block_start', index: idx, content_block: contentBlock,
-        });
+    if (choice.finish_reason) {
+      output += finishStream(mapFinishReason(choice.finish_reason));
     }
 
-    function appendBlock(deltaType: string, delta: Record<string, unknown>): string {
-        const idx = state.blockIndex - 1;
-        return emit('content_block_delta', {
-            type: 'content_block_delta', index: idx,
-            delta: { type: deltaType, ...delta },
-        });
+    return output;
+  }
+
+  class StreamTransformer extends Transform {
+    private _buf = '';
+
+    _transform(chunk: Buffer | string, _encoding: string, callback: TransformCallback): void {
+      // Check buffer BEFORE concatenation to avoid false-positive overflow
+      // from accumulated partial events that haven't been delimited by \n\n.
+      const newData = chunk.toString();
+      if (this._buf.length + newData.length > 1_048_576) {
+        this.destroy(new Error('SSE buffer exceeded 1MB'));
+        return;
+      }
+      this._buf += newData;
+      const parts = this._buf.split('\n\n');
+      this._buf = parts.pop() || '';
+      let output = '';
+      for (const part of parts) {
+        if (state.finished) break;
+        const trimmed = part.trim();
+        if (!trimmed) continue;
+        output += processEvent(trimmed);
+      }
+      callback(null, output);
     }
 
-    function emitMessageStart(): string {
-        state.started = true;
-        return emit('message_start', {
+    _flush(callback: TransformCallback): void {
+      let output = '';
+      if (this._buf && this._buf.trim()) {
+        if (!state.finished) output += processEvent(this._buf.trim());
+      }
+      // Emit finishStream if stream started; otherwise emit minimal start+stop
+      // so Anthropic clients don't receive orphaned message_stop without message_start.
+      if (!state.finished) {
+        if (!state.started) {
+          state.started = true;
+          output += emit('message_start', {
             type: 'message_start',
             message: {
-                id: state.messageId,
-                type: 'message',
-                role: 'assistant',
-                content: [],
-                model: state.model,
-                stop_reason: null,
-                stop_sequence: null,
-                usage: { input_tokens: 0, output_tokens: 0 },
+              id: state.messageId,
+              type: 'message',
+              role: 'assistant',
+              content: [],
+              model: state.model,
+              stop_reason: null,
+              stop_sequence: null,
+              usage: { input_tokens: 0, output_tokens: 0 },
             },
-        });
+          });
+        }
+        output += finishStream('end_turn');
+      }
+      callback(null, output);
     }
+  }
 
-    function finishStream(stopReason: string): string {
-        let output = closeBlock();
-        const srv = state.serverToolUse;
-        const hasServerTools = srv.web_search_requests > 0 || srv.web_fetch_requests > 0;
-        const hasCache = typeof state.usage.cache_read_input_tokens === 'number';
-        output += emit('message_delta', {
-            type: 'message_delta',
-            delta: { stop_reason: stopReason, stop_sequence: null },
-            usage: {
-                output_tokens: state.usage.output_tokens,
-                ...(hasCache ? {
-                    cache_read_input_tokens: state.usage.cache_read_input_tokens,
-                    cache_creation_input_tokens: state.usage.cache_creation_input_tokens,
-                } : {}),
-                ...(hasServerTools ? { server_tool_use: srv } : {}),
-            },
-        });
-        output += emit('message_stop', { type: 'message_stop' });
-        state.finished = true;
-        return output;
-    }
-
-    function processEvent(eventBlock: string): string {
-        const dataLines = [...eventBlock.matchAll(/^data: ?(.*)$/gm)];
-        if (!dataLines.length) return '';
-        const payload = dataLines.map(m => m[1]).join('\n');
-
-        if (payload === '[DONE]') {
-            let output = '';
-            if (!state.started) output += emitMessageStart();
-            return output + finishStream('end_turn');
-        }
-
-        let parsed: OpenAIResponseBody;
-        try { parsed = JSON.parse(payload); } catch { return ''; }
-
-        // Propagate upstream SSE error events (content filter, rate limit mid-stream, etc.)
-        if (parsed.error) {
-            const upstreamError = parsed.error;
-            const apiError = upstreamError.type === 'api_error'
-                ? { type: 'error', error: upstreamError }
-                : { type: 'error', error: { type: 'api_error', message: upstreamError.message || String(upstreamError) } };
-            let output = emit('error', apiError);
-            if (!state.started) output += emitMessageStart();
-            output += finishStream('end_turn');
-            return output;
-        }
-
-        const choice = parsed.choices && parsed.choices[0];
-        if (!choice) return '';
-
-        const delta = choice.delta || {};
-        let output = '';
-
-        if (!state.started) {
-            output += emitMessageStart();
-        }
-
-        if (parsed.usage) {
-            const usageAny = parsed.usage as any;
-            state.usage = {
-                input_tokens: parsed.usage.prompt_tokens || 0,
-                output_tokens: parsed.usage.completion_tokens || 0,
-            };
-            // Map cache tokens from OpenAI field names (prompt_cache_hit/miss) to
-            // Anthropic field names (cache_read/cache_creation_input_tokens).
-            if (typeof usageAny.prompt_cache_hit_tokens === 'number') {
-                state.usage.cache_read_input_tokens = usageAny.prompt_cache_hit_tokens;
-                state.usage.cache_creation_input_tokens = usageAny.prompt_cache_miss_tokens || 0;
-            }
-        }
-
-        if (delta.reasoning_content !== undefined && delta.reasoning_content !== null) {
-            if (state.currentBlockType && state.currentBlockType !== 'thinking') output += closeBlock();
-            if (state.currentBlockType !== 'thinking') output += openBlock('thinking', { type: 'thinking', thinking: '', signature: '' });
-            output += appendBlock('thinking_delta', { thinking: delta.reasoning_content });
-        }
-
-        if (delta.content) {
-            if (state.currentBlockType && state.currentBlockType !== 'text') output += closeBlock();
-            if (state.currentBlockType !== 'text') output += openBlock('text', { type: 'text', text: '' });
-            output += appendBlock('text_delta', { text: delta.content });
-        }
-
-        if (delta.tool_calls) {
-            for (const tc of delta.tool_calls) {
-                if (tc.function && tc.function.name) {
-                    if (state.currentBlockType) output += closeBlock();
-                    const idx = state.blockIndex++;
-                    state.currentBlockType = 'tool_use';
-                    state.lastToolUseIdx = idx;
-                    if (tc.index !== undefined) state.toolCallMap[tc.index] = idx;
-                    // Track server-side tool requests for usage.server_tool_use
-                    if (tc.function.name === 'web_search') state.serverToolUse.web_search_requests++;
-                    else if (tc.function.name === 'web_fetch') state.serverToolUse.web_fetch_requests++;
-                    output += emit('content_block_start', {
-                        type: 'content_block_start', index: idx,
-                        content_block: { type: 'tool_use', id: tc.id, name: tc.function.name, input: {} },
-                    });
-                }
-                if (tc.function && tc.function.arguments) {
-                    const idx = (tc.index !== undefined && state.toolCallMap[tc.index] !== undefined)
-                        ? state.toolCallMap[tc.index] : state.lastToolUseIdx;
-                    if (idx >= 0) {
-                        output += emit('content_block_delta', {
-                            type: 'content_block_delta', index: idx,
-                            delta: { type: 'input_json_delta', partial_json: tc.function.arguments },
-                        });
-                    }
-                }
-            }
-        }
-
-        if (choice.finish_reason) {
-            output += finishStream(mapFinishReason(choice.finish_reason));
-        }
-
-        return output;
-    }
-
-    class StreamTransformer extends Transform {
-        private _buf = '';
-
-        _transform(chunk: Buffer | string, _encoding: string, callback: TransformCallback): void {
-            // Check buffer BEFORE concatenation to avoid false-positive overflow
-            // from accumulated partial events that haven't been delimited by \n\n.
-            const newData = chunk.toString();
-            if (this._buf.length + newData.length > 1_048_576) {
-                this.destroy(new Error('SSE buffer exceeded 1MB'));
-                return;
-            }
-            this._buf += newData;
-            const parts = this._buf.split('\n\n');
-            this._buf = parts.pop() || '';
-            let output = '';
-            for (const part of parts) {
-                if (state.finished) break;
-                const trimmed = part.trim();
-                if (!trimmed) continue;
-                output += processEvent(trimmed);
-            }
-            callback(null, output);
-        }
-
-        _flush(callback: TransformCallback): void {
-            let output = '';
-            if (this._buf && this._buf.trim()) {
-                if (!state.finished) output += processEvent(this._buf.trim());
-            }
-            // Emit finishStream if stream started; otherwise emit minimal start+stop
-            // so Anthropic clients don't receive orphaned message_stop without message_start.
-            if (!state.finished) {
-                if (!state.started) {
-                    state.started = true;
-                    output += emit('message_start', {
-                        type: 'message_start',
-                        message: {
-                            id: state.messageId, type: 'message', role: 'assistant',
-                            content: [], model: state.model,
-                            stop_reason: null, stop_sequence: null,
-                            usage: { input_tokens: 0, output_tokens: 0 },
-                        },
-                    });
-                }
-                output += finishStream('end_turn');
-            }
-            callback(null, output);
-        }
-    }
-
-    return new StreamTransformer();
+  return new StreamTransformer();
 }
 
 // --- Anthropic-format SSE interceptor ---
@@ -670,35 +753,110 @@ export function createStreamTransformer(model: string): Transform {
 // interceptor no longer needs to inject server_tool_use counts.
 
 export function createAnthropicStreamInterceptor(_preExecutedSearches: number = 0): Transform {
-    let buf = '';
+  let buf = '';
+  let wsCount = _preExecutedSearches; // web_search count
+  let wfCount = 0; // web_fetch count
+  // Hold back the message_delta event so we can inject server_tool_use
+  // into its usage field after we've counted all tool_use blocks.
+  let heldDelta: string | null = null;
 
-    class Interceptor extends Transform {
-        _transform(chunk: Buffer | string, _encoding: string, callback: TransformCallback): void {
-            buf += chunk.toString();
-            if (buf.length > 1_048_576) { this.destroy(new Error('Anthropic SSE buffer exceeded 1MB')); return; }
+  class Interceptor extends Transform {
+    _transform(chunk: Buffer | string, _encoding: string, callback: TransformCallback): void {
+      buf += chunk.toString();
+      if (buf.length > 1_048_576) {
+        this.destroy(new Error('Anthropic SSE buffer exceeded 1MB'));
+        return;
+      }
 
-            const parts = buf.split('\n\n');
-            buf = parts.pop() || '';
-            let output = '';
+      const parts = buf.split('\n\n');
+      buf = parts.pop() || '';
+      let output = '';
 
-            for (const part of parts) {
-                const trimmed = part.trim();
-                if (!trimmed) { output += '\n\n'; continue; }
-                output += trimmed + '\n\n';
-            }
-
-            callback(null, output);
+      for (const part of parts) {
+        const trimmed = part.trim();
+        if (!trimmed) {
+          output += '\n\n';
+          continue;
         }
 
-        _flush(callback: TransformCallback): void {
-            if (buf.trim()) {
-                callback(null, buf);
-            } else {
-                callback(null, '');
+        // Count web_search / web_fetch tool_use blocks
+        const cbMatch = trimmed.match(/^event: content_block_start\ndata: (.+)$/m);
+        if (cbMatch) {
+          try {
+            const d = JSON.parse(cbMatch[1]);
+            const cb = d.content_block;
+            if (cb) {
+              if (cb.name === 'web_search') wsCount++;
+              else if (cb.name === 'web_fetch') wfCount++;
             }
+          } catch (_) {
+            /* non-fatal */
+          }
         }
+
+        // Hold back message_delta so we can inject server_tool_use later
+        if (/^event: message_delta$/m.test(trimmed)) {
+          heldDelta = trimmed;
+          continue;
+        }
+
+        // When message_stop arrives, emit the modified message_delta first
+        if (/^event: message_stop$/m.test(trimmed) && heldDelta) {
+          const dataMatch = heldDelta.match(/^data: (.+)$/m);
+          if (dataMatch && (wsCount > 0 || wfCount > 0)) {
+            try {
+              const parsed = JSON.parse(dataMatch[1]);
+              if (!parsed.usage) parsed.usage = {};
+              parsed.usage.server_tool_use = {
+                web_search_requests: wsCount,
+                web_fetch_requests: wfCount,
+              };
+              output += heldDelta.replace(dataMatch[1], JSON.stringify(parsed)) + '\n\n';
+            } catch (_) {
+              output += heldDelta + '\n\n';
+            }
+          } else {
+            output += heldDelta + '\n\n';
+          }
+          heldDelta = null;
+          output += trimmed + '\n\n';
+          continue;
+        }
+
+        output += trimmed + '\n\n';
+      }
+
+      callback(null, output);
     }
 
-    return new Interceptor();
-}
+    _flush(callback: TransformCallback): void {
+      // If we have a held message_delta without a following message_stop,
+      // emit it as-is (inject server_tool_use if we counted any).
+      if (heldDelta && (wsCount > 0 || wfCount > 0)) {
+        const dataMatch = heldDelta.match(/^data: (.+)$/m);
+        if (dataMatch) {
+          try {
+            const parsed = JSON.parse(dataMatch[1]);
+            if (!parsed.usage) parsed.usage = {};
+            parsed.usage.server_tool_use = {
+              web_search_requests: wsCount,
+              web_fetch_requests: wfCount,
+            };
+            this.push(heldDelta.replace(dataMatch[1], JSON.stringify(parsed)) + '\n\n');
+          } catch (_) {
+            this.push(heldDelta + '\n\n');
+          }
+        }
+      } else if (heldDelta) {
+        this.push(heldDelta + '\n\n');
+      }
+      if (buf.trim()) {
+        callback(null, buf);
+      } else {
+        callback(null, '');
+      }
+    }
+  }
 
+  return new Interceptor();
+}
