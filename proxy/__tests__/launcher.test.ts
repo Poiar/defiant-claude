@@ -1407,6 +1407,33 @@ describe('.ps1 $args collision guard', () => {
         if (/^\s*param\s*\(/.test(line)) {
           inParam = true;
           parenDepth = 1;
+          // The param(…) line itself may carry the violation on the
+          // same line (e.g. param([string[]]$Args)). Process parens
+          // and check for bare [string[]] before continuing.
+          const afterParam = line.replace(/^\s*param\s*\(/, '');
+          for (const ch of afterParam) {
+            if (ch === '(') parenDepth++;
+            if (ch === ')') {
+              parenDepth--;
+              if (parenDepth <= 0) {
+                inParam = false;
+                break;
+              }
+            }
+          }
+          if (/\[string\[\]\]\s*\$/.test(line)) {
+            const hasParameter =
+              /\[Parameter\s*\(/.test(line) || (i > 0 && /\[Parameter\s*\(/.test(lines[i - 1]));
+            if (!hasParameter) {
+              throw new Error(
+                `${path}:${i + 1}: bare [string[]] param without [Parameter()] attribute.\n` +
+                  `  This causes $args fragmentation between pwsh -File and & invocation.\n` +
+                  `  Add a [Parameter(ValueFromRemainingArguments)] attribute, or remove\n` +
+                  `  the param() block and use bare $args instead (like dc.ps1).`,
+              );
+            }
+          }
+          if (!inParam) continue; // single-line param(...)
           continue;
         }
         if (!inParam) continue;
