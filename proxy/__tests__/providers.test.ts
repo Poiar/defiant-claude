@@ -94,7 +94,7 @@ describe('providers.json', () => {
     });
 
     test('all 15 providers present', () => {
-        const expected = ['ds', 'or', 'fw', 'oc', 'al', 'km', 'mm', 'um', 'gr', 'mt', 'mx', 'za', 'bp', 'sf', 'nv'];
+        const expected = ['ds', 'or', 'fw', 'oc', 'an', 'al', 'km', 'mm', 'um', 'gr', 'mt', 'mx', 'za', 'bp', 'sf', 'nv'];
         const providers = (registry as Record<string, Record<string, unknown>>).providers;
         for (const key of expected) {
             expect(providers[key]).toBeDefined();

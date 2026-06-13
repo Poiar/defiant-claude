@@ -171,6 +171,7 @@
       "authHeader": "x-api-key",
       "wireFormat": "anthropic",
       "setupUrl": "https://console.anthropic.com/keys",
+      "streamUsageReporting": null,
       "fallback": ["ds"],
       "noAutoFallback": true
     }
