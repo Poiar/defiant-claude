@@ -6,6 +6,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import { execSync } from 'child_process';
 import { createLogger } from './log';
 import { validateUrl } from './ssrf';
 import { decrypt } from './crypto';
@@ -490,8 +491,7 @@ export async function resolveKey(rawKey: string | null | undefined): Promise<str
 function readWinReg(name: string): string | null {
     if (process.platform !== 'win32') return null;
     try {
-        const { execSync } = require('child_process');
-        const out = execSync(`reg query "HKCU\\Environment" /v ${name} 2>nul`, { encoding: 'utf8', timeout: 2000 });
+        const out = execSync(`reg query "HKCU\\Environment" /v ${name}`, { encoding: 'utf8', timeout: 2000, windowsHide: true });
         const m = out.match(/REG_\w+\s+(.+)/);
         return m ? m[1].trim() : null;
     } catch { return null; }
