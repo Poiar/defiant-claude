@@ -57,8 +57,9 @@ function allDollars(s: string): number[] {
   return (matches || []).map((m) => parseFloat(m.replace('$', '')));
 }
 
-/** Today's date key in the same format the statusline uses (da-DK). */
-const todayKey = new Date().toLocaleDateString('da-DK');
+/** Today's date key in ISO format (YYYY-MM-DD), matching stats.ts todayISO(). */
+const d = new Date();
+const todayKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
 // ── setup / teardown ───────────────────────────────────────────────
 

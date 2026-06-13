@@ -1024,7 +1024,8 @@ describe('statusline malformed / missing file resilience', () => {
   });
 
   test('cc-spend file with garbage content falls back to 0', () => {
-    const todayKey = new Date().toLocaleDateString('da-DK');
+    const d2 = new Date();
+    const todayKey = `${d2.getFullYear()}-${String(d2.getMonth() + 1).padStart(2, '0')}-${String(d2.getDate()).padStart(2, '0')}`;
     const spendJson = { daily: { [todayKey]: { total: 0.05 } } };
     writeFileSync(join(tmpDir, 'spend.json'), JSON.stringify(spendJson));
     writeFileSync(join(tmpDir, 'cc-spend-test-garbage.json'), 'not-a-number');
@@ -1048,7 +1049,8 @@ describe('statusline malformed / missing file resilience', () => {
   });
 
   test('today spend of exactly 0 is not shown', () => {
-    const todayKey = new Date().toLocaleDateString('da-DK');
+    const d2 = new Date();
+    const todayKey = `${d2.getFullYear()}-${String(d2.getMonth() + 1).padStart(2, '0')}-${String(d2.getDate()).padStart(2, '0')}`;
     const spendJson = { daily: { [todayKey]: { total: 0 } } };
     writeFileSync(join(tmpDir, 'spend.json'), JSON.stringify(spendJson));
 
@@ -1183,7 +1185,8 @@ describe('statusline proxy config edge cases', () => {
 
 describe('statusline cc-spend file edge cases', () => {
   test('cc-spend file that is empty string falls back to 0', () => {
-    const todayKey = new Date().toLocaleDateString('da-DK');
+    const d2 = new Date();
+    const todayKey = `${d2.getFullYear()}-${String(d2.getMonth() + 1).padStart(2, '0')}-${String(d2.getDate()).padStart(2, '0')}`;
     const spendJson = { daily: { [todayKey]: { total: 0.05 } } };
     writeFileSync(join(tmpDir, 'spend.json'), JSON.stringify(spendJson));
     writeFileSync(join(tmpDir, 'cc-spend-test-empty.json'), '');
