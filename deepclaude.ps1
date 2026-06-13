@@ -185,6 +185,91 @@ if ($Backend -match '^--(.+)$') {
     $Backend = $null
 }
 
+# Second pass: scan $ModelSpecs for flags that arrived via ValueFromRemainingArguments.
+# When using -b CONFIG --flag, PowerShell consumes -b CONFIG as $Backend and leaves
+# --flag in $ModelSpecs — so $DryRun, $Persist, etc. are never set. Process leading
+# flag-like entries here, stopping at the first positional spec.
+while ($ModelSpecs -and $ModelSpecs.Count -gt 0 -and $ModelSpecs[0] -match '^--(.+)$') {
+    $flag = $Matches[1]
+    $ModelSpecs = if ($ModelSpecs.Count -gt 1) { $ModelSpecs[1..($ModelSpecs.Count-1)] } else { @() }
+
+    if ($flag -eq 'persist' -and -not $Persist)       { $Persist = $true }
+    elseif ($flag -eq 'switch' -and $ModelSpecs -and $ModelSpecs.Count -gt 0) {
+        if (-not $Switch) { $Switch = $ModelSpecs[0]; $ModelSpecs = if ($ModelSpecs.Count -gt 1) { $ModelSpecs[1..($ModelSpecs.Count-1)] } else { @() } }
+        else { Write-Host "WARNING: --switch already set; ignoring second --switch" -ForegroundColor Yellow }
+    }
+    elseif ($flag -eq 'set-slot' -and $ModelSpecs -and $ModelSpecs.Count -gt 0) {
+        if (-not $SetSlot) { $SetSlot = $ModelSpecs[0]; $ModelSpecs = if ($ModelSpecs.Count -gt 1) { $ModelSpecs[1..($ModelSpecs.Count-1)] } else { @() } }
+        else { Write-Host "WARNING: --set-slot already set; ignoring second --set-slot" -ForegroundColor Yellow }
+    }
+    elseif ($flag -eq 'subagent-model') {
+        if ($ModelSpecs -and $ModelSpecs.Count -gt 0) {
+            if (-not $PSBoundParameters.ContainsKey('SubagentModel')) { $SubagentModel = $ModelSpecs[0]; $ModelSpecs = if ($ModelSpecs.Count -gt 1) { $ModelSpecs[1..($ModelSpecs.Count-1)] } else { @() } }
+            else { $ModelSpecs = if ($ModelSpecs.Count -gt 1) { $ModelSpecs[1..($ModelSpecs.Count-1)] } else { @() } }
+        } else {
+            $SubagentModel = ''
+        }
+    }
+    elseif ($flag -eq 'effort' -and $ModelSpecs -and $ModelSpecs.Count -gt 0) {
+        $val = $ModelSpecs[0]
+        if ($val -notin @('low', 'medium', 'high', 'max')) {
+            Write-Host "ERROR: Invalid effort level '$val'. Valid values: low, medium, high, max" -ForegroundColor Red
+            exit 1
+        }
+        $Effort = $val
+        $ModelSpecs = if ($ModelSpecs.Count -gt 1) { $ModelSpecs[1..($ModelSpecs.Count-1)] } else { @() }
+    }
+    elseif ($flag -eq 'models' -and -not $Models)         { $Models = $true }
+    elseif ($flag -eq 'stop-proxy' -and -not $StopProxy)   { $StopProxy = $true }
+    elseif ($flag -eq 'remote' -and -not $Remote)           { $Remote = $true }
+    elseif ($flag -eq 'status' -and -not $Status)           { $Status = $true }
+    elseif ($flag -eq 'cost' -and -not $Cost)               { $Cost = $true }
+    elseif ($flag -eq 'benchmark' -and -not $Benchmark)     { $Benchmark = $true }
+    elseif ($flag -eq 'help' -and -not $Help)               { $Help = $true }
+    elseif ($flag -eq 'lint' -and -not $Lint)               { $Lint = $true }
+    elseif ($flag -eq 'lint-config' -and -not $LintConfig)   { $LintConfig = $true }
+    elseif ($flag -eq 'fix-av' -and -not $FixAv)            { $FixAv = $true }
+    elseif ($flag -eq 'version' -and -not $Version)         { $Version = $true }
+    elseif ($flag -eq 'doctor' -and -not $Doctor)           { $Doctor = $true }
+    elseif ($flag -eq 'install-statusline' -and -not $InstallStatusline) { $InstallStatusline = $true }
+    elseif ($flag -eq 'stats' -and -not $Stats)             { $Stats = $true }
+    elseif ($flag -eq 'probe' -and $ModelSpecs -and $ModelSpecs.Count -gt 0) {
+        if (-not $PSBoundParameters.ContainsKey('ProbeFile')) { $ProbeFile = $ModelSpecs[0]; $ModelSpecs = if ($ModelSpecs.Count -gt 1) { $ModelSpecs[1..($ModelSpecs.Count-1)] } else { @() } }
+        else { $ModelSpecs = if ($ModelSpecs.Count -gt 1) { $ModelSpecs[1..($ModelSpecs.Count-1)] } else { @() } }
+    }
+    elseif ($flag -eq 'probe' -and -not $PSBoundParameters.ContainsKey('ProbeFile')) { $ProbeFile = '' }
+    elseif ($flag -eq 'dry-run' -or $flag -eq 'what-if') {
+        if (-not $DryRun) {
+            $DryRun = $true
+            if ($ModelSpecs -and $ModelSpecs.Count -gt 0 -and $ModelSpecs[0] -notmatch '^-|:') {
+                if (-not $DryRunFile) { $DryRunFile = $ModelSpecs[0]; $ModelSpecs = if ($ModelSpecs.Count -gt 1) { $ModelSpecs[1..($ModelSpecs.Count-1)] } else { @() } }
+            }
+        }
+    }
+    elseif ($flag -eq 'dashboard' -and -not $Dashboard)     { $Dashboard = $true }
+    elseif ($flag -eq 'open' -and -not $Open)               { $Open = $true }
+    elseif ($flag -eq 'log-all' -and -not $LogAll)           { $LogAll = $true }
+    elseif ($flag -eq 'skip-startup-check' -and -not $SkipStartupCheck) { $SkipStartupCheck = $true }
+    elseif ($flag -eq 'logs' -or $flag -eq 'tail') {
+        if (-not $Logs) { $Logs = $true }
+    }
+    elseif ($flag -eq 'health' -and -not $Health)           { $Health = $true }
+    elseif ($flag -eq 'no-thinking' -and -not $NoThinking)   { $NoThinking = $true }
+    elseif ($flag -eq 'thinking-budget' -and $ModelSpecs -and $ModelSpecs.Count -gt 0) {
+        $val = [int]$ModelSpecs[0]
+        if ($val -lt 0) {
+            Write-Host "ERROR: --thinking-budget must be >= 0" -ForegroundColor Red
+            exit 1
+        }
+        $ThinkingBudget = $val
+        $ModelSpecs = if ($ModelSpecs.Count -gt 1) { $ModelSpecs[1..($ModelSpecs.Count-1)] } else { @() }
+    }
+    else {
+        Write-Host "ERROR: Unknown flag '--$flag'. Use --help for available flags." -ForegroundColor Red
+        exit 1
+    }
+}
+
 # Validate --effort value (also accepts -effort from flag normalization above)
 if ($Effort -notin @('low', 'medium', 'high', 'max')) {
     Write-Host "ERROR: Invalid effort level '$Effort'. Valid values: low, medium, high, max" -ForegroundColor Red
@@ -275,10 +360,18 @@ if ($Health) {
     exit 0
 }
 
-# Gather all positional specs: first goes to $Backend, rest to $ModelSpecs
+# Gather all positional specs: first goes to $Backend, rest to $ModelSpecs.
+# Because $ModelSpecs captures remaining arguments (ValueFromRemainingArguments),
+# it can contain flags that weren't consumed by the flag-normalization block
+# (e.g., --dry-run, --subagent-model <val>, etc.). Filter those out so they
+# don't break the named-config resolve path ($AllSpecs.Count -eq 1 check).
 $AllSpecs = @()
 if ($Backend) { $AllSpecs += $Backend }
 if ($ModelSpecs) { $AllSpecs += $ModelSpecs }
+# Strip leading/trailing whitespace and filter out flag-looking entries.
+# @(...) forces array — a single-element pipeline result would otherwise
+# unroll to a scalar string, breaking $AllSpecs[0] (returns first char).
+$AllSpecs = @($AllSpecs | ForEach-Object { $_ -replace '^\s+|\s+$', '' } | Where-Object { $_ -and $_ -notmatch '^-' })
 
 if (-not $AllSpecs -and -not $Status -and -not $Cost -and -not $Benchmark -and -not $Help -and -not $Lint -and -not $LintConfig -and -not $FixAv -and -not $Switch -and -not $SetSlot -and -not $SubagentModel -and -not $Models -and -not $StopProxy -and -not $Version -and -not $Doctor -and -not $Stats -and -not $PSBoundParameters.ContainsKey('ProbeFile') -and -not $DryRun -and -not $Logs -and -not $Health) {
     $AllSpecs = @(if ($env:DEEPCLAUDE_DEFAULT_BACKEND) { $env:DEEPCLAUDE_DEFAULT_BACKEND } elseif ($env:CHEAPCLAUDE_DEFAULT_BACKEND) { $env:CHEAPCLAUDE_DEFAULT_BACKEND } else { "ds" })

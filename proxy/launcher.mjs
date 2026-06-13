@@ -5,7 +5,7 @@
 // and display data. Invoked by both deepclaude.ps1 and deepclaude.sh.
 
 import { readFileSync, existsSync, writeFileSync, mkdirSync, rmSync, chmodSync, readdirSync } from 'fs';
-import { join, dirname } from 'path';
+import { join, dirname, resolve } from 'path';
 import { homedir, platform } from 'os';
 import { fileURLToPath } from 'url';
 import { spawnSync } from 'child_process';
@@ -32,7 +32,7 @@ function registry() {
 }
 
 // --- Helpers ---
-function keyEnvToShortName(keyEnv) {
+export function keyEnvToShortName(keyEnv) {
     const map = {
         DEEPSEEK_API_KEY: 'ds', OPENROUTER_API_KEY: 'or', FIREWORKS_API_KEY: 'fw',
         OPENCODE_API_KEY: 'oc', ALIBABA_DASHSCOPE_API_KEY: 'al', KIMI_API_KEY: 'km',
@@ -54,7 +54,7 @@ function readWinReg(name) {
     } catch { return null; }
 }
 
-function getKey(pk) {
+export function getKey(pk) {
     const reg = registry();
     const prov = reg.providers[pk];
     if (!prov) return '';
@@ -62,18 +62,18 @@ function getKey(pk) {
     return process.env[prov.keyEnv] || readWinReg(prov.keyEnv) || '';
 }
 
-function maskKey(k) {
+export function maskKey(k) {
     if (!k) return 'MISSING';
     return 'set (****' + k.slice(-4) + ')';
 }
 
-function parseSpec(spec) {
+export function parseSpec(spec) {
     const m = spec.match(/^([a-z][a-z0-9_-]*):(.+)$/);
     if (!m) throw new Error(`Invalid model spec '${spec}': expected providerKey:modelId (e.g. ds:deepseek-v4-pro)`);
     return { provKey: m[1], modelId: m[2] };
 }
 
-function adhocSlotIndex(specCount, slotIndex) {
+export function adhocSlotIndex(specCount, slotIndex) {
     // 1 spec:  [0, 0, 0, 0, 0]
     // 2 specs: [0, 0, 0, 1, 1]
     // 3 specs: [0, 1, 1, 2, 2]
@@ -88,7 +88,7 @@ function adhocSlotIndex(specCount, slotIndex) {
     }
 }
 
-function validateProvider(provKey, modelId, spec) {
+export function validateProvider(provKey, modelId, spec) {
     const reg = registry();
     const prov = reg.providers[provKey];
     if (!prov) throw new Error(`Unknown provider '${provKey}' in spec '${spec}'. Known: ${Object.keys(reg.providers).join(', ')}`);
@@ -102,7 +102,7 @@ function validateProvider(provKey, modelId, spec) {
 }
 
 // --- Config resolution ---
-function resolveConfig(configName) {
+export function resolveConfig(configName) {
     const reg = registry();
     const cfg = reg.configs[configName];
     if (!cfg) throw new Error(`Unknown config '${configName}'. Known: ${Object.keys(reg.configs).join(', ')}`);
@@ -130,7 +130,7 @@ function resolveConfig(configName) {
     return resolved;
 }
 
-function buildAdhocConfig(specs) {
+export function buildAdhocConfig(specs) {
     const reg = registry();
     const specCount = specs.length;
     const resolved = {
@@ -166,7 +166,7 @@ function buildAdhocConfig(specs) {
 }
 
 // --- Routes JSON ---
-function buildRoutesJson(resolved, includeAllModels = true) {
+export function buildRoutesJson(resolved, includeAllModels = true) {
     const reg = registry();
     const routes = {};
     const providerEntries = {};
@@ -233,7 +233,7 @@ function buildRoutesJson(resolved, includeAllModels = true) {
 }
 
 // --- Slot overrides ---
-function readOverridesFile() {
+export function readOverridesFile() {
     if (!existsSync(SLOT_OVERRIDES_FILE)) return {};
     try {
         return JSON.parse(readFileSync(SLOT_OVERRIDES_FILE, 'utf-8'));
@@ -245,7 +245,7 @@ function writeOverridesFile(data) {
     writeAtomic(SLOT_OVERRIDES_FILE, JSON.stringify(data));
 }
 
-function initOverrides(resolved) {
+export function initOverrides(resolved) {
     const defaults = {};
     for (const slot of SLOTS) {
         const s = resolved.slots[slot];
@@ -258,12 +258,12 @@ function initOverrides(resolved) {
     return merged;
 }
 
-function getSlotModel(slot, fallback) {
+export function getSlotModel(slot, fallback) {
     const overrides = readOverridesFile();
     return overrides[slot] || (overrides._defaults && overrides._defaults[slot]) || fallback;
 }
 
-function setSlotOverride(slotName, slotModel) {
+export function setSlotOverride(slotName, slotModel) {
     if (!SLOTS.includes(slotName)) throw new Error(`Invalid slot '${slotName}'. Use: ${SLOTS.join(', ')}`);
     const overrides = readOverridesFile();
     if (!slotModel) {
@@ -284,7 +284,7 @@ function setSlotOverride(slotName, slotModel) {
 }
 
 // --- Thinking overrides ---
-function writeThinkingOverrides(noThinking, budget) {
+export function writeThinkingOverrides(noThinking, budget) {
     if (!noThinking && (!budget || budget <= 0)) {
         try { rmSync(THINKING_OVERRIDES_FILE, { force: true }); } catch {}
         return { cleared: true };
@@ -352,7 +352,7 @@ function saveProxyState(pid, port, routesFile) {
 }
 
 // --- Context window logic ---
-function append1m(modelSpec) {
+export function append1m(modelSpec) {
     const parts = modelSpec.split(':');
     const modelId = parts[parts.length - 1]; // last segment after last colon
     const reg = registry();
@@ -361,7 +361,7 @@ function append1m(modelSpec) {
     return modelSpec;
 }
 
-function computeContextInfo(opusModelId) {
+export function computeContextInfo(opusModelId) {
     const reg = registry();
     const baseModel = opusModelId.replace(/\[1m\]/g, '');
     const ctxLimit = reg.contextLimits[baseModel] || null;
@@ -402,7 +402,7 @@ function computeContextInfo(opusModelId) {
 }
 
 // --- Env vars ---
-function computeEnvVars(port, opusModel, sonnetModel, haikuModel, subagentModel, fableModel, opusCtxModel) {
+export function computeEnvVars(port, opusModel, sonnetModel, haikuModel, subagentModel, fableModel, opusCtxModel) {
     const opus1m = append1m('opus:' + opusModel);
     const sonnet1m = append1m('sonnet:' + sonnetModel);
     const haiku1m = append1m('haiku:' + haikuModel);
@@ -437,7 +437,7 @@ function computeEnvVars(port, opusModel, sonnetModel, haikuModel, subagentModel,
 }
 
 // --- Atomic file write ---
-function writeAtomic(path, content) {
+export function writeAtomic(path, content) {
     const tmpFile = path + '.tmp';
     const lockFile = path + '.lock';
     const maxRetries = 10;
@@ -795,4 +795,13 @@ async function main() {
     }
 }
 
-main();
+// Only run main() when executed directly (not imported as a module).
+// When invoked as `node launcher.mjs <action>`, process.argv[1] resolves
+// to the absolute path of this file. When imported by Jest, the test file
+// is process.argv[1] instead, so main() is skipped.
+const _modulePath = resolve(fileURLToPath(import.meta.url));
+const _execPath = process.argv[1] ? resolve(process.argv[1]) : '';
+const _isDirectExec = _execPath === _modulePath || (_execPath && _modulePath.endsWith(_execPath));
+if (_isDirectExec) {
+    main();
+}
