@@ -5,6 +5,7 @@ import fs from 'fs';
 import os from 'os';
 import {
   recordProviderSpend,
+  recordSpend,
   getFullHealthSnapshot,
   getMonthlyBudget,
   setSpendFilePath,
@@ -430,5 +431,120 @@ describe('per-model spend tracking', () => {
     const dsSpend = providers['ds'].dailySpend as { amount: number; currency: string };
     // All three keys aggregate under 'ds': 0.5 + 1.0 + 0.5 = 2.0
     expect(dsSpend.amount).toBeCloseTo(2.0, 1);
+  });
+});
+
+describe('recordSpend end-to-end flush', () => {
+  // NOTE: recordSpend triggers a synchronous flush on its first call
+  // (lastSpendWrite starts at 0). _resetBudgetState() (called in
+  // beforeEach) resets lastSpendWrite so every test flushes.
+
+  test('preserves total == sum(byProvider) invariant after flush', async () => {
+    const today = dateISO(new Date());
+
+    const dailyData: Record<string, { total: number; byProvider: Record<string, number> }> = {};
+    dailyData[today] = { total: 0.1, byProvider: { ds: 0.1 } };
+
+    fs.writeFileSync(
+      tmpFile,
+      JSON.stringify({
+        total: 0.1,
+        daily: dailyData,
+        sessions: [],
+        current_model: 'test',
+      }),
+    );
+
+    // Recording with modelName creates composite key ds:deepseek-v4-pro
+    await recordSpend(
+      'deepseek-v4-pro',
+      { prompt_tokens: 100_000, completion_tokens: 1_000 },
+      'ds',
+    );
+
+    const raw = fs.readFileSync(tmpFile, 'utf-8');
+    const data = JSON.parse(raw);
+    const entry = data.daily[today];
+    const bpSum = Object.values(entry.byProvider).reduce((a: number, b: number) => a + b, 0);
+    // Invariant: total must equal sum of all byProvider values.
+    expect(entry.total).toBeCloseTo(bpSum, 4);
+    // After recording spend, totals should exceed pre-populated 0.1.
+    expect(entry.total).toBeGreaterThan(0.1);
+    expect(bpSum).toBeGreaterThan(0.1);
+    // Legacy ds key unchanged, new spend goes to composite key.
+    expect(entry.byProvider['ds']).toBe(0.1);
+    expect(entry.byProvider['ds:deepseek-v4-pro']).toBeGreaterThan(0);
+  });
+
+  test('self-healing clamp fixes inflated total from format migration artifact', async () => {
+    const today = dateISO(new Date());
+
+    // Simulate the exact bug we hit 2026-06-13: a daily entry where
+    // total far exceeds the byProvider sum due to a legacy plain-number
+    // total being merged with a newer {total, byProvider} entry.
+    const dailyData: Record<string, { total: number; byProvider: Record<string, number> }> = {};
+    dailyData[today] = { total: 5.0, byProvider: { ds: 0.5 } };
+
+    fs.writeFileSync(
+      tmpFile,
+      JSON.stringify({
+        total: 5.0,
+        daily: dailyData,
+        sessions: [],
+        current_model: 'test',
+      }),
+    );
+
+    await recordSpend(
+      'deepseek-v4-pro',
+      { prompt_tokens: 100_000, completion_tokens: 1_000 },
+      'ds',
+    );
+
+    const raw = fs.readFileSync(tmpFile, 'utf-8');
+    const data = JSON.parse(raw);
+    const entry = data.daily[today];
+    const bpSum = Object.values(entry.byProvider).reduce((a: number, b: number) => a + b, 0);
+
+    // After the clamp + accumulator addition, total must match byProvider sum.
+    expect(entry.total).toBeCloseTo(bpSum, 4);
+    // The inflated 5.0 was clamped to 0.5, then new spend added — still < 1.0.
+    expect(entry.total).toBeLessThan(1.0);
+    expect(entry.total).toBeGreaterThan(0.5);
+  });
+
+  test('self-healing clamp does nothing when total is already consistent', async () => {
+    const today = dateISO(new Date());
+
+    const dailyData: Record<string, { total: number; byProvider: Record<string, number> }> = {};
+    dailyData[today] = { total: 1.0, byProvider: { ds: 0.6, or: 0.4 } };
+
+    fs.writeFileSync(
+      tmpFile,
+      JSON.stringify({
+        total: 1.0,
+        daily: dailyData,
+        sessions: [],
+        current_model: 'test',
+      }),
+    );
+
+    await recordSpend(
+      'deepseek-v4-pro',
+      { prompt_tokens: 100_000, completion_tokens: 1_000 },
+      'ds',
+    );
+
+    const raw = fs.readFileSync(tmpFile, 'utf-8');
+    const data = JSON.parse(raw);
+    const entry = data.daily[today];
+    const bpSum = Object.values(entry.byProvider).reduce((a: number, b: number) => a + b, 0);
+
+    // No clamping needed — total should be previous total + new spend.
+    expect(entry.total).toBeCloseTo(bpSum, 4);
+    expect(entry.total).toBeGreaterThan(1.0);
+    expect(entry.byProvider['ds']).toBe(0.6); // unchanged
+    expect(entry.byProvider['or']).toBe(0.4); // unchanged
+    expect(entry.byProvider['ds:deepseek-v4-pro']).toBeGreaterThan(0); // new
   });
 });

@@ -1195,6 +1195,9 @@ export function _resetBudgetState(): void {
   dailyAccumulator = 0;
   lastDailyRead = 0;
   cachedDailySpend = 0;
+  ccPendingSpend = 0;
+  lastSpendWrite = 0;
+  spendWriteLock = false;
   for (const k of Object.keys(providerDailyAccumulators)) {
     delete providerDailyAccumulators[k];
   }
