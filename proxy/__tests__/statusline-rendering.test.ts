@@ -593,10 +593,8 @@ describe('statusline output format', () => {
     expect(result.status).toBe(0);
     const plain = stripAnsi(result.stdout);
     // Rough structure: dir branch slot model effort context $session $today port
-    expect(plain).toMatch(/deepclaude\s+main\s+f\s+ds:deepseek-v4-pro\s+max\s+\d+k\/\d+%\s+\$/);
-    expect(plain).toContain('$0.45');
-    expect(plain).toContain('$1.23');
-    expect(plain).toContain('50000');
+    // Exact match: deepclaude main f ds:deepseek-v4-pro max 91k/9% $0.45 $1.23 50000
+    expect(plain).toBe('deepclaude main f ds:deepseek-v4-pro max 91k/9% $0.45 $1.23 50000');
   });
 
   test('no doubled spaces when spend group has only session (today is 0)', () => {
