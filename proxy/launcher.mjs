@@ -252,8 +252,20 @@ export function initOverrides(resolved) {
         defaults[slot] = `${s.provider}:${s.model}`;
     }
     const existing = readOverridesFile();
-    const merged = { ...existing, _defaults: defaults };
-    // Existing user overrides win over new defaults (they're already in the object)
+    // Preserve only genuine user overrides — slots whose value differs from
+    // the OLD config's _defaults. Direct keys that match the old _defaults
+    // were written by a previous initOverrides call and must be replaced by
+    // the new config's defaults. User overrides survive config switches.
+    const oldDefaults = existing._defaults || {};
+    const userOverrides = {};
+    for (const slot of SLOTS) {
+        if (existing[slot] && existing[slot] !== oldDefaults[slot]) {
+            userOverrides[slot] = existing[slot];
+        }
+    }
+    // Direct slot keys are visible to the proxy's routing.ts (slotOverrides[slot]).
+    // _defaults is the canonical config snapshot for getSlotModel and --set-slot --clear.
+    const merged = { ...defaults, ...userOverrides, _defaults: defaults };
     writeOverridesFile(merged);
     return merged;
 }
@@ -274,7 +286,7 @@ export function setSlotOverride(slotName, slotModel) {
         return { cleared: true, slot: slotName, revertsTo: defaultModel, overrides };
     }
     // Validate format
-    const { provKey, modelId } = parseSpec(slotModel);
+    const { provKey } = parseSpec(slotModel);
     const reg = registry();
     if (!reg.providers[provKey]) throw new Error(`Unknown provider '${provKey}'. Known: ${Object.keys(reg.providers).join(', ')}`);
     if (!getKey(provKey)) throw new Error(`No API key set for provider '${provKey}'.`);
@@ -570,7 +582,7 @@ function versionData() {
     };
 }
 
-function doctorJson(configName) {
+function doctorJson(_configName) {
     const reg = registry();
 
     // Node.js

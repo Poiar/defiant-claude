@@ -6,8 +6,8 @@
 
 import { spawnSync } from 'child_process';
 import { join } from 'path';
-import { readFileSync, mkdtempSync, rmSync } from 'fs';
-import { tmpdir } from 'os';
+import { readFileSync, rmSync, existsSync, writeFileSync } from 'fs';
+import { homedir } from 'os';
 
 const LAUNCHER = join(__dirname, '..', 'launcher.mjs');
 const PROVIDERS_JSON = join(__dirname, '..', 'providers.json');
@@ -161,15 +161,30 @@ describe('env-vars (CLI)', () => {
 // ---------------------------------------------------------------------------
 // init-overrides
 // ---------------------------------------------------------------------------
+// init-overrides tests share ~/.deepclaude/slot-overrides.json.
+// To prevent cross-test pollution: save the file before all tests,
+// delete it before each test, and restore it after all tests.
+// ---------------------------------------------------------------------------
 describe('init-overrides (CLI)', () => {
-    let _tmpDir: string;
+    const SLOT_FILE = join(homedir(), '.deepclaude', 'slot-overrides.json');
+    let _savedSlot: string | null = null;
 
-    beforeEach(() => {
-        _tmpDir = mkdtempSync(join(tmpdir(), 'dc-launcher-test-'));
+    beforeAll(() => {
+        if (existsSync(SLOT_FILE)) {
+            _savedSlot = readFileSync(SLOT_FILE, 'utf-8');
+        }
     });
 
-    afterEach(() => {
-        rmSync(_tmpDir, { recursive: true, force: true });
+    afterAll(() => {
+        if (_savedSlot !== null) {
+            writeFileSync(SLOT_FILE, _savedSlot, 'utf-8');
+        } else {
+            try { rmSync(SLOT_FILE, { force: true }); } catch {}
+        }
+    });
+
+    beforeEach(() => {
+        try { rmSync(SLOT_FILE, { force: true }); } catch {}
     });
 
     test('init-overrides for ds+an sets correct _defaults', () => {
@@ -204,12 +219,94 @@ describe('init-overrides (CLI)', () => {
         // _defaults should be from ds+an
         expect(result._defaults.haiku).toBe('an:claude-haiku-4-5-20251001');
     });
+
+    test('init-overrides writes DIRECT slot keys (not just _defaults)', () => {
+        // Regression: initOverrides used to write only _defaults, which the
+        // proxy's routing.ts couldn't read (it checks slotOverrides[slot],
+        // not slotOverrides._defaults[slot]). Config defaults were invisible
+        // to the proxy, so stale env vars controlled actual routing.
+        const result = runLauncherJson('init-overrides', '--name=ds+an');
+        // Every SLOT must have a direct key on the result object
+        for (const slot of ['opus', 'sonnet', 'haiku', 'subagent', 'fable']) {
+            expect(result[slot]).toBeDefined();
+            expect(typeof result[slot]).toBe('string');
+            expect(result[slot]).toMatch(/^[a-z][a-z0-9_-]*:.+$/);
+        }
+        // Specific values for ds+an
+        expect(result.haiku).toBe('an:claude-haiku-4-5-20251001');
+        expect(result.subagent).toBe('an:claude-haiku-4-5-20251001');
+        expect(result.opus).toBe('ds:deepseek-v4-pro');
+        expect(result.sonnet).toBe('ds:deepseek-v4-pro');
+        expect(result.fable).toBe('ds:deepseek-v4-pro');
+    });
+
+    test('init-overrides direct keys: user override wins over config default', () => {
+        // Set a user override, then init a config — user value must win
+        runLauncher('set-slot', '--slot=fable', '--value=or:deepseek/deepseek-v4-pro');
+        const result = runLauncherJson('init-overrides', '--name=ds+an');
+        // User override wins the direct key
+        expect(result.fable).toBe('or:deepseek/deepseek-v4-pro');
+        // But _defaults still records the config baseline
+        expect(result._defaults.fable).toBe('ds:deepseek-v4-pro');
+        // Non-overridden slots have direct keys from config
+        expect(result.haiku).toBe('an:claude-haiku-4-5-20251001');
+        expect(result.opus).toBe('ds:deepseek-v4-pro');
+    });
+
+    test('init-overrides direct keys match _defaults for clean slots', () => {
+        // On a clean file (no user overrides), direct keys and _defaults must agree
+        // First clear any user overrides
+        runLauncher('set-slot', '--slot=fable'); // clear
+        const result = runLauncherJson('init-overrides', '--name=ds+an');
+        for (const slot of ['opus', 'sonnet', 'haiku', 'subagent', 'fable']) {
+            expect(result[slot]).toBe(result._defaults[slot]);
+        }
+    });
+
+    // --- Config switching: ds ↔ ds+an ↔ ds+oc ---
+    test('init-overrides ds sets direct haiku key to deepseek flash', () => {
+        const result = runLauncherJson('init-overrides', '--name=ds');
+        expect(result.haiku).toBe('ds:deepseek-v4-flash');
+        expect(result.subagent).toBe('ds:deepseek-v4-flash');
+    });
+
+    test('init-overrides ds+oc sets direct haiku key to opencode big-pickle', () => {
+        const result = runLauncherJson('init-overrides', '--name=ds+oc');
+        expect(result.haiku).toBe('oc:big-pickle');
+        expect(result.subagent).toBe('oc:big-pickle');
+    });
+
+    test('init-overrides switches ds → ds+an correctly', () => {
+        runLauncherJson('init-overrides', '--name=ds');
+        const result = runLauncherJson('init-overrides', '--name=ds+an');
+        expect(result.haiku).toBe('an:claude-haiku-4-5-20251001');
+        expect(result.subagent).toBe('an:claude-haiku-4-5-20251001');
+    });
+
+    test('init-overrides switches ds+an → ds correctly', () => {
+        runLauncherJson('init-overrides', '--name=ds+an');
+        const result = runLauncherJson('init-overrides', '--name=ds');
+        expect(result.haiku).toBe('ds:deepseek-v4-flash');
+        expect(result.subagent).toBe('ds:deepseek-v4-flash');
+    });
 });
 
 // ---------------------------------------------------------------------------
 // set-slot / get-slot
 // ---------------------------------------------------------------------------
 describe('set-slot (CLI)', () => {
+    const SLOT_FILE = join(homedir(), '.deepclaude', 'slot-overrides.json');
+    let _savedSlotSet: string | null = null;
+
+    beforeAll(() => {
+        if (existsSync(SLOT_FILE)) _savedSlotSet = readFileSync(SLOT_FILE, 'utf-8');
+    });
+    afterAll(() => {
+        if (_savedSlotSet !== null) writeFileSync(SLOT_FILE, _savedSlotSet, 'utf-8');
+        else try { rmSync(SLOT_FILE, { force: true }); } catch {}
+    });
+    beforeEach(() => { try { rmSync(SLOT_FILE, { force: true }); } catch {} });
+
     test('set-slot haiku updates override and read-override sees it', () => {
         // Set haiku to a specific model
         const setResult = runLauncherJson('set-slot', '--slot=haiku', '--value=oc:big-pickle');
@@ -651,6 +748,18 @@ describe('version', () => {
 // read-override fallback path
 // ---------------------------------------------------------------------------
 describe('read-override (CLI)', () => {
+    const SLOT_FILE = join(homedir(), '.deepclaude', 'slot-overrides.json');
+    let _savedSlotRO: string | null = null;
+
+    beforeAll(() => {
+        if (existsSync(SLOT_FILE)) _savedSlotRO = readFileSync(SLOT_FILE, 'utf-8');
+    });
+    afterAll(() => {
+        if (_savedSlotRO !== null) writeFileSync(SLOT_FILE, _savedSlotRO, 'utf-8');
+        else try { rmSync(SLOT_FILE, { force: true }); } catch {}
+    });
+    beforeEach(() => { try { rmSync(SLOT_FILE, { force: true }); } catch {} });
+
     test('returns fallback when no override set for a slot', () => {
         // We can't easily isolate a clean slot file, but we can read a
         // slot with an explicit fallback — append1m is applied to the output.
@@ -670,6 +779,18 @@ describe('read-override (CLI)', () => {
 // set-slot: clear override restores default
 // ---------------------------------------------------------------------------
 describe('set-slot clear (CLI)', () => {
+    const SLOT_FILE = join(homedir(), '.deepclaude', 'slot-overrides.json');
+    let _savedSlotSC: string | null = null;
+
+    beforeAll(() => {
+        if (existsSync(SLOT_FILE)) _savedSlotSC = readFileSync(SLOT_FILE, 'utf-8');
+    });
+    afterAll(() => {
+        if (_savedSlotSC !== null) writeFileSync(SLOT_FILE, _savedSlotSC, 'utf-8');
+        else try { rmSync(SLOT_FILE, { force: true }); } catch {}
+    });
+    beforeEach(() => { try { rmSync(SLOT_FILE, { force: true }); } catch {} });
+
     test('cleared override returns default on next read', () => {
         // Ensure slot-overrides.json has _defaults for haiku
         runLauncherJson('init-overrides', '--name=ds+an');
@@ -1105,5 +1226,179 @@ describe('$AllSpecs filter edge cases', () => {
         expect(stdout).toMatch(/haiku\s+an \(Anthropic/);
         expect(stdout).toMatch(/subagent\s+an \(Anthropic/);
         expect(stdout).toMatch(/opus\s+ds \(DeepSeek/);
+    });
+});
+
+// ===========================================================================
+// REGRESSION TESTS — bugs that silently broke config resolution or routing
+// ===========================================================================
+
+// --- Regression: $AllSpecs pipeline-to-scalar unrolling ---
+describe('REGRESSION: pipeline unrolling breaks array indexing', () => {
+    test('dc.ps1 -b ds+an --dry-run routes haiku to Anthropic', () => {
+        const DEEPCLAUDE_PS1 = join(__dirname, '..', '..', 'deepclaude.ps1');
+        const r = spawnSync('pwsh', ['-NoLogo', '-NoProfile', '-File', DEEPCLAUDE_PS1, '-b', 'ds+an', '--dry-run'], {
+            encoding: 'utf-8', timeout: 30000,
+        });
+        expect(r.stderr).not.toMatch(/Invalid model spec|Unknown provider/);
+        // Without @(): after WHERE filter, single element → scalar string
+        // $AllSpecs[0] would return 'd' (first char) instead of 'ds+an'
+        // → Resolve-Config 'd' → unknown config → error
+        expect(r.stdout).toMatch(/haiku\s+an \(Anthropic/);
+        expect(r.stdout).toMatch(/subagent\s+an \(Anthropic/);
+        expect(r.stdout).toMatch(/claude-haiku-4-5-20251001/);
+        // Opus must be DeepSeek, NOT Anthropic
+        expect(r.stdout).toMatch(/opus\s+ds \(DeepSeek/);
+        expect(r.stdout).toMatch(/sonnet\s+ds \(DeepSeek/);
+        expect(r.stdout).toMatch(/fable\s+ds \(DeepSeek/);
+    });
+
+    test('-b ds --dry-run resolves default config (no scalar unroll)', () => {
+        const DEEPCLAUDE_PS1 = join(__dirname, '..', '..', 'deepclaude.ps1');
+        const r = spawnSync('pwsh', ['-NoLogo', '-NoProfile', '-File', DEEPCLAUDE_PS1, '-b', 'ds', '--dry-run'], {
+            encoding: 'utf-8', timeout: 30000,
+        });
+        expect(r.stderr).not.toMatch(/Invalid model spec|Unknown provider/);
+        expect(r.stdout).toMatch(/haiku\s+ds \(DeepSeek/);
+        expect(r.stdout).toMatch(/deepseek-v4-flash/);
+    });
+});
+
+// --- Regression: initOverrides direct keys visible to proxy ---
+// --- Regression: second-pass flag scanner picks up flags from $ModelSpecs ---
+describe('REGRESSION: second-pass flag scanner', () => {
+    const DEEPCLAUDE_PS1 = join(__dirname, '..', '..', 'deepclaude.ps1');
+
+    function runDC(...args: string[]): { stdout: string; stderr: string; status: number } {
+        const r = spawnSync('pwsh', ['-NoLogo', '-NoProfile', '-File', DEEPCLAUDE_PS1, ...args], {
+            encoding: 'utf-8', timeout: 30000,
+        });
+        return { stdout: r.stdout?.trim() || '', stderr: r.stderr?.trim() || '', status: r.status || 0 };
+    }
+
+    test('--dry-run after -b CONFIG produces routing table (not Launching...)', () => {
+        // Without second-pass scanner: $DryRun=$false, script falls through
+        // to launch path, starts proxy, and tries to pass --dry-run to claude
+        const { stdout } = runDC('-b', 'ds+an', '--dry-run');
+        // Dry-run table (SLOT header), not launch output (no "Launching")
+        expect(stdout).toContain('SLOT');
+        expect(stdout).not.toContain('Launching Claude Code');
+    });
+
+    test('--log-all after -b CONFIG sets env var without crashing', () => {
+        const { stderr } = runDC('-b', 'ds', '--dry-run', '--log-all');
+        expect(stderr).not.toMatch(/Invalid model spec/);
+        expect(stderr).not.toMatch(/Unknown flag/);
+    });
+
+    test('--skip-startup-check after -b CONFIG is handled', () => {
+        const { stderr } = runDC('-b', 'ds', '--dry-run', '--skip-startup-check');
+        expect(stderr).not.toMatch(/Invalid model spec/);
+        expect(stderr).not.toMatch(/Unknown flag/);
+    });
+
+    test('--no-thinking after -b CONFIG is handled', () => {
+        const { stderr } = runDC('-b', 'ds', '--dry-run', '--no-thinking');
+        expect(stderr).not.toMatch(/Invalid model spec/);
+        expect(stderr).not.toMatch(/Unknown flag/);
+    });
+});
+
+// --- Regression: every named config with valid keys resolves without error ---
+describe('REGRESSION: all named configs resolve (with keys)', () => {
+    test('every config in config-list resolves and builds routes', () => {
+        const configs = runLauncherJson('config-list');
+        let resolved = 0;
+        let skipped = 0;
+        for (const name of Object.keys(configs)) {
+            // resolve-config can fail if API key is missing — skip those
+            let cfg: Record<string, unknown>;
+            try {
+                cfg = runLauncherJson('resolve-config', `--name=${name}`);
+            } catch (e) {
+                if ((e as Error).message.includes('not set')) {
+                    skipped++;
+                    continue;
+                }
+                throw e;
+            }
+            resolved++;
+            expect(cfg.slots.opus.provider).toBeDefined();
+            // Every config must build routes
+            const routes = runLauncherJson('build-routes', `--name=${name}`);
+            expect(routes.slots.opus).toBeDefined();
+            // Every config must init overrides with direct keys
+            const overrides = runLauncherJson('init-overrides', `--name=${name}`);
+            for (const slot of ['opus', 'sonnet', 'haiku', 'subagent', 'fable']) {
+                expect(overrides[slot]).toBeDefined();
+            }
+        }
+        expect(resolved).toBeGreaterThan(0);
+        if (skipped > 0) console.log(`  (skipped ${skipped} configs with missing API keys)`);
+    });
+});
+
+// --- Regression: env-vars round-trip through resolve → env-vars ---
+describe('REGRESSION: env-vars correctly reflect resolved config', () => {
+    test('ds+an: haiku env var is Anthropic, not DeepSeek', () => {
+        const cfg = runLauncherJson('resolve-config', '--name=ds+an');
+        const env = runLauncherJson('env-vars',
+            '--port=58999',
+            `--opus=${cfg.slots.opus.model}`,
+            `--sonnet=${cfg.slots.sonnet.model}`,
+            `--haiku=${cfg.slots.haiku.model}`,
+            `--subagent=${cfg.slots.subagent.model}`,
+            `--fable=${cfg.slots.fable.model}`
+        );
+        // The critical regression: haiku MUST be Anthropic, not DeepSeek
+        expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('haiku:claude-haiku-4-5-20251001');
+        expect(env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('subagent:claude-haiku-4-5-20251001');
+    });
+
+    test('ds: haiku env var is DeepSeek flash', () => {
+        const cfg = runLauncherJson('resolve-config', '--name=ds');
+        const env = runLauncherJson('env-vars',
+            '--port=58999',
+            `--opus=${cfg.slots.opus.model}`,
+            `--sonnet=${cfg.slots.sonnet.model}`,
+            `--haiku=${cfg.slots.haiku.model}`,
+            `--subagent=${cfg.slots.subagent.model}`,
+            `--fable=${cfg.slots.fable.model}`
+        );
+        expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('haiku:deepseek-v4-flash[1m]');
+        expect(env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('subagent:deepseek-v4-flash[1m]');
+    });
+
+    test('ds+oc: haiku env var is OpenCode big-pickle', () => {
+        const cfg = runLauncherJson('resolve-config', '--name=ds+oc');
+        const env = runLauncherJson('env-vars',
+            '--port=58999',
+            `--opus=${cfg.slots.opus.model}`,
+            `--sonnet=${cfg.slots.sonnet.model}`,
+            `--haiku=${cfg.slots.haiku.model}`,
+            `--subagent=${cfg.slots.subagent.model}`,
+            `--fable=${cfg.slots.fable.model}`
+        );
+        expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('haiku:big-pickle');
+        expect(env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('subagent:big-pickle');
+    });
+});
+
+// --- Regression: provider fallback chain integrity ---
+describe('REGRESSION: provider fallback chains', () => {
+    test('ds+an routes include an→ds fallback', () => {
+        const routes = runLauncherJson('build-routes', '--name=ds+an');
+        expect(routes.providers.an).toBeDefined();
+        expect(routes.providers.an.fallback).toEqual(['ds']);
+        expect(routes.providers.ds).toBeDefined();
+    });
+
+    test('or config routes include or→ds fallback if configured', () => {
+        const routes = runLauncherJson('build-routes', '--name=or');
+        expect(routes.providers.or).toBeDefined();
+        // or fallback is configured in providers.json
+        if (routes.providers.or.fallback) {
+            expect(Array.isArray(routes.providers.or.fallback)).toBe(true);
+        }
     });
 });
