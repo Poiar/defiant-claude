@@ -390,54 +390,51 @@ if ($LogAll) { $env:DEEPCLAUDE_LOG_ALL_REQUESTS = 'true' }
 if ($SkipStartupCheck) { $env:DEEPCLAUDE_SKIP_STARTUP_CHECK = 'true' }
 
 # --- API Keys ---
-$DeepSeekKey = if ($env:DEEPSEEK_API_KEY) { $env:DEEPSEEK_API_KEY } else {
-    [Environment]::GetEnvironmentVariable("DEEPSEEK_API_KEY", "User")
+# Load from process env (inherited from parent shell) or fall back to
+# Windows registry (set via setx).  Push every found key into $env: so
+# child processes (proxy, claude) inherit them — no silent reg fallback
+# needed downstream.
+$ApiKeyNames = @(
+    "DEEPSEEK_API_KEY",
+    "OPENROUTER_API_KEY",
+    "FIREWORKS_API_KEY",
+    "OPENCODE_API_KEY",
+    "ALIBABA_DASHSCOPE_API_KEY",
+    "KIMI_API_KEY",
+    "MIMO_API_KEY",
+    "UMANS_API_KEY",
+    "GROQ_API_KEY",
+    "MISTRAL_API_KEY",
+    "MINIMAX_API_KEY",
+    "ZAI_API_KEY",
+    "BYTEPLUS_API_KEY",
+    "SILICONFLOW_API_KEY",
+    "NOVITA_API_KEY",
+    "ANTHROPIC_API_KEY"
+)
+$ApiKeys = @{}
+foreach ($kn in $ApiKeyNames) {
+    $val = (Get-Item "Env:\$kn" -ErrorAction SilentlyContinue).Value
+    if (-not $val) { $val = [Environment]::GetEnvironmentVariable($kn, "User") }
+    if ($val) { Set-Content "Env:\$kn" $val; $ApiKeys[$kn] = $val }
+    else      { $ApiKeys[$kn] = $null }
 }
-$OpenRouterKey = if ($env:OPENROUTER_API_KEY) { $env:OPENROUTER_API_KEY } else {
-    [Environment]::GetEnvironmentVariable("OPENROUTER_API_KEY", "User")
-}
-$FireworksKey = if ($env:FIREWORKS_API_KEY) { $env:FIREWORKS_API_KEY } else {
-    [Environment]::GetEnvironmentVariable("FIREWORKS_API_KEY", "User")
-}
-$OpenCodeKey = if ($env:OPENCODE_API_KEY) { $env:OPENCODE_API_KEY } else {
-    [Environment]::GetEnvironmentVariable("OPENCODE_API_KEY", "User")
-}
-$AlibabaKey = if ($env:ALIBABA_DASHSCOPE_API_KEY) { $env:ALIBABA_DASHSCOPE_API_KEY } else {
-    [Environment]::GetEnvironmentVariable("ALIBABA_DASHSCOPE_API_KEY", "User")
-}
-$KimiKey = if ($env:KIMI_API_KEY) { $env:KIMI_API_KEY } else {
-    [Environment]::GetEnvironmentVariable("KIMI_API_KEY", "User")
-}
-$MimoKey = if ($env:MIMO_API_KEY) { $env:MIMO_API_KEY } else {
-    [Environment]::GetEnvironmentVariable("MIMO_API_KEY", "User")
-}
-$UmansKey = if ($env:UMANS_API_KEY) { $env:UMANS_API_KEY } else {
-    [Environment]::GetEnvironmentVariable("UMANS_API_KEY", "User")
-}
-$GroqKey = if ($env:GROQ_API_KEY) { $env:GROQ_API_KEY } else {
-    [Environment]::GetEnvironmentVariable("GROQ_API_KEY", "User")
-}
-$MistralKey = if ($env:MISTRAL_API_KEY) { $env:MISTRAL_API_KEY } else {
-    [Environment]::GetEnvironmentVariable("MISTRAL_API_KEY", "User")
-}
-$MiniMaxKey = if ($env:MINIMAX_API_KEY) { $env:MINIMAX_API_KEY } else {
-    [Environment]::GetEnvironmentVariable("MINIMAX_API_KEY", "User")
-}
-$ZaiKey = if ($env:ZAI_API_KEY) { $env:ZAI_API_KEY } else {
-    [Environment]::GetEnvironmentVariable("ZAI_API_KEY", "User")
-}
-$BytePlusKey = if ($env:BYTEPLUS_API_KEY) { $env:BYTEPLUS_API_KEY } else {
-    [Environment]::GetEnvironmentVariable("BYTEPLUS_API_KEY", "User")
-}
-$SiliconFlowKey = if ($env:SILICONFLOW_API_KEY) { $env:SILICONFLOW_API_KEY } else {
-    [Environment]::GetEnvironmentVariable("SILICONFLOW_API_KEY", "User")
-}
-$NovitaKey = if ($env:NOVITA_API_KEY) { $env:NOVITA_API_KEY } else {
-    [Environment]::GetEnvironmentVariable("NOVITA_API_KEY", "User")
-}
-$AnthropicKey = if ($env:ANTHROPIC_API_KEY) { $env:ANTHROPIC_API_KEY } else {
-    [Environment]::GetEnvironmentVariable("ANTHROPIC_API_KEY", "User")
-}
+$DeepSeekKey    = $ApiKeys["DEEPSEEK_API_KEY"]
+$OpenRouterKey  = $ApiKeys["OPENROUTER_API_KEY"]
+$FireworksKey   = $ApiKeys["FIREWORKS_API_KEY"]
+$OpenCodeKey    = $ApiKeys["OPENCODE_API_KEY"]
+$AlibabaKey     = $ApiKeys["ALIBABA_DASHSCOPE_API_KEY"]
+$KimiKey        = $ApiKeys["KIMI_API_KEY"]
+$MimoKey        = $ApiKeys["MIMO_API_KEY"]
+$UmansKey       = $ApiKeys["UMANS_API_KEY"]
+$GroqKey        = $ApiKeys["GROQ_API_KEY"]
+$MistralKey     = $ApiKeys["MISTRAL_API_KEY"]
+$MiniMaxKey     = $ApiKeys["MINIMAX_API_KEY"]
+$ZaiKey         = $ApiKeys["ZAI_API_KEY"]
+$BytePlusKey    = $ApiKeys["BYTEPLUS_API_KEY"]
+$SiliconFlowKey = $ApiKeys["SILICONFLOW_API_KEY"]
+$NovitaKey      = $ApiKeys["NOVITA_API_KEY"]
+$AnthropicKey   = $ApiKeys["ANTHROPIC_API_KEY"]
 
 # Set env vars only for providers in the active config
 function Set-UsedProviderEnv {
