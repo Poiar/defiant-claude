@@ -938,12 +938,8 @@ function Start-RoutingProxy {
     if (-not (Test-Path $tsxBin)) {
         throw "Dependencies not installed. Run 'npm install' in '$myDir' first."
     }
-    # Use node --watch so .ts changes auto-reload without a manual restart.
-    # tsx.cmd wraps `node --import tsx`, but we want --watch-path for auto-reload.
-    # Node 22+ supports --watch; tsx handles TypeScript transpilation.
-    $proxyDir = Join-Path $myDir "proxy"
-    $proc = Start-Process -FilePath $nodePath `
-        -ArgumentList ("--import", "tsx", "--watch", "--watch-path=$proxyDir", "--watch-preserve-output", $proxyScript, '--routes', $RoutesFile, '--overrides', $SlotOverridesFile, '--providers', (Join-Path $myDir 'proxy\providers.json'), '--thinking-overrides', $ThinkingOverridesFile) `
+    $proc = Start-Process -FilePath $tsxBin `
+        -ArgumentList ($proxyScript, '--routes', $RoutesFile, '--overrides', $SlotOverridesFile, '--providers', (Join-Path $myDir 'proxy\providers.json'), '--thinking-overrides', $ThinkingOverridesFile) `
         -NoNewWindow `
         -RedirectStandardOutput $outFile `
         -RedirectStandardError $errFile `
