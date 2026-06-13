@@ -206,9 +206,9 @@ async function main() {
         }
       }
 
-      // Use local date (da-DK locale = YYYY-MM-DD) to match stats.ts writer.
-      // toISOString() would give UTC which can differ from local by a day.
-      const todayKey = new Date().toLocaleDateString('da-DK');
+      // ISO YYYY-MM-DD from local date (matches stats.ts todayISO()).
+      const d = new Date();
+      const todayKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
       const todaySpend =
         spendData.daily && spendData.daily[todayKey] && spendData.daily[todayKey].total
           ? spendData.daily[todayKey].total
