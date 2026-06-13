@@ -614,6 +614,28 @@ export function tryForward(
                     // Capture cache hit/miss breakdown for providers that report it (DeepSeek).
                     // Support both OpenAI field names (prompt_cache_hit/miss) and
                     // Anthropic field names (cache_read/cache_creation_input_tokens).
+                    if (!(streamUsage as unknown as { _dbg?: number })._dbg) {
+                      (streamUsage as unknown as { _dbg: number })._dbg = 1;
+                    }
+                    const _sdbg = (streamUsage as unknown as { _dbg: number })._dbg;
+                    if (_sdbg <= 3) {
+                      (streamUsage as unknown as { _dbg: number })._dbg = _sdbg + 1;
+                      log.warn(
+                        reqId,
+                        'SSE usage#' +
+                          _sdbg +
+                          ' keys=' +
+                          JSON.stringify(Object.keys(parsedPayload.usage)) +
+                          ' hit=' +
+                          parsedPayload.usage.prompt_cache_hit_tokens +
+                          ' miss=' +
+                          parsedPayload.usage.prompt_cache_miss_tokens +
+                          ' pt=' +
+                          parsedPayload.usage.prompt_tokens +
+                          ' ct=' +
+                          parsedPayload.usage.completion_tokens,
+                      );
+                    }
                     if (typeof parsedPayload.usage.prompt_cache_hit_tokens === 'number') {
                       streamUsage.cache_hit_tokens = parsedPayload.usage.prompt_cache_hit_tokens;
                       streamUsage.cache_miss_tokens =
