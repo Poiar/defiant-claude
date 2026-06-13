@@ -1091,6 +1091,13 @@ describe('resolve→routes→env-vars consistency', () => {
 // ---------------------------------------------------------------------------
 describe('deepclaude.ps1 end-to-end', () => {
   const DEEPCLAUDE_PS1 = join(__dirname, '..', '..', 'deepclaude.ps1');
+  const OVERRIDES_FILE = join(homedir(), '.deepclaude', 'slot-overrides.json');
+
+  beforeEach(() => {
+    try {
+      rmSync(OVERRIDES_FILE, { force: true });
+    } catch {}
+  });
 
   function runDeepClaude(...args: string[]): { stdout: string; stderr: string; status: number } {
     const r = spawnSync('pwsh', ['-NoLogo', '-File', DEEPCLAUDE_PS1, ...args], {
@@ -1235,14 +1242,17 @@ describe('deepclaude.ps1 end-to-end', () => {
   });
 
   test('--probe ds+an does not eat config name as probe file', () => {
-    // Regression: --probe would consume the next arg as a ProbeFile
-    // if it didn't start with - or contain :. ds+an is a known config
-    // and should NOT be treated as a filename.
-    const { stderr } = runDeepClaude('--probe', 'ds+an');
-    // Must not crash with "file not found" or "cannot find routes"
-    expect(stderr).not.toMatch(/no routes file found|cannot find|ENOENT|file not found/i);
-    // Must NOT print the probe error about missing routes file
-    expect(stderr).not.toMatch(/Usage:.*--probe/);
+    // Regression: $ProbeFile (a [string] param) has no [Parameter()]
+    // attribute, so PowerShell prefix-matches --probe to $ProbeFile
+    // and consumes the next arg (ds+an) as its value. This bypasses
+    // flag normalization entirely. Fix: recover the value into
+    // $Backend/$ModelSpecs before the flag pass.
+    const { stdout, stderr } = runDeepClaude('--probe', 'ds+an');
+    // Must resolve as ds+an config, not try to open ds+an as a file
+    expect(stderr).not.toMatch(/ENOENT.*ds\+an/i);
+    // Must produce probe output for Anthropic haiku (ds+an routes haiku→an)
+    expect(stdout).toContain('an');
+    expect(stdout).toContain('claude-haiku-4-5-20251001');
   });
 
   // --- Fail-fast: unknown config errors instead of silently falling back ---
@@ -1674,6 +1684,13 @@ describe('deepclaude.ps1 second-pass flag scanner', () => {
 // ---------------------------------------------------------------------------
 describe('$AllSpecs filter edge cases', () => {
   const DEEPCLAUDE_PS1 = join(__dirname, '..', '..', 'deepclaude.ps1');
+  const OVERRIDES_FILE = join(homedir(), '.deepclaude', 'slot-overrides.json');
+
+  beforeEach(() => {
+    try {
+      rmSync(OVERRIDES_FILE, { force: true });
+    } catch {}
+  });
 
   function runDC(...args: string[]): { stdout: string; stderr: string; status: number } {
     const r = spawnSync('pwsh', ['-NoLogo', '-File', DEEPCLAUDE_PS1, ...args], {
