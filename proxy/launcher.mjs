@@ -44,11 +44,22 @@ function keyEnvToShortName(keyEnv) {
     return map[keyEnv] || '';
 }
 
+function readWinReg(name) {
+    if (process.platform !== 'win32') return null;
+    try {
+        const { execSync } = require('child_process');
+        const out = execSync(`reg query "HKCU\\Environment" /v ${name} 2>nul`, { encoding: 'utf8', timeout: 2000, windowsHide: true });
+        const m = out.match(/REG_\w+\s+(.+)/);
+        return m ? m[1].trim() : null;
+    } catch { return null; }
+}
+
 function getKey(pk) {
     const reg = registry();
     const prov = reg.providers[pk];
     if (!prov) return '';
-    return process.env[prov.keyEnv] || '';
+    // Try process.env first, then Windows registry (for detached proxy starts)
+    return process.env[prov.keyEnv] || readWinReg(prov.keyEnv) || '';
 }
 
 function maskKey(k) {

@@ -11,7 +11,7 @@ import { isProviderHealthy } from './stats';
 import { createLogger } from './log';
 
 const log = createLogger('routing');
-import { resolveKey, resolveAlias } from './config';
+import { resolveKey, resolveAlias, resolveProviderKey } from './config';
 
 // --- Types ---
 
@@ -206,7 +206,7 @@ export async function resolveTarget(
     }
 
     const targetUrl = new URL(provider.url);
-    const rawKey = process.env[provider.keyEnv || ''] || provider.key;
+    const rawKey = resolveProviderKey(provider.keyEnv || '') || provider.key;
     const resolvedKey = await resolveKey(rawKey);
     if (rawKey && rawKey.startsWith('$aes256gcm:') && resolvedKey === null) {
         return { error: 'Provider "' + providerKey + '" has encrypted key but DEEPCLAUDE_ENCRYPTION_KEY is not set or decryption failed' };
@@ -230,7 +230,7 @@ export async function resolveTarget(
     ): Promise<ResolvedTarget | null> {
         if (!routing) return null;
         if (fbKey === providerKey) return null;
-        const fbRawKey = process.env[fb.keyEnv || ''] || fb.key;
+        const fbRawKey = resolveProviderKey(fb.keyEnv || '') || fb.key;
         if (!fbRawKey) return null;
         const fbResolvedKey = await resolveKey(fbRawKey);
         if (fbRawKey.startsWith('$aes256gcm:') && fbResolvedKey === null) return null;

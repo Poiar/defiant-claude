@@ -248,7 +248,7 @@ export function getEffectiveThinkingConfig(
 async function syncProviderInfo(routing: RoutingConfig): Promise<void> {
     if (!routing || !routing.providers) return;
     for (const [key, provider] of Object.entries(routing.providers)) {
-        const rawKey = process.env[provider.keyEnv || ''] || provider.key;
+        const rawKey = resolveProviderKey(provider.keyEnv || '') || provider.key;
         const resolvedKey = await resolveKey(rawKey);
         const probeModel = (provider.format || 'anthropic') === 'openai' ? 'gpt-4o-mini' : 'claude-sonnet-4-20250514';
         registerProviderInfo(key, {
@@ -470,7 +470,7 @@ export async function resolveKey(rawKey: string | null | undefined): Promise<str
     if (typeof rawKey !== 'string' || !rawKey.startsWith('$aes256gcm:')) {
         return rawKey;
     }
-    const masterSecret = process.env.DEEPCLAUDE_ENCRYPTION_KEY;
+    const masterSecret = process.env.DEEPCLAUDE_ENCRYPTION_KEY || readWinReg('DEEPCLAUDE_ENCRYPTION_KEY');
     if (!masterSecret) {
         log.warn(null, 'Encrypted key found but DEEPCLAUDE_ENCRYPTION_KEY is not set');
         return null;
@@ -481,6 +481,27 @@ export async function resolveKey(rawKey: string | null | undefined): Promise<str
         log.warn(null, 'Failed to decrypt API key: ' + (err as Error).message);
         return null;
     }
+}
+
+// Fallback: read a Windows User-level environment variable from the registry.
+// When the proxy starts as a detached process (e.g. CC auto-restart), it may
+// not inherit all parent shell env vars. Registry lookup ensures API keys
+// set via setx / [Environment]::SetEnvironmentVariable are always available.
+function readWinReg(name: string): string | null {
+    if (process.platform !== 'win32') return null;
+    try {
+        const { execSync } = require('child_process');
+        const out = execSync(`reg query "HKCU\\Environment" /v ${name} 2>nul`, { encoding: 'utf8', timeout: 2000 });
+        const m = out.match(/REG_\w+\s+(.+)/);
+        return m ? m[1].trim() : null;
+    } catch { return null; }
+}
+
+// Resolve a provider key: try process.env first, then Windows registry.
+export function resolveProviderKey(keyEnv: string): string {
+    if (typeof keyEnv !== 'string' || !keyEnv) return '';
+    const val = process.env[keyEnv] || readWinReg(keyEnv) || '';
+    return val;
 }
 
 // --- Model alias resolution ---
