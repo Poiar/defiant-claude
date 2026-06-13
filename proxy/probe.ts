@@ -3,7 +3,7 @@
 import http from 'http';
 import https from 'https';
 import fs from 'fs';
-import { resolveKey } from './config';
+import { resolveKey, resolveProviderKey } from './config';
 import { translateRequest } from './protocol-translate';
 import { deduplicatePath } from './util';
 import type { RoutingConfig } from './routing';
@@ -252,7 +252,7 @@ async function addSlot(config: RoutingConfig, seen: Set<string>, slots: ProbeSlo
 
     const provider = config.providers![providerKey];
     const rawKey = provider.keyEnv
-        ? (process.env[provider.keyEnv] || provider.key || null)
+        ? (resolveProviderKey(provider.keyEnv) || provider.key || null)
         : (provider.key || null);
     const resolvedKey = await resolveKey(rawKey);
 
