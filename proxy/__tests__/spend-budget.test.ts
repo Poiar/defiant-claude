@@ -121,6 +121,44 @@ describe('getDailySpend', () => {
     fs.writeFileSync(tmpFile, JSON.stringify({ daily: { [today]: 4.2 } }));
     expect(getDailySpend()).toBe(4.2);
   });
+
+  test('picks up legacy da-DK date key (d.m.yyyy) for today', () => {
+    // Today in da-DK format: 13.6.2026
+    const d = new Date();
+    const daDk = `${d.getDate()}.${d.getMonth() + 1}.${d.getFullYear()}`;
+    fs.writeFileSync(tmpFile, JSON.stringify({ daily: { [daDk]: 3.5 } }));
+    expect(getDailySpend()).toBe(3.5);
+  });
+
+  test('merges ISO + legacy da-DK keys for the same day', () => {
+    const today = dateISO(new Date());
+    const d = new Date();
+    const daDk = `${d.getDate()}.${d.getMonth() + 1}.${d.getFullYear()}`;
+    // Both keys exist for today — should be summed.
+    fs.writeFileSync(tmpFile, JSON.stringify({ daily: { [today]: 4.0, [daDk]: 2.5 } }));
+    expect(getDailySpend()).toBe(6.5);
+  });
+
+  test('does not pick up legacy key for a different day', () => {
+    const today = dateISO(new Date());
+    // da-DK key for yesterday — should not count toward today.
+    const yesterday = new Date(Date.now() - 86400000);
+    const yesterdayDaDk = `${yesterday.getDate()}.${yesterday.getMonth() + 1}.${yesterday.getFullYear()}`;
+    fs.writeFileSync(tmpFile, JSON.stringify({ daily: { [today]: 4.0, [yesterdayDaDk]: 9.99 } }));
+    expect(getDailySpend()).toBe(4.0);
+  });
+
+  test('handles legacy key with object format (total field)', () => {
+    const d = new Date();
+    const daDk = `${d.getDate()}.${d.getMonth() + 1}.${d.getFullYear()}`;
+    fs.writeFileSync(
+      tmpFile,
+      JSON.stringify({
+        daily: { [daDk]: { total: 2.25, byProvider: { ds: 2.25 } } },
+      }),
+    );
+    expect(getDailySpend()).toBe(2.25);
+  });
 });
 
 describe('budget messages', () => {
