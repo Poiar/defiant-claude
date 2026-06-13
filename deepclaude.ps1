@@ -125,6 +125,20 @@ try {
 # Normalize --flag arguments (accept both --flag and -Flag forms)
 # Uses if/elseif instead of switch() — PowerShell switch statement creates a
 # scoping conflict when a $Switch variable exists, so assignments don't stick.
+
+# PowerShell prefix-matches parameter names: --probe binds to $ProbeFile
+# (a [string] param with no [Parameter()] attribute), consuming the next
+# arg as the value. When this happens, $Backend is null and flag
+# normalization is skipped. Recover the value into $Backend/$ModelSpecs
+# so the normal flag processing below handles --probe correctly.
+if (-not $Backend -and $PSBoundParameters.ContainsKey('ProbeFile')) {
+    $Backend = '--probe'
+    if ($ProbeFile) {
+        $ModelSpecs = @($ProbeFile) + @($ModelSpecs | Where-Object { $_ })
+    }
+    $ProbeFile = $null
+}
+
 if ($Backend -match '^--(.+)$') {
     $flag = $Matches[1]
     if ($flag -eq 'persist')             { $Persist = $true }
