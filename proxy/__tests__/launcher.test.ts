@@ -217,8 +217,10 @@ describe('init-overrides (CLI)', () => {
   });
 
   test('existing user overrides survive init-overrides', () => {
-    // Simulate: first set a user override, then switch configs
-    // The set-slot action writes user overrides on top of _defaults
+    // Normal workflow: init a config first (establishes _defaults),
+    // then set a user override, then switch configs.
+    // The user override must survive the config switch.
+    runLauncherJson('init-overrides', '--name=ds');
     runLauncher('set-slot', '--slot=fable', '--value=ds:deepseek-v4-flash');
 
     // Now init ds+an — _defaults should update but user fable override persists
@@ -249,10 +251,14 @@ describe('init-overrides (CLI)', () => {
     expect(result.opus).toBe('ds:deepseek-v4-pro');
     expect(result.sonnet).toBe('ds:deepseek-v4-pro');
     expect(result.fable).toBe('ds:deepseek-v4-pro');
+    // _configName tracks which config produced these defaults
+    expect(result._configName).toBe('ds+an');
   });
 
   test('init-overrides direct keys: user override wins over config default', () => {
-    // Set a user override, then init a config — user value must win
+    // Normal workflow: init a config first, then set a user override,
+    // then switch configs. The user override must survive.
+    runLauncherJson('init-overrides', '--name=ds');
     runLauncher('set-slot', '--slot=fable', '--value=ds:deepseek-v4-flash');
     const result = runLauncherJson('init-overrides', '--name=ds+an');
     // User override wins the direct key
@@ -941,6 +947,39 @@ describe('read-override (CLI)', () => {
     );
     expect(result.value).toBe('haiku:claude-haiku-4-5-20251001');
   });
+
+  test('read-override with missing _defaults still reads direct keys', () => {
+    // Regression: if _defaults is missing but direct keys exist, getSlotModel
+    // should return the direct key (not fall to fallback).
+    writeFileSync(
+      SLOT_FILE,
+      JSON.stringify({
+        opus: 'ds:deepseek-v4-pro',
+        haiku: 'an:claude-haiku-4-5-20251001',
+      }),
+    );
+
+    const result = runLauncherJson(
+      'read-override',
+      '--slot=haiku',
+      '--fallback=ds:deepseek-v4-flash',
+    );
+    // Should return the direct key value, not the fallback
+    expect(result.value).toMatch(/^haiku:claude-haiku-4-5-20251001/);
+  });
+
+  test('read-override falls back to fallback when no direct key and no _defaults', () => {
+    // File exists but has no relevant keys
+    writeFileSync(SLOT_FILE, JSON.stringify({ opus: 'ds:deepseek-v4-pro' }));
+
+    const result = runLauncherJson(
+      'read-override',
+      '--slot=haiku',
+      '--fallback=ds:deepseek-v4-flash',
+    );
+    // Falls back to fallback (with append1m since deepseek-v4-flash is 1M)
+    expect(result.value).toContain('deepseek-v4-flash');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1452,6 +1491,363 @@ describe('$AllSpecs filter edge cases', () => {
     expect(stdout).toMatch(/haiku\s+an \(Anthropic/);
     expect(stdout).toMatch(/subagent\s+an \(Anthropic/);
     expect(stdout).toMatch(/opus\s+ds \(DeepSeek/);
+  });
+});
+
+// ===========================================================================
+// REGRESSION TESTS — bugs that silently broke config resolution or routing
+// ===========================================================================
+
+// --- CRITICAL: initOverrides stale config poisoning (missing _defaults) ---
+// Bug: When slot-overrides.json has no _defaults field (corrupted, old version,
+// or manually edited), oldDefaults = {} and every direct key compares as
+// "!== undefined" → treated as a user override → preserved. This silently
+// defeats config switches: dc ds+an still routes haiku to DeepSeek.
+describe('REGRESSION: initOverrides missing _defaults stale config', () => {
+  const SLOT_FILE = join(homedir(), '.deepclaude', 'slot-overrides.json');
+  const SLOTS = ['opus', 'sonnet', 'haiku', 'subagent', 'fable'];
+  let _saved: string | null = null;
+
+  beforeAll(() => {
+    if (existsSync(SLOT_FILE)) _saved = readFileSync(SLOT_FILE, 'utf-8');
+  });
+  afterAll(() => {
+    if (_saved !== null) writeFileSync(SLOT_FILE, _saved, 'utf-8');
+    else
+      try {
+        rmSync(SLOT_FILE, { force: true });
+      } catch {}
+  });
+  beforeEach(() => {
+    try {
+      rmSync(SLOT_FILE, { force: true });
+    } catch {}
+  });
+
+  // --- Root cause: no _defaults → all stale keys preserved ---
+  test('missing _defaults: all stale ds keys replaced by ds+an defaults', () => {
+    // Write a file with ds config values but NO _defaults (corrupted/old version)
+    writeFileSync(
+      SLOT_FILE,
+      JSON.stringify({
+        opus: 'ds:deepseek-v4-pro',
+        sonnet: 'ds:deepseek-v4-pro',
+        haiku: 'ds:deepseek-v4-flash',
+        subagent: 'ds:deepseek-v4-flash',
+        fable: 'ds:deepseek-v4-pro',
+      }),
+    );
+
+    const result = runLauncherJson('init-overrides', '--name=ds+an');
+
+    // ALL slots must be from ds+an, NOT preserved from the stale file
+    expect(result.opus).toBe('ds:deepseek-v4-pro');
+    expect(result.sonnet).toBe('ds:deepseek-v4-pro');
+    expect(result.haiku).toBe('an:claude-haiku-4-5-20251001');
+    expect(result.subagent).toBe('an:claude-haiku-4-5-20251001');
+    expect(result.fable).toBe('ds:deepseek-v4-pro');
+
+    // _defaults must be populated
+    expect(result._defaults.haiku).toBe('an:claude-haiku-4-5-20251001');
+    expect(result._configName).toBe('ds+an');
+
+    // Round-trip: file on disk must match
+    const onDisk = JSON.parse(readFileSync(SLOT_FILE, 'utf-8'));
+    for (const slot of SLOTS) {
+      expect(onDisk[slot]).toBe(result[slot]);
+    }
+    expect(onDisk._configName).toBe('ds+an');
+  });
+
+  test('missing _defaults: ds+oc stale keys replaced by ds+an defaults', () => {
+    // ds+oc has haiku/subagent = oc:big-pickle
+    writeFileSync(
+      SLOT_FILE,
+      JSON.stringify({
+        opus: 'ds:deepseek-v4-pro',
+        sonnet: 'ds:deepseek-v4-pro',
+        haiku: 'oc:big-pickle',
+        subagent: 'oc:big-pickle',
+        fable: 'ds:deepseek-v4-pro',
+      }),
+    );
+
+    const result = runLauncherJson('init-overrides', '--name=ds+an');
+
+    // haiku/subagent must switch from oc to an, NOT be preserved
+    expect(result.haiku).toBe('an:claude-haiku-4-5-20251001');
+    expect(result.subagent).toBe('an:claude-haiku-4-5-20251001');
+    expect(result.opus).toBe('ds:deepseek-v4-pro');
+    expect(result.fable).toBe('ds:deepseek-v4-pro');
+    expect(result._configName).toBe('ds+an');
+  });
+
+  test('missing _defaults: ds+an stale keys replaced by ds defaults', () => {
+    writeFileSync(
+      SLOT_FILE,
+      JSON.stringify({
+        opus: 'ds:deepseek-v4-pro',
+        sonnet: 'ds:deepseek-v4-pro',
+        haiku: 'an:claude-haiku-4-5-20251001',
+        subagent: 'an:claude-haiku-4-5-20251001',
+        fable: 'ds:deepseek-v4-pro',
+      }),
+    );
+
+    const result = runLauncherJson('init-overrides', '--name=ds');
+
+    // All slots must switch to ds config
+    expect(result.haiku).toBe('ds:deepseek-v4-flash');
+    expect(result.subagent).toBe('ds:deepseek-v4-flash');
+    expect(result.opus).toBe('ds:deepseek-v4-pro');
+    expect(result._configName).toBe('ds');
+  });
+
+  // --- _configName tracking ---
+  test('_configName is present and matches the config key', () => {
+    expect(runLauncherJson('init-overrides', '--name=ds+an')._configName).toBe('ds+an');
+    expect(runLauncherJson('init-overrides', '--name=ds')._configName).toBe('ds');
+    expect(runLauncherJson('init-overrides', '--name=ds+oc')._configName).toBe('ds+oc');
+    expect(runLauncherJson('init-overrides', '--name=or')._configName).toBe('or');
+  });
+
+  test('_configName changes when switching configs', () => {
+    // Start with ds
+    const first = runLauncherJson('init-overrides', '--name=ds');
+    expect(first._configName).toBe('ds');
+
+    // Switch to ds+an — _configName must change
+    const second = runLauncherJson('init-overrides', '--name=ds+an');
+    expect(second._configName).toBe('ds+an');
+
+    // Switch back to ds — _configName must update
+    const third = runLauncherJson('init-overrides', '--name=ds');
+    expect(third._configName).toBe('ds');
+  });
+
+  test('_configName survives file round-trip (write→read→re-init)', () => {
+    // Init ds+an, verify file has _configName, verify re-init preserves it
+    runLauncherJson('init-overrides', '--name=ds+an');
+    const onDisk = JSON.parse(readFileSync(SLOT_FILE, 'utf-8'));
+    expect(onDisk._configName).toBe('ds+an');
+
+    // Re-init same config — _configName stays
+    const result = runLauncherJson('init-overrides', '--name=ds+an');
+    expect(result._configName).toBe('ds+an');
+  });
+
+  // --- File-written integrity ---
+  test('file on disk matches returned object for ALL slots', () => {
+    const result = runLauncherJson('init-overrides', '--name=ds+an');
+    const onDisk = JSON.parse(readFileSync(SLOT_FILE, 'utf-8'));
+
+    for (const slot of SLOTS) {
+      expect(onDisk[slot]).toBe(result[slot]);
+    }
+    expect(onDisk._defaults.haiku).toBe(result._defaults.haiku);
+    expect(onDisk._defaults.subagent).toBe(result._defaults.subagent);
+    expect(onDisk._configName).toBe(result._configName);
+  });
+
+  // --- Empty file (= first-time init) ---
+  test('empty file (first-time init): all slots written from config', () => {
+    // File doesn't exist (removed in beforeEach)
+    const result = runLauncherJson('init-overrides', '--name=ds+an');
+
+    // All 5 slots + _defaults + _configName must be present
+    for (const slot of SLOTS) {
+      expect(result[slot]).toBeDefined();
+      expect(typeof result[slot]).toBe('string');
+      expect(result[slot]).toMatch(/^[a-z][a-z0-9_-]*:.+$/);
+    }
+    expect(result._defaults).toBeDefined();
+    expect(result._configName).toBe('ds+an');
+
+    // File must exist on disk
+    expect(existsSync(SLOT_FILE)).toBe(true);
+  });
+
+  // --- File with only non-slot keys (edge case) ---
+  test('file with only non-slot keys (no _defaults, no slot keys)', () => {
+    writeFileSync(SLOT_FILE, JSON.stringify({ _comment: 'old format' }));
+
+    const result = runLauncherJson('init-overrides', '--name=ds+an');
+
+    // All slots must be from ds+an (no stale keys to preserve)
+    expect(result.haiku).toBe('an:claude-haiku-4-5-20251001');
+    expect(result.subagent).toBe('an:claude-haiku-4-5-20251001');
+    expect(result.opus).toBe('ds:deepseek-v4-pro');
+    expect(result._configName).toBe('ds+an');
+  });
+
+  // --- Corrupt JSON in file ---
+  test('corrupt JSON file: treated as empty, new config written', () => {
+    writeFileSync(SLOT_FILE, 'not valid json {{{');
+
+    const result = runLauncherJson('init-overrides', '--name=ds+an');
+
+    expect(result.haiku).toBe('an:claude-haiku-4-5-20251001');
+    expect(result.subagent).toBe('an:claude-haiku-4-5-20251001');
+    expect(result._configName).toBe('ds+an');
+  });
+});
+
+// --- CRITICAL: initOverrides cross-contamination between mixed configs ---
+// When switching between ds, ds+an, ds+oc, every slot must be correct.
+// A partial switch (e.g., haiku changes but subagent doesn't) is a silent
+// routing failure — the proxy sends requests to the wrong provider.
+describe('REGRESSION: initOverrides cross-contamination prevention', () => {
+  const SLOT_FILE = join(homedir(), '.deepclaude', 'slot-overrides.json');
+  const SLOTS = ['opus', 'sonnet', 'haiku', 'subagent', 'fable'];
+  let _saved: string | null = null;
+
+  beforeAll(() => {
+    if (existsSync(SLOT_FILE)) _saved = readFileSync(SLOT_FILE, 'utf-8');
+  });
+  afterAll(() => {
+    if (_saved !== null) writeFileSync(SLOT_FILE, _saved, 'utf-8');
+    else
+      try {
+        rmSync(SLOT_FILE, { force: true });
+      } catch {}
+  });
+  beforeEach(() => {
+    try {
+      rmSync(SLOT_FILE, { force: true });
+    } catch {}
+  });
+
+  // Expected slot values for each config — used to verify every slot
+  const expected: Record<string, Record<string, string>> = {
+    ds: {
+      opus: 'ds:deepseek-v4-pro',
+      sonnet: 'ds:deepseek-v4-pro',
+      haiku: 'ds:deepseek-v4-flash',
+      subagent: 'ds:deepseek-v4-flash',
+      fable: 'ds:deepseek-v4-pro',
+    },
+    'ds+an': {
+      opus: 'ds:deepseek-v4-pro',
+      sonnet: 'ds:deepseek-v4-pro',
+      haiku: 'an:claude-haiku-4-5-20251001',
+      subagent: 'an:claude-haiku-4-5-20251001',
+      fable: 'ds:deepseek-v4-pro',
+    },
+    'ds+oc': {
+      opus: 'ds:deepseek-v4-pro',
+      sonnet: 'ds:deepseek-v4-pro',
+      haiku: 'oc:big-pickle',
+      subagent: 'oc:big-pickle',
+      fable: 'ds:deepseek-v4-pro',
+    },
+  };
+
+  test('ds → ds+an: ALL 5 slots correct (not just haiku/subagent)', () => {
+    runLauncherJson('init-overrides', '--name=ds');
+    const result = runLauncherJson('init-overrides', '--name=ds+an');
+    for (const slot of SLOTS) {
+      expect(result[slot]).toBe(expected['ds+an'][slot]);
+    }
+    expect(result._configName).toBe('ds+an');
+  });
+
+  test('ds+an → ds: ALL 5 slots correct', () => {
+    runLauncherJson('init-overrides', '--name=ds+an');
+    const result = runLauncherJson('init-overrides', '--name=ds');
+    for (const slot of SLOTS) {
+      expect(result[slot]).toBe(expected['ds'][slot]);
+    }
+    expect(result._configName).toBe('ds');
+  });
+
+  test('ds+oc → ds+an: ALL 5 slots correct', () => {
+    runLauncherJson('init-overrides', '--name=ds+oc');
+    const result = runLauncherJson('init-overrides', '--name=ds+an');
+    for (const slot of SLOTS) {
+      expect(result[slot]).toBe(expected['ds+an'][slot]);
+    }
+    expect(result._configName).toBe('ds+an');
+  });
+
+  test('ds+an → ds+oc: ALL 5 slots correct', () => {
+    runLauncherJson('init-overrides', '--name=ds+an');
+    const result = runLauncherJson('init-overrides', '--name=ds+oc');
+    for (const slot of SLOTS) {
+      expect(result[slot]).toBe(expected['ds+oc'][slot]);
+    }
+    expect(result._configName).toBe('ds+oc');
+  });
+
+  test('ds → ds+oc → ds+an → ds: full cycle, every slot verified at each step', () => {
+    // ds
+    let result = runLauncherJson('init-overrides', '--name=ds');
+    for (const slot of SLOTS) {
+      expect(result[slot]).toBe(expected['ds'][slot]);
+    }
+    expect(result._configName).toBe('ds');
+
+    // ds → ds+oc
+    result = runLauncherJson('init-overrides', '--name=ds+oc');
+    for (const slot of SLOTS) {
+      expect(result[slot]).toBe(expected['ds+oc'][slot]);
+    }
+    expect(result._configName).toBe('ds+oc');
+
+    // ds+oc → ds+an
+    result = runLauncherJson('init-overrides', '--name=ds+an');
+    for (const slot of SLOTS) {
+      expect(result[slot]).toBe(expected['ds+an'][slot]);
+    }
+    expect(result._configName).toBe('ds+an');
+
+    // ds+an → ds (back to start)
+    result = runLauncherJson('init-overrides', '--name=ds');
+    for (const slot of SLOTS) {
+      expect(result[slot]).toBe(expected['ds'][slot]);
+    }
+    expect(result._configName).toBe('ds');
+  });
+
+  // --- User override across config switches (should survive, not break defaults) ---
+  test('user override persists across config switches without poisoning defaults', () => {
+    // Start with ds config
+    runLauncherJson('init-overrides', '--name=ds');
+
+    // User overrides the fable slot to a different model
+    runLauncher('set-slot', '--slot=fable', '--value=ds:deepseek-v4-flash');
+
+    // Switch to ds+an — fable override should survive, but other slots
+    // should switch to ds+an defaults (haiku=an, subagent=an)
+    const result = runLauncherJson('init-overrides', '--name=ds+an');
+
+    // User override preserved
+    expect(result.fable).toBe('ds:deepseek-v4-flash');
+    // Config defaults for non-overridden slots
+    expect(result.opus).toBe('ds:deepseek-v4-pro');
+    expect(result.haiku).toBe('an:claude-haiku-4-5-20251001');
+    expect(result.subagent).toBe('an:claude-haiku-4-5-20251001');
+    // _defaults records the ds+an baseline
+    expect(result._defaults.fable).toBe('ds:deepseek-v4-pro');
+    expect(result._configName).toBe('ds+an');
+  });
+
+  test('user override that matches NEW default is NOT preserved', () => {
+    // User overrides haiku to an:claude-haiku-4-5-20251001 while on ds config
+    // (this differs from ds default ds:deepseek-v4-flash → genuine override)
+    runLauncherJson('init-overrides', '--name=ds');
+    runLauncher('set-slot', '--slot=haiku', '--value=an:claude-haiku-4-5-20251001');
+
+    // Switch to ds+an — haiku default IS an:claude-haiku-4-5-20251001
+    // The user override matches the new default → should be cleaned up
+    const result = runLauncherJson('init-overrides', '--name=ds+an');
+
+    // haiku should be the ds+an default (override cleaned, matching the new default)
+    // But actually: the old default was ds:deepseek-v4-flash, user set an:claude-haiku
+    // The user override differs from OLD default → it's a genuine override → preserved.
+    // This is correct behavior: the user explicitly chose Anthropic haiku.
+    expect(result.haiku).toBe('an:claude-haiku-4-5-20251001');
+    expect(result._defaults.haiku).toBe('an:claude-haiku-4-5-20251001');
+    expect(result._configName).toBe('ds+an');
   });
 });
 

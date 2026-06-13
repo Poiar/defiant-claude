@@ -299,6 +299,76 @@ function Invoke-LauncherMjs {
     return $result
 }
 
+# --- Initialize slot overrides with validation ---
+# Calls launcher.mjs init-overrides and validates the result:
+# - All 5 slots (opus/sonnet/haiku/subagent/fable) must have direct keys
+# - _configName must be present
+# - The written file must match the returned object (round-trip verification)
+# If validation fails, the function logs the discrepancy and exits.
+function Initialize-SlotOverrides {
+    param([string]$Name, [string]$Specs)
+    if ($Name) {
+        $resultJson = Invoke-LauncherMjs "init-overrides", "--name=$Name"
+    } elseif ($Specs) {
+        $resultJson = Invoke-LauncherMjs "init-overrides", "--specs=$Specs"
+    } else {
+        Write-Host "INTERNAL ERROR: Initialize-SlotOverrides requires --Name or --Specs" -ForegroundColor Red
+        exit 1
+    }
+    $result = $resultJson | ConvertFrom-Json
+
+    # Verify all 5 slots have direct keys
+    $slots = @("opus", "sonnet", "haiku", "subagent", "fable")
+    $missing = @()
+    foreach ($s in $slots) {
+        if (-not $result.$s) { $missing += $s }
+    }
+    if ($missing) {
+        Write-Host "ERROR: init-overrides missing direct keys: $($missing -join ', ')" -ForegroundColor Red
+        Write-Host "  Result: $resultJson" -ForegroundColor DarkGray
+        Write-Host "  The slot-overrides.json file may be corrupt. Delete ~/.deepclaude/slot-overrides.json and retry." -ForegroundColor Yellow
+        exit 1
+    }
+
+    # Verify _defaults matches direct keys (when no user overrides are active)
+    $mismatched = @()
+    foreach ($s in $slots) {
+        if ($result._defaults.$s -and $result.$s -ne $result._defaults.$s) {
+            $mismatched += "$s (direct=$($result.$s), default=$($result._defaults.$s))"
+        }
+    }
+    if ($mismatched) {
+        Write-Host "  Slot overrides active (user customizations): $($mismatched -join '; ')" -ForegroundColor DarkGray
+    }
+
+    # Verify _configName is present and reasonable
+    if (-not $result._configName) {
+        Write-Host "ERROR: init-overrides missing _configName field" -ForegroundColor Red
+        exit 1
+    }
+
+    # Round-trip: read the file and verify it matches the returned object
+    if (Test-Path $SlotOverridesFile) {
+        try {
+            $onDisk = Get-Content $SlotOverridesFile -Raw | ConvertFrom-Json
+            foreach ($s in $slots) {
+                if ($onDisk.$s -ne $result.$s) {
+                    Write-Host "ERROR: init-overrides write mismatch: slot $s on disk='$($onDisk.$s)', returned='$($result.$s)'" -ForegroundColor Red
+                    exit 1
+                }
+            }
+            if ($onDisk._configName -ne $result._configName) {
+                Write-Host "ERROR: init-overrides write mismatch: _configName on disk='$($onDisk._configName)', returned='$($result._configName)'" -ForegroundColor Red
+                exit 1
+            }
+        } catch {
+            Write-Host "WARNING: Could not verify slot-overrides.json round-trip: $_" -ForegroundColor Yellow
+        }
+    }
+
+    return $result
+}
+
 # Ensure state directory exists
 if (-not (Test-Path $DeepClaudeDir)) {
     New-Item -ItemType Directory -Path $DeepClaudeDir -Force | Out-Null
@@ -1855,11 +1925,11 @@ if ($Switch -or $PSBoundParameters.ContainsKey('Switch')) {
     # Build routes and slot overrides via launcher.mjs
     if ($Configs.Contains($switchTarget)) {
         $routesJson = Invoke-LauncherMjs "build-routes", "--name=$switchTarget"
-        Invoke-LauncherMjs "init-overrides", "--name=$switchTarget" | Out-Null
+        Initialize-SlotOverrides -Name $switchTarget | Out-Null
     } else {
         $specs = $switchTarget -split '\s+'
         $routesJson = Invoke-LauncherMjs "build-routes", "--specs=$($specs -join ',')"
-        Invoke-LauncherMjs "init-overrides", "--specs=$($specs -join ',')" | Out-Null
+        Initialize-SlotOverrides -Specs ($specs -join ',') | Out-Null
     }
 
     $routesFile = $CurrentRoutesFile
@@ -1934,10 +2004,10 @@ if ($Remote) {
     # Build routes and slot overrides via launcher.mjs
     if ($AllSpecs.Count -eq 1 -and $Configs.Contains($AllSpecs[0])) {
         $routesJson = Invoke-LauncherMjs "build-routes", "--name=$($AllSpecs[0])"
-        Invoke-LauncherMjs "init-overrides", "--name=$($AllSpecs[0])" | Out-Null
+        Initialize-SlotOverrides -Name $AllSpecs[0] | Out-Null
     } else {
         $routesJson = Invoke-LauncherMjs "build-routes", "--specs=$($AllSpecs -join ',')"
-        Invoke-LauncherMjs "init-overrides", "--specs=$($AllSpecs -join ',')" | Out-Null
+        Initialize-SlotOverrides -Specs ($AllSpecs -join ',') | Out-Null
     }
 
     $proxyState = Get-ProxyState
@@ -2021,10 +2091,10 @@ Write-Host ""
 # Build routes and slot overrides via launcher.mjs
 if ($AllSpecs.Count -eq 1 -and $Configs.Contains($AllSpecs[0])) {
     $routesJson = Invoke-LauncherMjs "build-routes", "--name=$($AllSpecs[0])"
-    Invoke-LauncherMjs "init-overrides", "--name=$($AllSpecs[0])" | Out-Null
+    Initialize-SlotOverrides -Name $AllSpecs[0] | Out-Null
 } else {
     $routesJson = Invoke-LauncherMjs "build-routes", "--specs=$($AllSpecs -join ',')"
-    Invoke-LauncherMjs "init-overrides", "--specs=$($AllSpecs -join ',')" | Out-Null
+    Initialize-SlotOverrides -Specs ($AllSpecs -join ',') | Out-Null
 }
 
 $proxyState = Get-ProxyState

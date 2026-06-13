@@ -322,7 +322,7 @@ function writeOverridesFile(data) {
   writeAtomic(SLOT_OVERRIDES_FILE, JSON.stringify(data));
 }
 
-export function initOverrides(resolved) {
+export function initOverrides(resolved, configKey) {
   const defaults = {};
   for (const slot of SLOTS) {
     const s = resolved.slots[slot];
@@ -333,16 +333,29 @@ export function initOverrides(resolved) {
   // the OLD config's _defaults. Direct keys that match the old _defaults
   // were written by a previous initOverrides call and must be replaced by
   // the new config's defaults. User overrides survive config switches.
-  const oldDefaults = existing._defaults || {};
+  //
+  // IMPORTANT: when _defaults is missing from the file (corrupted, from an
+  // older version, or manually edited), oldDefaults is {} and EVERY direct
+  // key would compare !== undefined → treated as a "user override" →
+  // preserved. This silently defeats config switches. Fix: when _defaults
+  // is absent, treat ALL existing direct keys as stale — wipe them.
+  const hasOldDefaults =
+    existing._defaults &&
+    typeof existing._defaults === 'object' &&
+    Object.keys(existing._defaults).length > 0;
+  const oldDefaults = hasOldDefaults ? existing._defaults : {};
   const userOverrides = {};
   for (const slot of SLOTS) {
-    if (existing[slot] && stripSlotPrefix(existing[slot]) !== oldDefaults[slot]) {
+    if (existing[slot] && hasOldDefaults && stripSlotPrefix(existing[slot]) !== oldDefaults[slot]) {
       userOverrides[slot] = existing[slot];
     }
   }
+  // Track which config name wrote this file so we can detect stale overrides.
+  const configName = configKey || resolved.name || 'ad-hoc';
   // Direct slot keys are visible to the proxy's routing.ts (slotOverrides[slot]).
   // _defaults is the canonical config snapshot for getSlotModel and --set-slot --clear.
-  const merged = { ...defaults, ...userOverrides, _defaults: defaults };
+  // _configName identifies which config produced these defaults (used for debugging).
+  const merged = { ...defaults, ...userOverrides, _defaults: defaults, _configName: configName };
   writeOverridesFile(merged);
   return merged;
 }
@@ -849,9 +862,14 @@ async function main() {
       }
       case 'init-overrides': {
         let resolved;
-        if (opts.name) resolved = resolveConfig(opts.name);
-        else if (opts.specs) resolved = buildAdhocConfig(opts.specs.split(','));
-        else {
+        let configKey = null;
+        if (opts.name) {
+          resolved = resolveConfig(opts.name);
+          configKey = opts.name;
+        } else if (opts.specs) {
+          resolved = buildAdhocConfig(opts.specs.split(','));
+          configKey = 'ad-hoc';
+        } else {
           // Manual slot/value pairs
           const manual = { slots: {}, providers: {}, modelProviders: {}, defaultProvider: '' };
           const slotVals = Array.isArray(opts.slot) ? opts.slot : [opts.slot];
@@ -863,8 +881,9 @@ async function main() {
             manual.slots[slot] = { provider: provKey, model: modelId };
           }
           resolved = manual;
+          configKey = 'manual';
         }
-        result = initOverrides(resolved);
+        result = initOverrides(resolved, configKey);
         break;
       }
       case 'read-override': {
