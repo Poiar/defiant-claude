@@ -45,11 +45,11 @@ function keyEnvToShortName(keyEnv) {
 }
 
 function readWinReg(name) {
-    if (process.platform !== 'win32') return null;
+    if (platform() !== 'win32') return null;
     try {
-        const { execSync } = require('child_process');
-        const out = execSync(`reg query "HKCU\\Environment" /v ${name} 2>nul`, { encoding: 'utf8', timeout: 2000, windowsHide: true });
-        const m = out.match(/REG_\w+\s+(.+)/);
+        const out = spawnSync('reg', ['query', 'HKCU\\Environment', '/v', name], { encoding: 'utf8', timeout: 2000, windowsHide: true });
+        if (out.status !== 0 || !out.stdout) return null;
+        const m = out.stdout.match(/REG_\w+\s+(.+)/);
         return m ? m[1].trim() : null;
     } catch { return null; }
 }
