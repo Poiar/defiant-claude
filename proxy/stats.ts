@@ -998,6 +998,17 @@ export async function recordSpend(
     // Migrate legacy da-DK keys (d.m.yyyy) → ISO (yyyy-mm-dd).
     // Bug: prior to 2026-06-13, journal replay used ISO keys but live
     // flushes used da-DK, so today's spend was split across two keys.
+    //
+    // Pre-7c1bb45 code wrote spend as plain numbers (no byProvider). Later
+    // code used {total, byProvider} objects. When an ISO key already exists
+    // (from en-CA era or a prior new-code flush), the addition at line 1016
+    // can combine an old plain-number total (no byProvider) with a da-DK
+    // entry (with byProvider), producing an inflated total that doesn't
+    // match the sum of byProvider entries.
+    //
+    // Fix: after merging, if the entry's total is more than 1% larger than
+    // its byProvider sum, trust byProvider (per-transaction tracking) and
+    // clamp the total to the byProvider sum.
     for (const [date, entry] of Object.entries(daily)) {
       const legacy = date.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
       if (legacy) {
@@ -1014,6 +1025,19 @@ export async function recordSpend(
           daily[iso] = entry;
         }
         delete daily[date];
+      }
+    }
+
+    // Self-healing: clamp any daily total that exceeds its byProvider sum
+    // to prevent permanent data corruption from format migration artifacts.
+    for (const [date, entry] of Object.entries(daily)) {
+      const bpSum = Object.values(entry.byProvider).reduce((a: number, b: number) => a + b, 0);
+      if (entry.total > bpSum && bpSum > 0 && entry.total > bpSum * 1.01) {
+        log.warn(
+          null,
+          `Clamping daily total for ${date}: ${entry.total.toFixed(4)} → ${bpSum.toFixed(4)} (byProvider sum)`,
+        );
+        entry.total = parseFloat(bpSum.toFixed(4));
       }
     }
 

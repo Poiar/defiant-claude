@@ -199,8 +199,11 @@ async function main() {
           if (existsSync(ccSpendPath)) {
             sessionSpend = parseFloat(readFileSync(ccSpendPath, 'utf8').trim()) || 0;
           }
-          // No fallback: a fresh session starts at $0.00.
-          // The cc-spend file is created on the first spend flush.
+          // The cc-spend file is created on the first spend flush, which
+          // happens before the statusline renders (CC needs an API round-
+          // trip to populate context-window info, and the proxy flushes
+          // spend synchronously as part of that response). So by the time
+          // you see the statusline, real money has already been spent.
         } catch (_) {
           /* stay 0 */
         }
