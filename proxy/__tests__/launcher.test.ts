@@ -1203,10 +1203,35 @@ describe('deepclaude.ps1 end-to-end', () => {
   });
 
   test('--dry-run --dry-run ds+an: double-flag is resilient', () => {
-    // Second pass re-sees --dry-run but DryRun already true — should not crash
+    // Second pass re-sees --dry-run but DryRun already true — should not crash.
+    // Also verifies that --dry-run does NOT eat `ds+an` as a DryRunFile,
+    // because ds+an is a known config name (regression: --dry-run consumed
+    // the next arg as a filename if it didn't start with - or contain :).
     const { stdout, stderr } = runDeepClaude('--dry-run', '--dry-run', 'ds+an');
     expect(stderr).not.toMatch(/Invalid model spec|Unknown provider/);
     expect(stdout).toContain('SLOT');
+    // Must show ds+an routing, not default ds
+    expect(stdout).toMatch(/haiku\s+an \(Anthropic/);
+    expect(stdout).toMatch(/subagent\s+an \(Anthropic/);
+  });
+
+  test('--dry-run ds+an: flag-before-config shows ds+an routing', () => {
+    // Regression: --dry-run would consume ds+an as a DryRunFile and
+    // fall through to ds default because the check was only
+    // `-notmatch '^-|:'` — and ds+an contains no colon.
+    const { stdout, stderr } = runDeepClaude('--dry-run', 'ds+an');
+    expect(stderr).not.toMatch(/Invalid model spec|Unknown provider/);
+    expect(stdout).toMatch(/haiku\s+an \(Anthropic/);
+    expect(stdout).toMatch(/subagent\s+an \(Anthropic/);
+    expect(stdout).toMatch(/claude-haiku-4-5-20251001/);
+  });
+
+  test('--dry-run or: flag-before-config shows or routing', () => {
+    // Same as above but for the single-provider-named config (or)
+    const { stdout, stderr } = runDeepClaude('--dry-run', 'or');
+    expect(stderr).not.toMatch(/Invalid model spec|Unknown provider/);
+    expect(stdout).toMatch(/opus\s+or \(OpenRouter/);
+    expect(stdout).toMatch(/haiku\s+or \(OpenRouter/);
   });
 
   // --- Fail-fast: unknown config errors instead of silently falling back ---
