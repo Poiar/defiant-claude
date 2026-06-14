@@ -57,6 +57,7 @@ interface ParsedArgs {
   thinkingOverridesFile: string | null;
   singleUrl: string | null;
   singleKey: string | null;
+  port: number | null;
 }
 interface ConfigState {
   routing: RoutingConfig | null;
@@ -79,26 +80,46 @@ export function parseArgs(argv: string[]): ParsedArgs {
   let thinkingOverridesFile: string | null = null;
   let singleUrl: string | null = null;
   let singleKey: string | null = null;
+  let port: number | null = null;
 
-  if (args[0] === '--routes' && args[1]) {
-    routesFile = args[1];
-    // --overrides and --providers are positional after --routes
-    for (let i = 2; i < args.length - 1; i += 2) {
-      if (args[i] === '--overrides') overridesFile = args[i + 1];
-      if (args[i] === '--providers') providersFile = args[i + 1];
-      if (args[i] === '--thinking-overrides') thinkingOverridesFile = args[i + 1];
+  // Parse all named flags position-independently
+  for (let i = 0; i < args.length - 1; i++) {
+    if (args[i] === '--routes') routesFile = args[i + 1];
+    if (args[i] === '--overrides') overridesFile = args[i + 1];
+    if (args[i] === '--providers') providersFile = args[i + 1];
+    if (args[i] === '--thinking-overrides') thinkingOverridesFile = args[i + 1];
+    if (args[i] === '--port') {
+      const p = parseInt(args[i + 1], 10);
+      if (!isNaN(p) && p > 0 && p <= 65535) {
+        port = p;
+      } else {
+        console.error('Invalid --port value: ' + args[i + 1] + ' (must be 1–65535)');
+        process.exit(1);
+      }
     }
-  } else if (args.length >= 2) {
+  }
+
+  if (routesFile) {
+    // Already parsed, nothing extra needed
+  } else if (args.length >= 2 && !args[0].startsWith('--') && !args[1].startsWith('--')) {
     singleUrl = args[0];
     singleKey = args[1];
   } else {
     console.error('Usage: npx tsx start-proxy.ts <provider_url> <api_key>');
     console.error(
-      '       npx tsx start-proxy.ts --routes <routes.json> [--overrides <overrides.json>] [--providers <providers.json>] [--thinking-overrides <thinking-overrides.json>]',
+      '       npx tsx start-proxy.ts --routes <routes.json> [--overrides <overrides.json>] [--providers <providers.json>] [--thinking-overrides <thinking-overrides.json>] [--port <port>]',
     );
     process.exit(1);
   }
-  return { routesFile, overridesFile, providersFile, thinkingOverridesFile, singleUrl, singleKey };
+  return {
+    routesFile,
+    overridesFile,
+    providersFile,
+    thinkingOverridesFile,
+    singleUrl,
+    singleKey,
+    port,
+  };
 }
 // --- JSON file helpers ---
 

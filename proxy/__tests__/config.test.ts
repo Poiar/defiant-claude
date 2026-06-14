@@ -62,6 +62,63 @@ describe('parseArgs', () => {
     expect(result.singleKey).toBe('sk-test-key');
     expect(result.routesFile).toBeNull();
   });
+
+  test('parses --port', () => {
+    const result = parseArgs([
+      'node',
+      'start-proxy.js',
+      '--routes',
+      '/tmp/routes.json',
+      '--port',
+      '54432',
+    ]);
+    expect(result.port).toBe(54432);
+    expect(result.routesFile).toBe('/tmp/routes.json');
+  });
+
+  test('parses --port before --routes', () => {
+    const result = parseArgs([
+      'node',
+      'start-proxy.js',
+      '--port',
+      '9999',
+      '--routes',
+      '/tmp/routes.json',
+    ]);
+    expect(result.port).toBe(9999);
+    expect(result.routesFile).toBe('/tmp/routes.json');
+  });
+
+  test('--port defaults to null when not provided', () => {
+    const result = parseArgs(['node', 'start-proxy.js', '--routes', '/tmp/routes.json']);
+    expect(result.port).toBeNull();
+  });
+
+  test('rejects invalid --port (0)', () => {
+    const throwExit = (): never => {
+      throw new Error('exit');
+    };
+    const mockExit = jest.spyOn(process, 'exit').mockImplementation(throwExit as any);
+    const mockError = jest.spyOn(console, 'error').mockImplementation(() => {});
+    expect(() =>
+      parseArgs(['node', 'start-proxy.js', '--routes', '/tmp/routes.json', '--port', '0']),
+    ).toThrow('exit');
+    mockExit.mockRestore();
+    mockError.mockRestore();
+  });
+
+  test('rejects invalid --port (>65535)', () => {
+    const throwExit = (): never => {
+      throw new Error('exit');
+    };
+    const mockExit = jest.spyOn(process, 'exit').mockImplementation(throwExit as any);
+    const mockError = jest.spyOn(console, 'error').mockImplementation(() => {});
+    expect(() =>
+      parseArgs(['node', 'start-proxy.js', '--routes', '/tmp/routes.json', '--port', '99999']),
+    ).toThrow('exit');
+    mockExit.mockRestore();
+    mockError.mockRestore();
+  });
 });
 
 describe('loadConfig', () => {

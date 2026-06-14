@@ -1016,6 +1016,15 @@ if (probeIdx >= 2) {
                 }
                 modified = true;
               }
+              // Step 3: Strip tool_choice when server tools were converted.
+              // Two reasons: (a) converted tool names no longer match any
+              // tool_choice target (web_search_20250305 -> web_search), and
+              // (b) DeepSeek rejects tool_choice when thinking mode is enabled
+              // ("Thinking mode does not support this tool_choice").
+              if ('tool_choice' in (parsedBody as Record<string, unknown>)) {
+                delete (parsedBody as Record<string, unknown>).tool_choice;
+                modified = true;
+              }
             }
 
             if (parsedBody.messages) {
@@ -1158,8 +1167,18 @@ if (probeIdx >= 2) {
             if (thinkingCfg) {
               try {
                 const p = JSON.parse(forwardedBody.toString());
+                let bodyModified = false;
+                // DeepSeek rejects tool_choice when thinking mode is enabled:
+                // "Thinking mode does not support this tool_choice"
+                if (p.tool_choice !== undefined) {
+                  delete p.tool_choice;
+                  bodyModified = true;
+                }
                 if (!p.thinking) {
                   p.thinking = { type: thinkingCfg.type, budget_tokens: thinkingCfg.budget_tokens };
+                  bodyModified = true;
+                }
+                if (bodyModified) {
                   forwardedBody = Buffer.from(JSON.stringify(p));
                 }
               } catch (e) {
@@ -1924,7 +1943,7 @@ if (probeIdx >= 2) {
       }
 
       // --- Lifecycle ---
-      server.listen(0, '127.0.0.1', () => {
+      server.listen(parsed.port || 0, '127.0.0.1', () => {
         const port = (server.address() as { port: number }).port;
         // Update PID file with port so future instances can reuse this proxy
         if (pidPath) {
