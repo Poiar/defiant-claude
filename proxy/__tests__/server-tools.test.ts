@@ -5,6 +5,7 @@ import {
   convertServerTools,
   hasPendingToolResult,
   isNativeAnthropicProvider,
+  extractSearchQuery,
 } from '../server-tools';
 
 describe('isServerToolType', () => {
@@ -242,5 +243,295 @@ describe('tool pre-execute + selective strip path', () => {
     ]);
     expect(conv.hasWebSearch).toBe(true);
     expect(conv.hasWebFetch).toBe(true);
+  });
+});
+
+// =========================================================================
+// extractSearchQuery tests — pure function, no HTTP deps
+// =========================================================================
+
+describe('extractSearchQuery', () => {
+  test('extracts query from string content with "Perform a web search for the query:" prefix', () => {
+    const messages = [
+      { role: 'user', content: 'Perform a web search for the query: latest AI news' },
+    ];
+    expect(extractSearchQuery(messages)).toBe('latest AI news');
+  });
+
+  test('extracts query from text block in content array', () => {
+    const messages = [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Perform a web search for the query: climate change 2026' },
+        ],
+      },
+    ];
+    expect(extractSearchQuery(messages)).toBe('climate change 2026');
+  });
+
+  test('scans backward to find last user message with search query', () => {
+    const messages = [
+      { role: 'user', content: 'Perform a web search for the query: first query' },
+      { role: 'assistant', content: 'some response' },
+      { role: 'user', content: 'Perform a web search for the query: second query' },
+    ];
+    // Last user message wins
+    expect(extractSearchQuery(messages)).toBe('second query');
+  });
+
+  test('skips user messages without search prefix and finds the one with it', () => {
+    const messages = [
+      { role: 'user', content: 'Hello, can you help me?' },
+      { role: 'assistant', content: 'Sure!' },
+      { role: 'user', content: 'Perform a web search for the query: stock prices' },
+    ];
+    expect(extractSearchQuery(messages)).toBe('stock prices');
+  });
+
+  test('returns null when no user message has search prefix', () => {
+    const messages = [
+      { role: 'user', content: 'What is the weather?' },
+      { role: 'assistant', content: 'It is sunny.' },
+    ];
+    expect(extractSearchQuery(messages)).toBeNull();
+  });
+
+  test('returns null for null/undefined messages', () => {
+    expect(extractSearchQuery(null as any)).toBeNull();
+    expect(extractSearchQuery(undefined as any)).toBeNull();
+  });
+
+  test('returns null for non-array messages', () => {
+    expect(extractSearchQuery('not an array' as any)).toBeNull();
+    expect(extractSearchQuery(42 as any)).toBeNull();
+  });
+
+  test('returns null for empty messages array', () => {
+    expect(extractSearchQuery([])).toBeNull();
+  });
+
+  test('returns null when only assistant has search-like text', () => {
+    const messages = [
+      { role: 'assistant', content: 'Perform a web search for the query: ignored' },
+    ];
+    expect(extractSearchQuery(messages)).toBeNull();
+  });
+
+  test('trims whitespace from extracted query', () => {
+    const messages = [
+      { role: 'user', content: 'Perform a web search for the query:   padded query   ' },
+    ];
+    expect(extractSearchQuery(messages)).toBe('padded query');
+  });
+
+  test('handles content array with non-text blocks gracefully', () => {
+    const messages = [
+      {
+        role: 'user',
+        content: [
+          { type: 'image', source: { data: 'abc' } },
+          { type: 'text', text: 'Perform a web search for the query: machine learning' },
+        ],
+      },
+    ];
+    expect(extractSearchQuery(messages)).toBe('machine learning');
+  });
+
+  test('case-insensitive match of search prefix', () => {
+    const messages = [
+      { role: 'user', content: 'PERFORM A WEB SEARCH FOR THE QUERY: uppercase test' },
+    ];
+    expect(extractSearchQuery(messages)).toBe('uppercase test');
+  });
+
+  test('handles mixed-case search prefix', () => {
+    const messages = [{ role: 'user', content: 'Perform a Web Search for the query: mixed case' }];
+    expect(extractSearchQuery(messages)).toBe('mixed case');
+  });
+});
+
+// =========================================================================
+// isServerToolType — all prefix coverage
+// =========================================================================
+
+describe('isServerToolType — all prefixes', () => {
+  test('matches text_editor_ prefix', () => {
+    expect(isServerToolType('text_editor_20250728')).toBe(true);
+  });
+
+  test('matches memory_ prefix', () => {
+    expect(isServerToolType('memory_20250101')).toBe(true);
+  });
+
+  test('matches tool_search_tool_ prefix', () => {
+    expect(isServerToolType('tool_search_tool_20250219')).toBe(true);
+  });
+
+  test('matches url_fetch_ prefix', () => {
+    expect(isServerToolType('url_fetch_20250101')).toBe(true);
+  });
+
+  test('rejects non-string types', () => {
+    expect(isServerToolType(123 as any)).toBe(false);
+    expect(isServerToolType(true as any)).toBe(false);
+    expect(isServerToolType({} as any)).toBe(false);
+  });
+
+  test('rejects strings that only partially match prefix', () => {
+    // Must START with the prefix, not just contain it
+    expect(isServerToolType('custom_web_search_tool')).toBe(false);
+    expect(isServerToolType('my_bash_script')).toBe(false);
+  });
+});
+
+// =========================================================================
+// convertServerTools — additional edge cases
+// =========================================================================
+
+describe('convertServerTools — edge cases', () => {
+  test('handles tools array containing null entries', () => {
+    const result = convertServerTools([
+      { type: 'web_search_20260209', name: 'search' },
+      null as any,
+      { type: 'custom', name: 'other' },
+    ]);
+    expect(result.hasWebSearch).toBe(true);
+    expect(result.tools.length).toBe(3);
+    // null entry passes through (guarded by `if (!tool || typeof tool !== 'object')`)
+    expect(result.tools[1]).toBeNull();
+  });
+
+  test('handles tools array containing undefined entries', () => {
+    const result = convertServerTools([
+      undefined as any,
+      { type: 'web_fetch_20260209', name: 'f' },
+    ]);
+    expect(result.hasWebFetch).toBe(true);
+    expect(result.tools[0]).toBeUndefined();
+  });
+
+  test('handles tools array containing non-object entries (number)', () => {
+    const result = convertServerTools([42 as any, { type: 'web_search_20260209', name: 's' }]);
+    expect(result.hasWebSearch).toBe(true);
+  });
+
+  test('handles tool with empty type string', () => {
+    const tool = { type: '', name: 'empty' };
+    const result = convertServerTools([tool]);
+    expect(result.hasWebSearch).toBe(false);
+    expect(result.hasWebFetch).toBe(false);
+    expect(result.tools[0]).toBe(tool);
+  });
+
+  test('handles tool with no type property', () => {
+    const tool = { name: 'no-type' } as any;
+    const result = convertServerTools([tool]);
+    expect(result.hasWebSearch).toBe(false);
+    expect(result.hasWebFetch).toBe(false);
+  });
+
+  test('non-array input returns as-is with both flags false', () => {
+    const obj = { type: 'web_search' } as any;
+    const result = convertServerTools(obj);
+    expect(result.tools).toBe(obj);
+    expect(result.hasWebSearch).toBe(false);
+    expect(result.hasWebFetch).toBe(false);
+  });
+
+  test('web_search_ tool gets web_search schema', () => {
+    const result = convertServerTools([{ type: 'web_search_20260209', name: 'search' }]);
+    const schema = result.tools[0].input_schema as any;
+    expect(schema).toBeDefined();
+    expect(schema.properties.query).toBeDefined();
+    expect(schema.required).toContain('query');
+  });
+
+  test('web_fetch_ tool gets web_fetch schema', () => {
+    const result = convertServerTools([{ type: 'web_fetch_20260209', name: 'fetch' }]);
+    const schema = result.tools[0].input_schema as any;
+    expect(schema).toBeDefined();
+    expect(schema.properties.url).toBeDefined();
+    expect(schema.required).toContain('url');
+  });
+});
+
+// =========================================================================
+// hasPendingToolResult — additional edge cases
+// =========================================================================
+
+describe('hasPendingToolResult — edge cases', () => {
+  test('detects "not recognized" content as empty', () => {
+    const messages = [
+      {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 't1', name: 'web_search', input: { query: 'x' } }],
+      },
+      {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 't1', content: 'not recognized' }],
+      },
+    ];
+    const result = hasPendingToolResult(messages);
+    expect(result.needsPopulation).toBe(true);
+  });
+
+  test('empty array content is considered empty', () => {
+    const messages = [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: 't2', name: 'web_fetch', input: { url: 'https://x.com' } },
+        ],
+      },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't2', content: [] }] },
+    ];
+    const result = hasPendingToolResult(messages);
+    expect(result.needsPopulation).toBe(true);
+  });
+
+  test('returns false for messages with no assistant role', () => {
+    const messages = [
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't3', content: '' }] },
+    ];
+    const result = hasPendingToolResult(messages);
+    expect(result.needsPopulation).toBe(false);
+  });
+
+  test('handles non-array content in assistant message', () => {
+    const messages = [
+      { role: 'assistant', content: 'plain text response' },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't4', content: '' }] },
+    ];
+    // No tool_use blocks found in assistant message (content is string, not array)
+    const result = hasPendingToolResult(messages);
+    expect(result.needsPopulation).toBe(false);
+  });
+
+  test('tool_use without matching tool_result does not trigger', () => {
+    const messages = [
+      {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 't5', name: 'web_search', input: { query: 'q' } }],
+      },
+      // No user message with tool_result for t5
+    ];
+    const result = hasPendingToolResult(messages);
+    expect(result.needsPopulation).toBe(false);
+  });
+
+  test('tool_result with unknown tool_use_id is ignored', () => {
+    const messages = [
+      {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 't6', name: 'web_search', input: { query: 'q' } }],
+      },
+      {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 'different-id', content: '' }],
+      },
+    ];
+    const result = hasPendingToolResult(messages);
+    expect(result.needsPopulation).toBe(false); // empty result, but tool_use_id doesn't match
   });
 });

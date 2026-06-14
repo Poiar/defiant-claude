@@ -226,6 +226,12 @@ export function setGitHash(hash: string): void {
   gitHash = hash;
 }
 
+let _activeConnections = 0;
+
+export function setActiveConnections(n: number): void {
+  _activeConnections = n;
+}
+
 let requestIdCounter: number = 0;
 export function nextRequestId(): number {
   return ++requestIdCounter;
@@ -589,7 +595,7 @@ export function buildPrometheusMetrics(
   // Active connections
   lines.push(`# HELP ${pf}_active_connections Current active HTTP connections`);
   lines.push(`# TYPE ${pf}_active_connections gauge`);
-  lines.push(`${pf}_active_connections ${activeConnections}`);
+  lines.push(`${pf}_active_connections ${_activeConnections}`);
 
   return lines.join('\n') + '\n';
 }
@@ -694,6 +700,7 @@ const ccActiveFile = path.join(os.homedir(), '.deepclaude', 'cc-active.json');
 const ccSpendDir = path.join(os.homedir(), '.deepclaude');
 let ccPendingSpend = 0;
 const CC_SESSION_TTL_MS = 120_000; // 2 min — don't attribute to stale windows
+let ccSessionInitialized: string | null = null; // tracks which session's file was last reset
 
 function ccSpendFilePath(sessionId: string): string {
   return path.join(ccSpendDir, `cc-spend-${sessionId}.json`);
@@ -862,6 +869,19 @@ function writeCcSpend(): void {
     ccPendingSpend = 0;
 
     const f = ccSpendFilePath(activeId);
+
+    // On proxy restart OR CC session change, reset the session file.
+    // Otherwise the file accumulates across proxy restarts and inflates
+    // the session spend shown in the statusline — ccPendingSpend resets
+    // to 0, but the file retains the old proxy's totals.
+    if (activeId !== ccSessionInitialized) {
+      ccSessionInitialized = activeId;
+      const tmpFile = f + '.tmp';
+      fs.writeFileSync(tmpFile, String(amt.toFixed(6)) + '\n');
+      fs.renameSync(tmpFile, f);
+      return;
+    }
+
     let existing = 0;
     if (fs.existsSync(f)) {
       try {
@@ -897,17 +917,21 @@ export async function recordSpend(
   }
 
   let cost: number;
-  // Use granular cache hit/miss pricing when both the pricing entry and usage data support it
+  // Use granular cache hit/miss pricing when the pricing entry and usage data support it.
+  // Tolerant defaults: if a cache field is missing from the API response (e.g.
+  // prompt_cache_miss_tokens omitted when zero), treat it as 0 so the ~120x cache
+  // discount is still applied. Without tolerance, a single missing field silently
+  // falls back to flat pricing, overcharging by two orders of magnitude.
+  const cacheHit = typeof usage.cache_hit_tokens === 'number' ? usage.cache_hit_tokens : 0;
+  const cacheMiss = typeof usage.cache_miss_tokens === 'number' ? usage.cache_miss_tokens : 0;
   if (
     price.inputCacheHit !== undefined &&
     price.inputCacheMiss !== undefined &&
-    typeof usage.cache_hit_tokens === 'number' &&
-    typeof usage.cache_miss_tokens === 'number' &&
-    usage.cache_hit_tokens + usage.cache_miss_tokens > 0
+    cacheHit + cacheMiss > 0
   ) {
     cost =
-      (usage.cache_hit_tokens / 1_000_000) * price.inputCacheHit +
-      (usage.cache_miss_tokens / 1_000_000) * price.inputCacheMiss +
+      (cacheHit / 1_000_000) * price.inputCacheHit +
+      (cacheMiss / 1_000_000) * price.inputCacheMiss +
       (usage.completion_tokens / 1_000_000) * price.output;
   } else {
     cost =
@@ -920,7 +944,7 @@ export async function recordSpend(
   ccPendingSpend += cost;
   if (providerKey) {
     recordProviderSpend(providerKey, cost, modelName);
-    if (typeof usage.cache_hit_tokens === 'number' || typeof usage.cache_miss_tokens === 'number') {
+    if (cacheHit > 0 || cacheMiss > 0) {
       try {
         if (!providerStats[providerKey]) {
           providerStats[providerKey] = {
@@ -934,8 +958,8 @@ export async function recordSpend(
             cacheMissTokens: 0,
           };
         }
-        providerStats[providerKey].cacheHitTokens += usage.cache_hit_tokens || 0;
-        providerStats[providerKey].cacheMissTokens += usage.cache_miss_tokens || 0;
+        providerStats[providerKey].cacheHitTokens += cacheHit;
+        providerStats[providerKey].cacheMissTokens += cacheMiss;
       } catch (_) {
         /* non-fatal */
       }
