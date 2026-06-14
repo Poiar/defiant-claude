@@ -23,7 +23,7 @@ const MAX_CONCURRENT_FETCHES = 5;
 let activeFetches = 0;
 const fetchQueue: Array<() => void> = [];
 
-function acquireFetchSlot(): Promise<void> {
+export function acquireFetchSlot(): Promise<void> {
   return new Promise((resolve) => {
     if (activeFetches < MAX_CONCURRENT_FETCHES) {
       activeFetches++;
@@ -37,28 +37,38 @@ function acquireFetchSlot(): Promise<void> {
   });
 }
 
-function releaseFetchSlot(): void {
+export function releaseFetchSlot(): void {
   activeFetches--;
   const next = fetchQueue.shift();
   if (next) next();
+}
+
+// Exported for test reset
+export function _resetFetchSlots(): void {
+  activeFetches = 0;
+  fetchQueue.length = 0;
 }
 
 // --- Search query cache with TTL ---
 // Deduplicates identical queries within a short window.
 const SEARCH_CACHE_TTL_MS = 5000;
 const searchCache = new LruCache<string>({ maxEntries: 100, ttlMs: SEARCH_CACHE_TTL_MS });
-function getCachedSearch(query: string): string | null {
+export function getCachedSearch(query: string): string | null {
   return searchCache.get(query) ?? null;
 }
-function setCachedSearch(query: string, result: string): void {
+export function setCachedSearch(query: string, result: string): void {
   searchCache.set(query, result);
+}
+// Exported for test reset
+export function _resetSearchCache(): void {
+  searchCache.clear();
 }
 
 /**
  * Slice a string without splitting UTF-16 surrogate pairs.
  * Prevents garbled output for emoji/CJK characters at the boundary.
  */
-function safeSlice(str: string, maxLen: number): string {
+export function safeSlice(str: string, maxLen: number): string {
   if (str.length <= maxLen) return str;
   // Don't split surrogate pairs
   if (str.charCodeAt(maxLen - 1) >= 0xd800 && str.charCodeAt(maxLen - 1) <= 0xdbff) {
@@ -194,6 +204,74 @@ export function convertServerTools(tools: ToolDef[] | null | undefined): Convert
 
   return { tools: converted, hasWebSearch, hasWebFetch };
 }
+
+// --- Request body preprocessing for non-Anthropic providers ---
+// Server-side tools (web_search_*, web_fetch_*) must be converted to generic
+// custom tools or stripped before forwarding. The associated tool_choice must
+// also be stripped because (a) converted tool names no longer match any
+// tool_choice target, and (b) DeepSeek rejects tool_choice when thinking mode
+// is enabled ("Thinking mode does not support this tool_choice").
+
+interface PreprocessBody {
+  tools?: ToolDef[] | null;
+  tool_choice?: unknown;
+  [key: string]: unknown;
+}
+
+export interface PreprocessResult {
+  /** Whether the body was modified */
+  modified: boolean;
+  /** Whether the original request contained web search tools */
+  hadWebSearch: boolean;
+  /** Whether the original request contained web fetch tools */
+  hadWebFetch: boolean;
+}
+
+const WEB_TOOL_PREFIXES = ['web_search_', 'web_fetch_', 'url_fetch_'];
+const isWebToolType = (type: string): boolean => WEB_TOOL_PREFIXES.some((p) => type.startsWith(p));
+
+export function preprocessServerTools(body: PreprocessBody): PreprocessResult {
+  let modified = false;
+  let hadWebSearch = false;
+  let hadWebFetch = false;
+
+  if (!body.tools || !Array.isArray(body.tools)) {
+    return { modified: false, hadWebSearch: false, hadWebFetch: false };
+  }
+
+  // Step 1: Convert Anthropic server-side tool types to generic custom tools
+  const conv = convertServerTools(body.tools);
+  hadWebSearch = conv.hasWebSearch;
+  hadWebFetch = conv.hasWebFetch;
+  if (conv.tools !== body.tools) {
+    body.tools = conv.tools;
+    modified = true;
+  }
+
+  // Step 2: Strip any remaining unconverted web tools
+  type ToolItem = Record<string, unknown>;
+  const unconverted = (body.tools as ToolItem[]).filter(
+    (t) => t && typeof t.type === 'string' && isWebToolType(t.type as string),
+  );
+  if (unconverted.length > 0) {
+    body.tools = (body.tools as ToolItem[]).filter(
+      (t) => !(t && typeof t.type === 'string' && isWebToolType(t.type as string)),
+    );
+    if (body.tools.length === 0) {
+      delete body.tools;
+    }
+    modified = true;
+  }
+
+  // Step 3: Strip tool_choice — converted tool names no longer match any
+  // tool_choice target, and DeepSeek rejects tool_choice with thinking mode
+  if ('tool_choice' in body) {
+    delete body.tool_choice;
+    modified = true;
+  }
+
+  return { modified, hadWebSearch, hadWebFetch };
+}
 // --- Web search execution (DuckDuckGo -- free, no API key) ---
 
 // --- DDG Lite HTML scraper ---
@@ -208,7 +286,7 @@ interface SearchResult {
   snippet: string;
 }
 
-function ddgLiteSearch(query: string): Promise<SearchResult[]> {
+export function ddgLiteSearch(query: string): Promise<SearchResult[]> {
   return new Promise((resolve) => {
     const url = `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`;
     https
@@ -377,7 +455,7 @@ export async function webSearch(query: string): Promise<string> {
 }
 // --- Web fetch execution ---
 
-function isPrivateIPv4(host: string): boolean {
+export function isPrivateIPv4(host: string): boolean {
   return (
     /^127\./.test(host) ||
     host === '0.0.0.0' ||

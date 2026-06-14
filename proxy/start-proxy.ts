@@ -34,7 +34,11 @@ import {
 import { tryForward, addFallbackHeaders, sseHeaders, type ForwardResult } from './forward';
 import { sendProbe } from './probe';
 import type { ProbeSlot } from './probe';
-import { convertServerTools, isNativeAnthropicProvider, populateToolResults } from './server-tools';
+import {
+  isNativeAnthropicProvider,
+  populateToolResults,
+  preprocessServerTools,
+} from './server-tools';
 import {
   isProviderHealthy,
   recordSpend,
@@ -970,61 +974,22 @@ if (probeIdx >= 2) {
           try {
             let modified = false;
 
-            if (parsedBody.messages) {
-              const populated = await populateToolResults(
-                parsedBody.messages as Array<Record<string, unknown>>,
-              );
-              if (populated) modified = true;
-            }
-
-            // Handle Anthropic server-side tools for non-Anthropic providers.
-            // The real Anthropic API natively supports web_search_* and
-            // web_fetch_* as server-side tools — DO NOT convert them to
-            // custom tools or Anthropic won't execute them server-side and
-            // Claude Code's "Did N searches" display will show 0.
-            //
-            // For all other providers (DeepSeek, OpenRouter, etc.) we MUST
-            // convert them to generic custom tools so the proxy can execute
-            // searches locally via DuckDuckGo.
+            // Preprocess server-side tools for non-Anthropic providers.
+            // Anthropic natively supports web_search_* and web_fetch_* as
+            // server-side tools — DO NOT convert or Anthropic won't execute
+            // them and CC's "Did N searches" display will show 0.
             const isAnthropic = isNativeAnthropicProvider(
               resolved.primary?.providerKey,
               resolved.primary?.targetUrl?.hostname,
             );
-            if (!isAnthropic && parsedBody.tools && Array.isArray(parsedBody.tools)) {
-              // Step 1: Convert ALL Anthropic server-side tool types to
-              // generic custom tools (web_search_* -> web_search, etc.).
-              const conv = convertServerTools(parsedBody.tools as Array<Record<string, unknown>>);
-              if (conv.tools !== parsedBody.tools) {
-                parsedBody.tools = conv.tools as Array<Record<string, unknown>>;
-                modified = true;
-              }
-              // Step 2: Strip any remaining unconverted web_search_* tools
-              // that survived conversion (e.g. unknown prefixes). These
-              // would be unrecognized by non-Anthropic providers.
-              const WEB_TOOL_PREFIXES = ['web_search_', 'web_fetch_', 'url_fetch_'];
-              const isWebTool = (type: string) => WEB_TOOL_PREFIXES.some((p) => type.startsWith(p));
-              type ToolItem = Record<string, unknown>;
-              const unconvertedWebTools = (parsedBody.tools as ToolItem[]).filter(
-                (t) => t && typeof t.type === 'string' && isWebTool(t.type as string),
+            if (!isAnthropic && parsedBody.tools) {
+              const result = preprocessServerTools(
+                parsedBody as Record<string, unknown> & {
+                  tools?: unknown[];
+                  tool_choice?: unknown;
+                },
               );
-              if (unconvertedWebTools.length > 0) {
-                parsedBody.tools = (parsedBody.tools as ToolItem[]).filter(
-                  (t) => !(t && typeof t.type === 'string' && isWebTool(t.type as string)),
-                );
-                if (parsedBody.tools.length === 0) {
-                  delete parsedBody.tools;
-                }
-                modified = true;
-              }
-              // Step 3: Strip tool_choice when server tools were converted.
-              // Two reasons: (a) converted tool names no longer match any
-              // tool_choice target (web_search_20250305 -> web_search), and
-              // (b) DeepSeek rejects tool_choice when thinking mode is enabled
-              // ("Thinking mode does not support this tool_choice").
-              if ('tool_choice' in (parsedBody as Record<string, unknown>)) {
-                delete (parsedBody as Record<string, unknown>).tool_choice;
-                modified = true;
-              }
+              if (result.modified) modified = true;
             }
 
             if (parsedBody.messages) {
