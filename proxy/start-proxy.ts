@@ -55,6 +55,7 @@ import {
   getProviderInfo,
   setGitHash,
   recordFallback,
+  setActiveConnections,
 } from './stats';
 import { serveDashboard } from './dashboard';
 import {
@@ -565,8 +566,10 @@ if (probeIdx >= 2) {
 
     req.on('end', () => {
       activeConnections++;
+      setActiveConnections(activeConnections);
       if (body === null) {
         activeConnections--;
+        setActiveConnections(activeConnections);
         return;
       }
       req.setTimeout(0); // Clear slow-body guard — streaming phase may have long idle gaps
@@ -1869,6 +1872,7 @@ if (probeIdx >= 2) {
         })
         .finally(() => {
           activeConnections--;
+          setActiveConnections(activeConnections);
         });
     });
   });

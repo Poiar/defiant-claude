@@ -30,6 +30,7 @@ import {
   setSpendFilePath,
   _resetBudgetState,
   _setSessionTotal,
+  buildPrometheusMetrics,
 } from '../stats';
 
 describe('recordStat', () => {
@@ -787,12 +788,47 @@ describe('getFullHealthSnapshot — cache and stream metrics', () => {
   });
 });
 
-describe.skip('buildPrometheusMetrics', () => {
-  // NOTE: buildPrometheusMetrics references `activeConnections` (stats.ts:592)
-  // which is defined in start-proxy.ts but not in stats.ts, causing a
-  // ReferenceError when called in isolation. This is a pre-existing bug
-  // in the source. Tests will be enabled once the source is fixed.
-  test('placeholder — pre-existing activeConnections bug', () => {});
+describe('buildPrometheusMetrics', () => {
+  test('returns Prometheus-format metrics string', () => {
+    const metrics = buildPrometheusMetrics({}, {});
+    expect(typeof metrics).toBe('string');
+    expect(metrics).toContain('# HELP deepclaude_uptime_seconds');
+    expect(metrics).toContain('# TYPE deepclaude_uptime_seconds gauge');
+    expect(metrics).toContain('deepclaude_active_connections');
+    expect(metrics.endsWith('\n')).toBe(true);
+  });
+
+  test('includes provider-level metrics for recorded stats', () => {
+    recordStat('prom-prov-test', true, 100);
+    const metrics = buildPrometheusMetrics({}, {});
+    expect(metrics).toContain('provider="prom-prov-test"');
+    expect(metrics).toContain('deepclaude_requests_total');
+    expect(metrics).toContain('deepclaude_circuit_breaker_state');
+  });
+
+  test('includes concurrency metrics when provided', () => {
+    const cs = { main: { active: 3, waiting: 2, limit: 10 } };
+    const metrics = buildPrometheusMetrics(cs, {});
+    expect(metrics).toContain('# HELP deepclaude_concurrency_active');
+    expect(metrics).toContain('pool="main"}');
+  });
+
+  test('includes rate limiter metrics when provided', () => {
+    const rs = { tracked: 42 };
+    const metrics = buildPrometheusMetrics({}, rs);
+    expect(metrics).toContain('deepclaude_rate_limit_tracked 42');
+  });
+
+  test('includes memory and event loop lag metrics', () => {
+    const metrics = buildPrometheusMetrics({}, {});
+    expect(metrics).toContain('deepclaude_memory_bytes');
+    expect(metrics).toContain('deepclaude_event_loop_lag_ms');
+  });
+
+  test('includes session spend metric', () => {
+    const metrics = buildPrometheusMetrics({}, {});
+    expect(metrics).toContain('deepclaude_spend_session_dollars');
+  });
 });
 
 describe('recordSpend — pricing edge cases', () => {
