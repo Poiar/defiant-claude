@@ -1117,20 +1117,19 @@ if (probeIdx >= 2) {
           // The --no-thinking flag disables thinking by removing the model entry;
           // --thinking-budget N overrides the budget_tokens.
           const upstreamModel = target.rewriteModel || model;
+          const constraints = getConstraints(target.providerKey);
           const effectiveThinking = getEffectiveThinkingConfig(
             state.thinkingConfig || {},
             state.thinkingOverridesFile,
           );
           if (upstreamModel && target.format === 'anthropic') {
             const thinkingCfg = matchThinkingModel(upstreamModel, effectiveThinking);
-            if (thinkingCfg) {
+            if (thinkingCfg && constraints.thinkingFormat === 'anthropic') {
               try {
                 const p = JSON.parse(forwardedBody.toString());
                 let bodyModified = false;
                 // Strip tool_choice for providers that reject it with thinking
-                // (encoded in ProviderConstraints.forbidsToolChoiceWithThinking)
-                const c = getConstraints(target.providerKey);
-                if (c.forbidsToolChoiceWithThinking && p.tool_choice !== undefined) {
+                if (constraints.forbidsToolChoiceWithThinking && p.tool_choice !== undefined) {
                   delete p.tool_choice;
                   bodyModified = true;
                 }
@@ -1166,7 +1165,11 @@ if (probeIdx >= 2) {
               );
               {
                 const thinkingCfg = matchThinkingModel(upstreamModel, effectiveOAITinking);
-                if (thinkingCfg && !openaiBody.thinking) {
+                if (
+                  thinkingCfg &&
+                  !openaiBody.thinking &&
+                  constraints.thinkingFormat === 'openai'
+                ) {
                   const budgetTokens =
                     reqParsed.thinking?.budget_tokens ?? thinkingCfg.budget_tokens ?? 32000;
                   const reasoningEffort =

@@ -387,7 +387,7 @@ export const PROVIDER_CONSTRAINTS: Record<string, ProviderConstraints> = {
     requiresModelRewrite: true,
     forbidsToolChoiceWithThinking: false,
     requiresThinkingEcho: false,
-    thinkingFormat: null,
+    thinkingFormat: 'anthropic',
     stripFields: [],
   },
 
