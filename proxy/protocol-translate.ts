@@ -3,122 +3,48 @@
 import { Transform, TransformCallback } from 'stream';
 import crypto from 'crypto';
 import { createLogger } from './log';
+import type {
+  AnthropicMessage,
+  AnthropicContentBlock,
+  AnthropicRequestBody,
+  AnthropicToolChoice,
+  AnthropicUsage,
+  AnthropicSSEEvent,
+  AnthropicDelta,
+  AnthropicStopReason,
+  OpenAIRequestBody,
+  OpenAIMessage,
+  OpenAIToolCall,
+  OpenAIResponseBody,
+  OpenAIResponseChoice,
+  ExtendedOpenAIUsage,
+} from './protocol-types';
+import { mapFinishReason, translateToolChoice } from './protocol-types';
 
 const log = createLogger('protocol-translate');
 
-// --- Types ---
-
-interface ContentBlock {
-  type: string;
-  text?: string;
-  source?: { type?: string; media_type?: string; data?: string; url?: string };
-  name?: string;
-  id?: string;
-  input?: Record<string, unknown>;
-  thinking?: string;
-  signature?: string;
-  content?: string | ContentBlock[];
-  tool_use_id?: string;
-  title?: string;
-  file_name?: string;
-}
-
-interface AnthropicMessage {
-  role: string;
-  content: string | ContentBlock[];
-}
-
-interface AnthropicTool {
-  name: string;
-  description?: string;
-  input_schema: Record<string, unknown>;
-}
-
-interface AnthropicRequestBody {
-  model: string;
-  messages: AnthropicMessage[];
-  stream?: boolean;
-  system?: string | ContentBlock[];
-  tools?: AnthropicTool[];
-  max_tokens?: number;
-  temperature?: number;
-  top_p?: number;
-  stop_sequences?: string[];
-  tool_choice?: unknown;
-  thinking?: { type: string; budget_tokens?: number };
-}
-
-interface OpenAIToolCall {
-  id: string;
-  type: string;
-  function: { name: string; arguments: string };
-}
-
-interface OpenAIMessage {
-  role: string;
-  content?: string | Array<{ type: string; text?: string; image_url?: { url: string } }>;
-  tool_calls?: OpenAIToolCall[];
-  reasoning_content?: string;
-}
-
-interface OpenAIRequestBody {
-  model: string;
-  messages: OpenAIMessage[];
-  stream?: boolean;
-  stream_options?: { include_usage: boolean };
-  tools?: Array<{
-    type: string;
-    function: { name: string; description: string; parameters: Record<string, unknown> };
-  }>;
-  max_tokens?: number;
-  temperature?: number;
-  top_p?: number;
-  stop?: string[];
-  tool_choice?: unknown;
-  thinking?: { type: string; reasoning_effort?: string };
-}
-
-interface OpenAIChoice {
-  index: number;
-  message?: OpenAIMessage;
-  finish_reason?: string;
-  delta?: {
-    role?: string;
-    content?: string;
-    reasoning_content?: string;
-    tool_calls?: Array<{
-      index?: number;
-      id?: string;
-      type?: string;
-      function?: { name?: string; arguments?: string };
-    }>;
-  };
-}
-
-interface OpenAIResponseBody {
-  id?: string;
-  choices?: OpenAIChoice[];
-  usage?: {
-    prompt_tokens?: number;
-    completion_tokens?: number;
-    total_tokens?: number;
-  };
-  model?: string;
-}
+// Re-export for backward compatibility
+export { mapFinishReason, translateToolChoice };
+export type {
+  AnthropicMessage,
+  AnthropicContentBlock as ContentBlock,
+  AnthropicRequestBody,
+  OpenAIRequestBody,
+  OpenAIMessage,
+  OpenAIToolCall,
+  OpenAIResponseBody,
+  OpenAIResponseChoice,
+  AnthropicUsage,
+  AnthropicSSEEvent,
+  AnthropicDelta,
+  AnthropicStopReason,
+  AnthropicToolChoice,
+  ExtendedOpenAIUsage,
+};
 
 // --- Translation helpers ---
 
-function mapFinishReason(reason: string | null | undefined): string {
-  const map: Record<string, string> = {
-    stop: 'end_turn',
-    tool_calls: 'tool_use',
-    length: 'max_tokens',
-    content_filter: 'content_filter',
-  };
-  return (reason && map[reason]) || 'end_turn';
-}
-
-function stringifyContent(content: string | ContentBlock[] | null | undefined): string {
+function stringifyContent(content: string | AnthropicContentBlock[] | null | undefined): string {
   if (typeof content === 'string') return content;
   if (Array.isArray(content)) {
     // When content contains non-text blocks (tool_use, image), serialize
@@ -354,22 +280,7 @@ function convertMessage(msg: AnthropicMessage): OpenAIMessage | OpenAIMessage[] 
   };
 }
 
-function translateToolChoice(tc: unknown): unknown {
-  if (tc === 'auto' || tc === 'any') {
-    return tc === 'any' ? 'required' : 'auto';
-  }
-  if (tc && typeof tc === 'object') {
-    const obj = tc as { type?: string; name?: string };
-    if (obj.type === 'auto') return 'auto';
-    // { type: 'any' } → 'required' (same as string 'any' shortcut)
-    if (obj.type === 'any') return 'required';
-    if (obj.type === 'none') return 'none';
-    if (obj.type === 'tool' && obj.name) {
-      return { type: 'function', function: { name: obj.name } };
-    }
-  }
-  return 'auto';
-}
+// translateToolChoice re-exported from protocol-types.ts
 
 // --- Response translation ---
 
@@ -430,7 +341,7 @@ export function translateResponse(
 
   // Map cache tokens from OpenAI field names (prompt_cache_hit/miss) to
   // Anthropic field names (cache_read/cache_creation_input_tokens) when present.
-  const usageAny = usage as any;
+  const usageAny = usage as ExtendedOpenAIUsage;
   const hasCache = typeof usageAny.prompt_cache_hit_tokens === 'number';
 
   return {
@@ -622,7 +533,7 @@ export function createStreamTransformer(model: string): Transform {
     }
 
     if (parsed.usage) {
-      const usageAny = parsed.usage as any;
+      const usageAny = parsed.usage as ExtendedOpenAIUsage;
       state.usage = {
         input_tokens: parsed.usage.prompt_tokens || 0,
         output_tokens: parsed.usage.completion_tokens || 0,
