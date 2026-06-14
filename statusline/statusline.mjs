@@ -300,7 +300,7 @@ async function main() {
     if (tokens >= 400000) {
       ctxGroup += ' ' + bold + fg(255, 80, 80) + 'FBR' + reset;
     } else if (tokens >= 300000) {
-      ctxGroup += ' ' + bold + fg(255, 180, 50) + 'FR' + reset;
+      ctxGroup += ' ' + bold + fg(255, 180, 50) + 'SR' + reset;
     }
   }
 
