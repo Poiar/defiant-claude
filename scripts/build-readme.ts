@@ -63,33 +63,19 @@ interface SlotConfig {
 const providersData: ProvidersData = JSON.parse(fs.readFileSync(PROVIDERS_PATH, 'utf-8'));
 
 function getTestStats(): { files: number; total: number } {
-  const files = fs
-    .readdirSync(path.join(PROXY_DIR, '__tests__'))
-    .filter((f) => f.endsWith('.test.ts')).length;
+  const testDir = path.join(PROXY_DIR, '__tests__');
+  const testFiles = fs.readdirSync(testDir).filter((f) => f.endsWith('.test.ts'));
+  const files = testFiles.length;
 
-  // Use cached count when available — avoids ~4s Jest run.
-  // Set DEEPCLAUDE_TEST_COUNT=<N> or DEEPCLAUDE_RUN_TESTS=1 to force live run.
-  if (process.env.DEEPCLAUDE_TEST_COUNT && !process.env.DEEPCLAUDE_RUN_TESTS) {
-    return { files, total: parseInt(process.env.DEEPCLAUDE_TEST_COUNT) };
+  // Count test()/it() calls across all test files. Fast and no Jest subprocess.
+  // Matches `test(` and `it(` at start of line (after whitespace).
+  let total = 0;
+  for (const f of testFiles) {
+    const content = fs.readFileSync(path.join(testDir, f), 'utf-8');
+    const matches = content.match(/^\s*(?:test|it)\(/gm);
+    if (matches) total += matches.length;
   }
-
-  try {
-    const jestBin = path.join(ROOT, 'node_modules', '.bin', 'jest');
-    const out = execSync(`"${jestBin}" --no-coverage --forceExit 2>&1`, {
-      cwd: ROOT,
-      encoding: 'utf-8',
-      timeout: 30000,
-      windowsHide: true,
-    });
-    const m = out.match(/Tests:\s+\d+ passed, (\d+) total/);
-    const total = m ? parseInt(m[1]) : 0;
-    return { files, total };
-  } catch (e: any) {
-    const out = (e.stdout || '') + (e.stderr || '');
-    const m = out.match(/Tests:\s+\d+ passed, (\d+) total/);
-    const total = m ? parseInt(m[1]) : 0;
-    return { files, total };
-  }
+  return { files, total };
 }
 
 function getEnvVarsFromCode(): string[] {
@@ -156,7 +142,10 @@ function fmtTokens(n: number): string {
 // ─── Tagline ──────────────────────────────────
 
 function genTagline(): string {
+  // Exclude internal pseudo-providers that users don't configure directly
+  const SKIP_TAGLINE = new Set(['an']);
   const providerNames = Object.keys(providersData.providers || {})
+    .filter((k) => !SKIP_TAGLINE.has(k))
     .map((k) => SHORT_NAMES[k] || k)
     .sort();
   // Anthropic is a special pseudo-provider (bypasses the proxy)
