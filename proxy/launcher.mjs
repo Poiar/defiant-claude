@@ -30,7 +30,7 @@ const REGISTRY_FILE = join(SCRIPT_DIR, 'providers.json');
 const SLOTS = ['opus', 'sonnet', 'haiku', 'subagent', 'fable'];
 
 // --- Lazy-loaded registry ---
-let _registry = null;
+let _registry;
 function registry() {
   if (!_registry) {
     const raw = readFileSync(REGISTRY_FILE, 'utf-8');
@@ -984,5 +984,8 @@ const _modulePath = resolve(fileURLToPath(import.meta.url));
 const _execPath = process.argv[1] ? resolve(process.argv[1]) : '';
 const _isDirectExec = _execPath === _modulePath || (_execPath && _modulePath.endsWith(_execPath));
 if (_isDirectExec) {
-  main();
+  main().catch((err) => {
+    console.error(err.message);
+    process.exit(1);
+  });
 }

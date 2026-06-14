@@ -102,7 +102,7 @@ export interface ForwardResult {
   } | null;
   error?: string;
   rawBody?: string | null;
-  _upstream?: NodeJS.WritableStream;
+  _upstream?: NodeJS.WritableStream; // For cleanup on client disconnect
   transportError?: boolean;
   qualityFailure?: boolean;
   qualityReason?: string;
@@ -110,7 +110,6 @@ export interface ForwardResult {
   deadStreamReason?: string;
   streamTimings?: StreamTimings;
   streamMetrics?: StreamMetrics;
-  _upstream?: NodeJS.WritableStream; // For cleanup on client disconnect
 }
 interface PeekResult {
   ok: boolean;
@@ -719,8 +718,10 @@ export function tryForward(
             }
             let translationFailed = false;
             if (isOpenAI) {
-              try {
-                if (!parsedResponse) throw new Error('Failed to parse upstream response');
+              if (!parsedResponse) {
+                log.error(reqId, 'response translation error: Failed to parse upstream response');
+                translationFailed = true;
+              } else {
                 const openaiResp = parsedResponse;
 
                 // Extract reasoning content from OpenAI response before translation
@@ -757,16 +758,11 @@ export function tryForward(
                 }
                 const anthropicResp = translateResponse(openaiResp, model || '');
                 responseBody = Buffer.from(JSON.stringify(anthropicResp));
-              } catch (e) {
-                log.error(
-                  reqId,
-                  'response translation error: ' + truncateForLog((e as Error).message),
-                );
-                translationFailed = true;
               }
             } else {
-              try {
-                if (!parsedResponse) throw new Error('Failed to parse upstream response');
+              if (!parsedResponse) {
+                log.error(reqId, 'thinking extraction error: Failed to parse upstream response');
+              } else {
                 const resp = parsedResponse;
                 let respModified = false;
 
@@ -839,11 +835,6 @@ export function tryForward(
                 if (respModified) {
                   responseBody = Buffer.from(JSON.stringify(resp));
                 }
-              } catch (e) {
-                log.error(
-                  reqId,
-                  'thinking extraction error: ' + truncateForLog((e as Error).message),
-                );
               }
             }
             const outHeaders = buildSafeHeaders(
