@@ -396,7 +396,7 @@ describe('statusline DeepSeek milestone tags', () => {
     expect(result.status).toBe(0);
     const plain = stripAnsi(result.stdout);
     expect(plain).toContain('FBR');
-    // FBR uses super-dangerous red: fg(255, 80, 80)
+    // FBR tagged red: fg(255, 80, 80)
     expect(result.stdout).toContain('38;2;255;80;80mFBR');
   });
 
@@ -422,7 +422,7 @@ describe('statusline DeepSeek milestone tags', () => {
     const plain = stripAnsi(result.stdout);
     expect(plain).toContain('SR');
     expect(plain).not.toContain('FBR');
-    // SR uses semi-dangerous yellow/orange: fg(255, 180, 50)
+    // SR uses orange: fg(255, 180, 50)
     expect(result.stdout).toContain('38;2;255;180;50mSR');
   });
 
