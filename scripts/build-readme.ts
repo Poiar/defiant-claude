@@ -44,7 +44,10 @@ interface ProvidersData {
   contextLimits?: Record<string, number>;
   compactionWindow?: Record<string, number>;
   configs?: Record<string, SlotConfig>;
-  pricing?: Record<string, { input: number; output: number; input_cache_hit?: number; input_cache_miss?: number }>;
+  pricing?: Record<
+    string,
+    { input: number; output: number; input_cache_hit?: number; input_cache_miss?: number }
+  >;
   thinking?: Record<string, { type: string; budget_tokens: number }>;
 }
 
@@ -57,20 +60,12 @@ interface SlotConfig {
   fable?: string;
 }
 
-const providersData: ProvidersData = JSON.parse(
-  fs.readFileSync(PROVIDERS_PATH, 'utf-8')
-);
-
-function getVersion(): string {
-  const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf-8'));
-  let hash = '';
-  try { hash = execSync('git rev-parse --short HEAD', { cwd: ROOT, encoding: 'utf-8' }).trim(); } catch {}
-  return hash ? `${pkg.version} (${hash})` : pkg.version;
-}
+const providersData: ProvidersData = JSON.parse(fs.readFileSync(PROVIDERS_PATH, 'utf-8'));
 
 function getTestStats(): { files: number; total: number } {
-  const files = fs.readdirSync(path.join(PROXY_DIR, '__tests__'))
-    .filter(f => f.endsWith('.test.ts')).length;
+  const files = fs
+    .readdirSync(path.join(PROXY_DIR, '__tests__'))
+    .filter((f) => f.endsWith('.test.ts')).length;
 
   // Use cached count when available — avoids ~4s Jest run.
   // Set DEEPCLAUDE_TEST_COUNT=<N> or DEEPCLAUDE_RUN_TESTS=1 to force live run.
@@ -81,7 +76,9 @@ function getTestStats(): { files: number; total: number } {
   try {
     const jestBin = path.join(ROOT, 'node_modules', '.bin', 'jest');
     const out = execSync(`"${jestBin}" --no-coverage --forceExit 2>&1`, {
-      cwd: ROOT, encoding: 'utf-8', timeout: 30000,
+      cwd: ROOT,
+      encoding: 'utf-8',
+      timeout: 30000,
       windowsHide: true,
     });
     const m = out.match(/Tests:\s+\d+ passed, (\d+) total/);
@@ -97,7 +94,7 @@ function getTestStats(): { files: number; total: number } {
 
 function getEnvVarsFromCode(): string[] {
   const vars = new Set<string>();
-  for (const f of fs.readdirSync(PROXY_DIR).filter(f => f.endsWith('.ts'))) {
+  for (const f of fs.readdirSync(PROXY_DIR).filter((f) => f.endsWith('.ts'))) {
     const content = fs.readFileSync(path.join(PROXY_DIR, f), 'utf-8');
     for (const m of content.matchAll(/DEEPCLAUDE_[A-Z_]+/g)) vars.add(m[0]);
   }
@@ -109,22 +106,45 @@ function getEnvVarsFromCode(): string[] {
 // ──────────────────────────────────────────────
 
 const DISPLAY_NAMES: Record<string, string> = {
-  ds: 'DeepSeek (direct)', or: 'OpenRouter', fw: 'Fireworks AI', oc: 'OpenCode Zen',
-  al: 'Alibaba/DashScope', km: 'Kimi/Moonshot', mm: 'Xiaomi Mimo', um: 'Umans AI',
-  gr: 'Groq', mt: 'Mistral', mx: 'MiniMax', za: 'Z.ai / GLM', bp: 'BytePlus/Doubao',
-  sf: 'SiliconFlow', nv: 'Novita',
+  ds: 'DeepSeek (direct)',
+  or: 'OpenRouter',
+  fw: 'Fireworks AI',
+  oc: 'OpenCode Zen',
+  al: 'Alibaba/DashScope',
+  km: 'Kimi/Moonshot',
+  mm: 'Xiaomi Mimo',
+  um: 'Umans AI',
+  gr: 'Groq',
+  mt: 'Mistral',
+  mx: 'MiniMax',
+  za: 'Z.ai / GLM',
+  bp: 'BytePlus/Doubao',
+  sf: 'SiliconFlow',
+  nv: 'Novita',
 };
 
 // Short names used in the tagline for readability
 const SHORT_NAMES: Record<string, string> = {
-  ds: 'DeepSeek', or: 'OpenRouter', fw: 'Fireworks', oc: 'OpenCode',
-  al: 'Alibaba', km: 'Kimi', mm: 'Mimo', um: 'Umans',
-  gr: 'Groq', mt: 'Mistral', mx: 'MiniMax', za: 'Z.ai', bp: 'BytePlus',
-  sf: 'SiliconFlow', nv: 'Novita',
+  ds: 'DeepSeek',
+  or: 'OpenRouter',
+  fw: 'Fireworks',
+  oc: 'OpenCode',
+  al: 'Alibaba',
+  km: 'Kimi',
+  mm: 'Mimo',
+  um: 'Umans',
+  gr: 'Groq',
+  mt: 'Mistral',
+  mx: 'MiniMax',
+  za: 'Z.ai',
+  bp: 'BytePlus',
+  sf: 'SiliconFlow',
+  nv: 'Novita',
 };
 
 const AUTH_LABEL: Record<string, string> = {
-  'x-api-key': 'x-api-key', bearer: 'bearer',
+  'x-api-key': 'x-api-key',
+  bearer: 'bearer',
 };
 
 function fmtTokens(n: number): string {
@@ -137,7 +157,7 @@ function fmtTokens(n: number): string {
 
 function genTagline(): string {
   const providerNames = Object.keys(providersData.providers || {})
-    .map(k => SHORT_NAMES[k] || k)
+    .map((k) => SHORT_NAMES[k] || k)
     .sort();
   // Anthropic is a special pseudo-provider (bypasses the proxy)
   providerNames.push('Anthropic');
@@ -148,43 +168,67 @@ function genTagline(): string {
 
 const MODULE_DESCRIPTIONS: Record<string, string> = {
   'start-proxy.ts': 'Entry point — HTTP server, request lifecycle, health endpoint',
-  'routing.ts': 'Slot-based routing with prefix matching, fallback chain construction, circuit breaker',
-  'protocol-translate.ts': "Bidirectional Anthropic Messages ↔ OpenAI Chat Completions format translation (only active for OpenAI-format providers — `ds` bypasses this entirely via DeepSeek's `/anthropic` endpoint)",
-  'forward.ts': 'Upstream HTTP forwarding with SSE streaming, gzip decompression, stream heartbeat/deadline timers with byte diagnostics, total-byte cap (500MB), fallback header injection, SSE buffer guarding, usage token extraction, peekFirstChunk with fast-stream race protection',
-  'thinking-cache.ts': 'Anthropic-format thinking block extraction, caching, and injection for multi-turn tool conversations — keyed on sessionKey:toolUseId (no conversation fingerprint) to avoid cross-turn cache misses with DeepSeek thinking mode',
-  'reasoning-cache.ts': 'OpenAI-format reasoning content cache with session-keyed LRU and re-injection — same UUID-keyed architecture as thinking-cache.ts, no conversation fingerprint (only for OpenAI-format providers; `ds` handles this natively)',
-  'transport-errors.ts': 'Network failure classification via ordered signature tuples with cause chain walking',
-  'error-codes.ts': 'Structured error codes with template interpolation, dev/production mode, credential scrubbing via data-driven pattern list',
-  'concurrency.ts': 'Promise-queue-based semaphore with FIFO ordering and acquire/release pump pattern',
-  'lru-cache.ts': 'TTL cache with LRU eviction using delete-then-set MRU promotion and lazy shared cleanup',
-  'server-tools.ts': 'Anthropic server tool conversion (web_search, web_fetch, url_fetch, computer, bash, text_editor, memory, tool_search_tool), DuckDuckGo web search, SSRF-protected web fetch, tool result population',
-  'config.ts': 'CLI argument parsing, JSON config loading with mtime-based hot reload, key resolution with AES-256-GCM decryption',
-  'stats.ts': 'Provider health tracking, circuit breaker with 429 exclusion, auto-probe recovery with cooldown backoff, request statistics, token/spend tracking with atomic writes and restart persistence, event loop lag monitoring, provider stats reconciliation on config reload',
+  'routing.ts':
+    'Slot-based routing with prefix matching, fallback chain construction, circuit breaker',
+  'protocol-translate.ts':
+    "Bidirectional Anthropic Messages ↔ OpenAI Chat Completions format translation (only active for OpenAI-format providers — `ds` bypasses this entirely via DeepSeek's `/anthropic` endpoint)",
+  'forward.ts':
+    'Upstream HTTP forwarding with SSE streaming, gzip decompression, stream heartbeat/deadline timers with byte diagnostics, total-byte cap (500MB), fallback header injection, SSE buffer guarding, usage token extraction, peekFirstChunk with fast-stream race protection',
+  'thinking-cache.ts':
+    'Anthropic-format thinking block extraction, caching, and injection for multi-turn tool conversations — keyed on sessionKey:toolUseId (no conversation fingerprint) to avoid cross-turn cache misses with DeepSeek thinking mode',
+  'reasoning-cache.ts':
+    'OpenAI-format reasoning content cache with session-keyed LRU and re-injection — same UUID-keyed architecture as thinking-cache.ts, no conversation fingerprint (only for OpenAI-format providers; `ds` handles this natively)',
+  'transport-errors.ts':
+    'Network failure classification via ordered signature tuples with cause chain walking',
+  'error-codes.ts':
+    'Structured error codes with template interpolation, dev/production mode, credential scrubbing via data-driven pattern list',
+  'concurrency.ts':
+    'Promise-queue-based semaphore with FIFO ordering and acquire/release pump pattern',
+  'lru-cache.ts':
+    'TTL cache with LRU eviction using delete-then-set MRU promotion and lazy shared cleanup',
+  'server-tools.ts':
+    'Anthropic server tool conversion (web_search, web_fetch, url_fetch, computer, bash, text_editor, memory, tool_search_tool), DuckDuckGo web search, SSRF-protected web fetch, tool result population',
+  'config.ts':
+    'CLI argument parsing, JSON config loading with mtime-based hot reload, key resolution with AES-256-GCM decryption',
+  'stats.ts':
+    'Provider health tracking, circuit breaker with 429 exclusion, auto-probe recovery with cooldown backoff, request statistics, token/spend tracking with atomic writes and restart persistence, event loop lag monitoring, provider stats reconciliation on config reload',
   'util.ts': 'Path deduplication for /v1-prefixed providers, safe header construction',
-  'crypto.ts': 'AES-256-GCM encryption/decryption for provider API keys with async scrypt (N=131072) key derivation and fingerprint-based key caching',
+  'crypto.ts':
+    'AES-256-GCM encryption/decryption for provider API keys with async scrypt (N=131072) key derivation and fingerprint-based key caching',
   'encrypt-key.ts': 'CLI tool for encrypting API keys',
   'friendly-error.ts': 'Conversational error responses for exhausted fallback chains',
   'header-sanitizer.ts': 'Request header sanitization before logging (drops auth, cookies, noise)',
-  'log.ts': 'Structured logger with per-module namespacing, request IDs, and env-gated debug level (`DEEPCLAUDE_DEBUG=true`)',
+  'log.ts':
+    'Structured logger with per-module namespacing, request IDs, and env-gated debug level (`DEEPCLAUDE_DEBUG=true`)',
   'momentum.ts': 'Session-based provider stickiness (tracks last 5 provider decisions)',
   'rate-limiter.ts': 'Per-IP fixed-window rate limiter with LRU eviction',
-  'ssrf.ts': 'URL validation against SSRF/DNS rebinding, blocks private/internal IPs and metadata endpoints',
+  'ssrf.ts':
+    'URL validation against SSRF/DNS rebinding, blocks private/internal IPs and metadata endpoints',
   'truncate.ts': 'Log/error body length truncation with credential scrubbing',
-  'startup-check.ts': 'Startup health probe — concurrent non-streaming + streaming checks per provider before accepting connections',
+  'startup-check.ts':
+    'Startup health probe — concurrent non-streaming + streaming checks per provider before accepting connections',
   'stream-metrics.ts': 'Per-stream timing (TTFB, tokens/sec) and aggregated provider metrics',
-  'request-log.ts': 'Opt-in request logging to `~/.deepclaude/requests.log` (`--log-all` or `DEEPCLAUDE_LOG_ALL_REQUESTS=true`)',
-  'session-key.ts': 'SHA-256 session key derivation from conversation content, shared by thinking/reasoning caches and momentum',
-  'prompt-router.ts': 'Request prompt complexity classification (TRIVIAL/CHAT/CODE/TOOL/HEAVY) for cost-based routing',
-  'canary.ts': 'Canary routing state machine (COLD → WARMING → ACTIVE) with configurable rollout percentages and rollback',
+  'request-log.ts':
+    'Opt-in request logging to `~/.deepclaude/requests.log` (`--log-all` or `DEEPCLAUDE_LOG_ALL_REQUESTS=true`)',
+  'session-key.ts':
+    'SHA-256 session key derivation from conversation content, shared by thinking/reasoning caches and momentum',
+  'prompt-router.ts':
+    'Request prompt complexity classification (TRIVIAL/CHAT/CODE/TOOL/HEAVY) for cost-based routing',
+  'canary.ts':
+    'Canary routing state machine (COLD → WARMING → ACTIVE) with configurable rollout percentages and rollback',
   'probe.ts': 'Single-provider health probe with auth failure detection and latency measurement',
   'dashboard.ts': 'Health dashboard HTML page with live SSE metrics stream',
   'config-lint.ts': '`providers.json` structural validation (used by `--lint-config`)',
   'dry-run.ts': 'Resolved routing table display without starting the proxy (used by `--dry-run`)',
-  'launcher.mjs': 'Unified Node.js engine shared by deepclaude.ps1 and deepclaude.sh — config resolution, routes JSON, env vars with [1m] suffix and compaction window, slot/thinking overrides, proxy state, pricing/model/key data. Zero npm deps, single source of truth.',
+  'launcher.mjs':
+    'Unified Node.js engine shared by deepclaude.ps1 and deepclaude.sh — config resolution, routes JSON, env vars with [1m] suffix and compaction window, slot/thinking overrides, proxy state, pricing/model/key data. Zero npm deps, single source of truth.',
 };
 
 function genModuleTable(): string {
-  const files = fs.readdirSync(PROXY_DIR).filter(f => f.endsWith('.ts') || f.endsWith('.mjs')).sort();
+  const files = fs
+    .readdirSync(PROXY_DIR)
+    .filter((f) => f.endsWith('.ts') || f.endsWith('.mjs'))
+    .sort();
   const lines: string[] = [];
   lines.push('| Module | Purpose |');
   lines.push('|---|---|');
@@ -198,12 +242,14 @@ function genModuleTable(): string {
 // ─── providers.json schema ────────────────────
 
 function genProvidersSchema(): string {
-  const keys = Object.keys(providersData).filter(k => !k.startsWith('_'));
+  const keys = Object.keys(providersData).filter((k) => !k.startsWith('_'));
   const descriptions: Record<string, string> = {
-    providers: 'endpoint, auth, wire format, fallbacks, setup URLs, streamUsageReporting, extraHeaders',
+    providers:
+      'endpoint, auth, wire format, fallbacks, setup URLs, streamUsageReporting, extraHeaders',
     aliases: 'short model aliases (e.g. "v4" → "deepseek-v4-pro")',
     contextLimits: 'per-model token windows',
-    compactionWindow: 'per-model compaction thresholds (950K for DeepSeek — preserves disk cache hits)',
+    compactionWindow:
+      'per-model compaction thresholds (950K for DeepSeek — preserves disk cache hits)',
     thinking: 'per-model reasoning mode config (type, budget_tokens)',
     configs: 'named preset configs (slot → provider:model), monthlyBudget',
     pricing: `per-model input/output/cache token pricing ($/MTok)`,
@@ -234,11 +280,13 @@ function genNamedConfigsUsage(): string {
   const lines: string[] = [];
   // ds is the default — list it first without -b
   if (configs['ds']) {
-    lines.push(`deepclaude                  # ds (default) — ${configs['ds'].name || 'DeepSeek V4 Pro'}`);
+    lines.push(
+      `deepclaude                  # ds (default) — ${configs['ds'].name || 'DeepSeek V4 Pro'}`,
+    );
     delete (configs as any)['ds'];
   }
   for (const [key, cfg] of Object.entries(configs).sort(([, a], [, b]) =>
-    (a.name || key).localeCompare(b.name || key)
+    (a.name || key).localeCompare(b.name || key),
   )) {
     lines.push(`deepclaude -b ${key.padEnd(15)} # ${cfg.name || key}`);
   }
@@ -255,7 +303,9 @@ function genProviderTable(): string {
   lines.push('| Key | Provider | Flag | Auth |');
   lines.push('|---|---|---|---|');
   for (const [key, def] of Object.entries(providers)) {
-    lines.push(`| \`${def.keyEnv}\` | ${def.displayName || key} | \`${key}\` | ${AUTH_LABEL[def.authHeader] || def.authHeader} |`);
+    lines.push(
+      `| \`${def.keyEnv}\` | ${def.displayName || key} | \`${key}\` | ${AUTH_LABEL[def.authHeader] || def.authHeader} |`,
+    );
   }
   return lines.join('\n');
 }
@@ -264,16 +314,15 @@ function genProviderTable(): string {
 
 function genConfigsReference(): string {
   const configs = providersData.configs || {};
-  const slotLabels = ['opus', 'sonnet', 'haiku', 'sub', 'fable'] as const;
   const slotKeys = ['opus', 'sonnet', 'haiku', 'sub', 'fable'] as const;
   const lines: string[] = [];
   for (const [key, cfg] of Object.entries(configs)) {
-    const cfgRec = cfg as Record<string,string>;
+    const cfgRec = cfg as Record<string, string>;
     const parts = slotKeys.map((s, i) => {
       const val = cfgRec[s] || (s === 'fable' ? cfgRec['opus'] : '-');
       return `${i < 4 ? s : 'fable'}=${val}`;
     });
-    const allSame = parts.every(p => p.split('=')[1] === parts[0].split('=')[1]);
+    const allSame = parts.every((p) => p.split('=')[1] === parts[0].split('=')[1]);
     lines.push(`${key.padEnd(7)} ${parts.join('  ')}${allSame ? '  (all slots same)' : ''}`);
   }
   return lines.join('\n');
@@ -291,10 +340,12 @@ function genContextTable(): string {
   const lines: string[] = [];
   lines.push('| Model | Context |');
   lines.push('|---|---|');
-  for (const [limitStr, models] of Object.entries(byLimit).sort(([a], [b]) => Number(b) - Number(a))) {
+  for (const [limitStr, models] of Object.entries(byLimit).sort(
+    ([a], [b]) => Number(b) - Number(a),
+  )) {
     const limit = Number(limitStr);
     const label = fmtTokens(limit);
-    const names = models.map(m => `\`${m}\``).join(', ');
+    const names = models.map((m) => `\`${m}\``).join(', ');
     lines.push(`| ${names} | ${label} |`);
   }
   return lines.join('\n');
@@ -307,7 +358,9 @@ function genFallbackList(): string {
   const lines: string[] = [];
   for (const [key, def] of Object.entries(providers)) {
     if (def.fallback && def.fallback.length > 0) {
-      lines.push(`${key} → fallback: ${def.fallback.join(', ').padEnd(25)} # ${def.displayName || key} fails → ${def.fallback.join('/')}`);
+      lines.push(
+        `${key} → fallback: ${def.fallback.join(', ').padEnd(25)} # ${def.displayName || key} fails → ${def.fallback.join('/')}`,
+      );
     }
   }
   return lines.join('\n');
@@ -357,7 +410,10 @@ function genStateFiles(): string {
     ['`thinking-overrides.json`', 'thinking mode overrides (--no-thinking / --thinking-budget)'],
     ['`spend.json`', 'daily and total spend tracking (atomic write via .tmp + rename)'],
     ['`subagent-model.json`', 'dedicated subagent model setting'],
-    ['`fix-av.cmd`', 'standalone AV exclusion script (survives Defender quarantine of proxy files)'],
+    [
+      '`fix-av.cmd`',
+      'standalone AV exclusion script (survives Defender quarantine of proxy files)',
+    ],
     ['`requests.log`', 'opt-in request logs (JSONL, timestamped rotation, 5 backups)'],
   ];
   return files.map(([f, d]) => `- ${f} — ${d}`).join('\n');
@@ -483,7 +539,10 @@ build(templatePath, outputPath);
 if (doApply) {
   // Check if README.md changed and commit if it did.
   try {
-    const diff = execSync('git diff --name-only README.md', { cwd: ROOT, encoding: 'utf-8' }).trim();
+    const diff = execSync('git diff --name-only README.md', {
+      cwd: ROOT,
+      encoding: 'utf-8',
+    }).trim();
     if (diff) {
       execSync('git add README.md', { cwd: ROOT });
       execSync('git commit -m "Docs: auto-update README.md from template"', { cwd: ROOT });
