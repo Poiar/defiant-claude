@@ -82,7 +82,7 @@ All business logic — config resolution, routes JSON construction, env var comp
 ### Test coverage
 
 <!-- AUTO:test-coverage -->
-627 tests across 36 test files covering all proxy modules — transport errors, concurrency, LRU cache, provider registry validation, error codes, routing, stats, forwarding, server tools, config, protocol translation, thinking cache (including fingerprint-free cross-turn regression tests), reasoning cache, header sanitization, truncation, crypto, friendly errors, SSRF validation, dead stream detection, startup checks, and stream metrics. Run with `npm test`.
+1233 tests across 43 test files covering all proxy modules — transport errors, concurrency, LRU cache, provider registry validation, error codes, routing, stats, forwarding, server tools, config, protocol translation, thinking cache (including fingerprint-free cross-turn regression tests), reasoning cache, header sanitization, truncation, crypto, friendly errors, SSRF validation, dead stream detection, startup checks, and stream metrics. Run with `npm test`.
 <!-- /AUTO:test-coverage -->
 
 ### Pre-commit
@@ -122,6 +122,7 @@ dc                                            # Shortcut — same as deepclaude 
 <!-- AUTO:named-configs -->
 deepclaude                  # ds (default) — DeepSeek V4 Pro
 deepclaude -b bp              # BytePlus Doubao 1.5 Pro
+deepclaude -b ds+an           # DeepSeek + Anthropic Haiku
 deepclaude -b ds+oc           # DeepSeek + OpenCode subs
 deepclaude -b fw              # Fireworks AI
 deepclaude -b gr              # Groq (Llama 4 Maverick)
@@ -218,6 +219,7 @@ deepclaude ds:deepseek-v4-pro ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-a
 | `BYTEPLUS_API_KEY` | BytePlus/Doubao | `bp` | bearer |
 | `SILICONFLOW_API_KEY` | SiliconFlow | `sf` | bearer |
 | `NOVITA_API_KEY` | Novita | `nv` | bearer |
+| `ANTHROPIC_API_KEY` | Anthropic (direct) | `an` | x-api-key |
 <!-- /AUTO:providers-table -->
 
 Keys are read from both process env and machine/user environment variables.
@@ -265,6 +267,7 @@ bp      opus=bp:byteplus/doubao-1.5-pro  sonnet=bp:byteplus/doubao-1.5-pro  haik
 sf      opus=sf:siliconflow/deepseek-v4-pro  sonnet=sf:siliconflow/deepseek-v4-pro  haiku=sf:siliconflow/deepseek-v4-pro  sub=sf:siliconflow/deepseek-v4-pro  fable=sf:siliconflow/deepseek-v4-pro  (all slots same)
 nv      opus=nv:novita/deepseek-v4-pro  sonnet=nv:novita/deepseek-v4-pro  haiku=nv:novita/deepseek-v4-pro  sub=nv:novita/deepseek-v4-pro  fable=nv:novita/deepseek-v4-pro  (all slots same)
 ds+oc   opus=ds:deepseek-v4-pro  sonnet=ds:deepseek-v4-pro  haiku=oc:big-pickle  sub=oc:big-pickle  fable=ds:deepseek-v4-pro
+ds+an   opus=ds:deepseek-v4-pro  sonnet=ds:deepseek-v4-pro  haiku=an:claude-haiku-4-5-20251001  sub=an:claude-haiku-4-5-20251001  fable=ds:deepseek-v4-pro
 <!-- /AUTO:configs-reference -->
 ```
 
@@ -297,6 +300,7 @@ Per-model context limits are configured automatically:
 |---|---|
 | `deepseek-v4-pro`, `deepseek-v4-flash`, `deepseek/deepseek-v4-pro`, `deepseek/deepseek-v4-flash`, `accounts/fireworks/models/deepseek-v4-pro`, `siliconflow/deepseek-v4-pro`, `novita/deepseek-v4-pro` | 1M |
 | `kimi-k2.6`, `umans-kimi-k2.6`, `umans-coder`, `minimax/minimax-m1` | 256K |
+| `claude-haiku-4-5-20251001`, `claude-sonnet-4-6`, `claude-opus-4-7` | 195K |
 | `z-ai/glm-4.5-air:free`, `big-pickle`, `mimo-v2.5-pro`, `umans-flash`, `umans-glm-5.1`, `groq/llama-4-maverick`, `groq/deepseek-r1-distill-qwen-32b`, `mistral/mistral-large`, `mistral/mistral-small`, `zai/glm-4.5`, `byteplus/doubao-1.5-pro` | 128K |
 <!-- /AUTO:context-table -->
 
