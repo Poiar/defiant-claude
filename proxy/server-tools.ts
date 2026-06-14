@@ -14,6 +14,8 @@ import { createLogger } from './log';
 import { scrubCredentials } from './error-codes';
 import { validateUrl } from './ssrf';
 import { LruCache } from './lru-cache';
+import { getConstraints } from './protocol-types';
+import type { ProviderConstraints } from './protocol-types';
 
 const log = createLogger('server-tools');
 
@@ -166,7 +168,8 @@ export function isServerToolType(type: string | null | undefined): boolean {
 // true here tells start-proxy.ts to skip the conversion so the real
 // Anthropic API receives its native server-tool types.
 export function isNativeAnthropicProvider(providerKey: string, hostname?: string): boolean {
-  return providerKey === 'an' || hostname === 'api.anthropic.com';
+  if (hostname === 'api.anthropic.com') return true;
+  return getConstraints(providerKey).nativeServerTools;
 }
 // --- Server tool conversion ---
 
@@ -230,7 +233,10 @@ export interface PreprocessResult {
 const WEB_TOOL_PREFIXES = ['web_search_', 'web_fetch_', 'url_fetch_'];
 const isWebToolType = (type: string): boolean => WEB_TOOL_PREFIXES.some((p) => type.startsWith(p));
 
-export function preprocessServerTools(body: PreprocessBody): PreprocessResult {
+export function preprocessServerTools(
+  body: PreprocessBody,
+  constraints?: ProviderConstraints,
+): PreprocessResult {
   let modified = false;
   let hadWebSearch = false;
   let hadWebFetch = false;
@@ -263,9 +269,17 @@ export function preprocessServerTools(body: PreprocessBody): PreprocessResult {
     modified = true;
   }
 
-  // Step 3: Strip tool_choice — converted tool names no longer match any
-  // tool_choice target, and DeepSeek rejects tool_choice with thinking mode
-  if ('tool_choice' in body) {
+  // Step 3: Strip tool_choice for providers that reject it with thinking.
+  // Encoded in ProviderConstraints.forbidsToolChoiceWithThinking.
+  // For backward compatibility (no constraints passed), strip unconditionally
+  // as was the historical behavior for all non-Anthropic providers.
+  if (constraints && 'tool_choice' in body) {
+    if (constraints.forbidsToolChoiceWithThinking) {
+      delete body.tool_choice;
+      modified = true;
+    }
+  } else if ('tool_choice' in body) {
+    // Legacy: no constraints = strip tool_choice unconditionally
     delete body.tool_choice;
     modified = true;
   }

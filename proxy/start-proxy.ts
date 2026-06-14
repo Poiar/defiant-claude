@@ -34,11 +34,8 @@ import {
 import { tryForward, addFallbackHeaders, sseHeaders, type ForwardResult } from './forward';
 import { sendProbe } from './probe';
 import type { ProbeSlot } from './probe';
-import {
-  isNativeAnthropicProvider,
-  populateToolResults,
-  preprocessServerTools,
-} from './server-tools';
+import { populateToolResults, preprocessServerTools } from './server-tools';
+import { getConstraints } from './protocol-types';
 import {
   isProviderHealthy,
   recordSpend,
@@ -975,19 +972,16 @@ if (probeIdx >= 2) {
             let modified = false;
 
             // Preprocess server-side tools for non-Anthropic providers.
-            // Anthropic natively supports web_search_* and web_fetch_* as
-            // server-side tools — DO NOT convert or Anthropic won't execute
-            // them and CC's "Did N searches" display will show 0.
-            const isAnthropic = isNativeAnthropicProvider(
-              resolved.primary?.providerKey,
-              resolved.primary?.targetUrl?.hostname,
-            );
-            if (!isAnthropic && parsedBody.tools) {
+            // Uses ProviderConstraints to decide tool conversion and
+            // tool_choice stripping (nativeServerTools, forbidsToolChoiceWithThinking).
+            const constraints = getConstraints(resolved.primary?.providerKey || '');
+            if (!constraints.nativeServerTools && parsedBody.tools) {
               const result = preprocessServerTools(
                 parsedBody as Record<string, unknown> & {
                   tools?: unknown[];
                   tool_choice?: unknown;
                 },
+                constraints,
               );
               if (result.modified) modified = true;
             }
@@ -1133,9 +1127,10 @@ if (probeIdx >= 2) {
               try {
                 const p = JSON.parse(forwardedBody.toString());
                 let bodyModified = false;
-                // DeepSeek rejects tool_choice when thinking mode is enabled:
-                // "Thinking mode does not support this tool_choice"
-                if (p.tool_choice !== undefined) {
+                // Strip tool_choice for providers that reject it with thinking
+                // (encoded in ProviderConstraints.forbidsToolChoiceWithThinking)
+                const c = getConstraints(target.providerKey);
+                if (c.forbidsToolChoiceWithThinking && p.tool_choice !== undefined) {
                   delete p.tool_choice;
                   bodyModified = true;
                 }
