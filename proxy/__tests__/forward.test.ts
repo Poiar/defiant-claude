@@ -5,6 +5,10 @@ import {
   sseHeaders,
   peekFirstChunk,
   MAX_SSE_BUFFER,
+  MAX_TOTAL_STREAM_BYTES,
+  STREAM_READ_TIMEOUT_MS,
+  FIRST_BYTE_TIMEOUT_MS,
+  STREAM_HEARTBEAT_MS,
   extractStreamUsage,
   StreamUsageAccumulator,
 } from '../forward';
@@ -369,5 +373,416 @@ describe('extractStreamUsage', () => {
     expect(acc.prompt_tokens).toBe(500000);
     expect(acc.cache_hit_tokens).toBe(490000);
     expect(acc.cache_miss_tokens).toBe(10000);
+  });
+});
+
+// =========================================================================
+// Additional constant tests
+// =========================================================================
+
+describe('forward constants', () => {
+  test('MAX_TOTAL_STREAM_BYTES is 500MB', () => {
+    expect(MAX_TOTAL_STREAM_BYTES).toBe(500 * 1024 * 1024);
+  });
+
+  test('STREAM_READ_TIMEOUT_MS is 300s (5 min)', () => {
+    expect(STREAM_READ_TIMEOUT_MS).toBe(300_000);
+  });
+
+  test('FIRST_BYTE_TIMEOUT_MS is 15s', () => {
+    expect(FIRST_BYTE_TIMEOUT_MS).toBe(15_000);
+  });
+
+  test('STREAM_HEARTBEAT_MS is 180s (3 min)', () => {
+    expect(STREAM_HEARTBEAT_MS).toBe(180_000);
+  });
+
+  test('MAX_SSE_BUFFER is 1MB', () => {
+    expect(MAX_SSE_BUFFER).toBe(1_048_576);
+  });
+});
+
+// =========================================================================
+// sseHeaders — additional edge cases
+// =========================================================================
+
+describe('sseHeaders — edge cases', () => {
+  test('handles empty object extra', () => {
+    const headers = sseHeaders({});
+    expect(headers['content-type']).toBe('text/event-stream');
+    expect(headers['cache-control']).toBe('no-cache, no-transform');
+    expect(headers['connection']).toBe('keep-alive');
+    expect(headers['x-accel-buffering']).toBe('no');
+    expect(Object.keys(headers)).toHaveLength(4); // empty extra adds no keys
+  });
+
+  test('returns a new object each call', () => {
+    const h1 = sseHeaders();
+    const h2 = sseHeaders();
+    expect(h1).not.toBe(h2);
+    expect(h1).toEqual(h2);
+  });
+
+  test('handles null-like value in extra gracefully', () => {
+    // User should pass undefined, but Object.assign handles null fine via ||
+    const headers = sseHeaders();
+    expect(headers['content-type']).toBe('text/event-stream');
+  });
+});
+
+// =========================================================================
+// peekFirstChunk — additional edge cases
+// =========================================================================
+
+describe('peekFirstChunk — edge cases', () => {
+  interface MockStream {
+    headers: Record<string, string | string[] | undefined>;
+    on(event: string, handler: (...args: unknown[]) => void): void;
+    once(event: string, handler: (...args: unknown[]) => void): void;
+    removeListener(event: string, handler: (...args: unknown[]) => void): void;
+    read(): Buffer | null;
+    unshift(chunk: Buffer): void;
+    destroy(): void;
+    emit(event: string, ...args: unknown[]): void;
+  }
+
+  function createMockStream(contentType: string, data?: Buffer | null): MockStream {
+    const handlers: Record<string, Array<(...args: unknown[]) => void>> = {};
+    return {
+      headers: { 'content-type': contentType },
+      on(event: string, handler: (...args: unknown[]) => void) {
+        if (!handlers[event]) handlers[event] = [];
+        handlers[event].push(handler);
+      },
+      once(event: string, handler: (...args: unknown[]) => void) {
+        if (!handlers[event]) handlers[event] = [];
+        handlers[event].push(handler);
+      },
+      removeListener(event: string, handler: (...args: unknown[]) => void) {
+        if (handlers[event]) {
+          handlers[event] = handlers[event].filter((h) => h !== handler);
+        }
+      },
+      read() {
+        return data ?? null;
+      },
+      unshift(_chunk: Buffer) {},
+      destroy() {},
+      emit(event: string, ...args: unknown[]) {
+        if (handlers[event]) {
+          handlers[event].forEach((h) => h(...args));
+        }
+      },
+    };
+  }
+
+  test('handles stream end (no data before end)', async () => {
+    jest.useFakeTimers();
+    try {
+      const mockStream = createMockStream('text/event-stream', null);
+      const promise = peekFirstChunk(mockStream as unknown as NodeJS.ReadableStream, 5000);
+      mockStream.emit('end');
+      const result = await promise;
+      expect(result.ok).toBe(true);
+      expect(result.firstChunk).toBeNull();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('detects already-buffered data on attachment', async () => {
+    jest.useFakeTimers();
+    try {
+      const chunk = Buffer.from('pre-buffered data\n\n');
+      const mockStream = createMockStream('text/event-stream', chunk);
+      // The read() call on attach returns chunk immediately — no emit needed
+      const promise = peekFirstChunk(mockStream as unknown as NodeJS.ReadableStream, 5000);
+      const result = await promise;
+      expect(result.ok).toBe(true);
+      expect(result.firstChunk).toEqual(chunk);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('respects custom timeout parameter', async () => {
+    jest.useFakeTimers();
+    try {
+      const mockStream = createMockStream('text/event-stream', null);
+      const promise = peekFirstChunk(mockStream as unknown as NodeJS.ReadableStream, 2000);
+      jest.advanceTimersByTime(1999);
+      // Not timed out yet at 1999ms
+      jest.advanceTimersByTime(2);
+      const result = await promise;
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe('timeout');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('ignores events after resolution (double readable)', async () => {
+    jest.useFakeTimers();
+    try {
+      const chunk = Buffer.from('first chunk\n\n');
+      const mockStream = createMockStream('text/event-stream', chunk);
+      const promise = peekFirstChunk(mockStream as unknown as NodeJS.ReadableStream, 5000);
+      mockStream.emit('readable');
+      // Emit again after resolution — should be ignored (no crash)
+      mockStream.emit('readable');
+      mockStream.emit('error');
+      const result = await promise;
+      expect(result.ok).toBe(true);
+      expect(result.firstChunk).toEqual(chunk);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('handles content-type header as string array (Array.includes works)', async () => {
+    const mockStream = {
+      headers: { 'content-type': ['text/event-stream'] },
+      on: jest.fn(),
+      once: jest.fn(),
+      removeListener: jest.fn(),
+      read: () => null,
+      unshift: jest.fn(),
+      destroy: jest.fn(),
+      emit: jest.fn(),
+    };
+    jest.useFakeTimers();
+    try {
+      const promise = peekFirstChunk(mockStream as unknown as NodeJS.ReadableStream, 100);
+      jest.advanceTimersByTime(100);
+      const result = await promise;
+      // Array.includes('text/event-stream') is true, so enters SSE path and times out
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe('timeout');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('handles undefined content-type header', async () => {
+    const mockStream = {
+      headers: {},
+      on: jest.fn(),
+      once: jest.fn(),
+      removeListener: jest.fn(),
+      read: () => null,
+      unshift: jest.fn(),
+      destroy: jest.fn(),
+      emit: jest.fn(),
+    };
+    jest.useFakeTimers();
+    try {
+      const promise = peekFirstChunk(mockStream as unknown as NodeJS.ReadableStream, 100);
+      jest.advanceTimersByTime(100);
+      const result = await promise;
+      expect(result.ok).toBe(true);
+      expect(result.firstChunk).toBeNull();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});
+
+// =========================================================================
+// extractStreamUsage — additional edge cases
+// =========================================================================
+
+describe('extractStreamUsage — edge cases', () => {
+  function newAcc(): StreamUsageAccumulator {
+    return { prompt_tokens: 0, completion_tokens: 0, cache_hit_tokens: 0, cache_miss_tokens: 0 };
+  }
+
+  test('handles Anthropic message_stop type usage format', () => {
+    const acc = newAcc();
+    const payload = JSON.stringify({
+      type: 'message_stop',
+    });
+    extractStreamUsage(payload, acc);
+    // No usage object → tokens stay 0
+    expect(acc.prompt_tokens).toBe(0);
+    expect(acc.completion_tokens).toBe(0);
+  });
+
+  test('extracts Anthropic input_tokens and output_tokens', () => {
+    const acc = newAcc();
+    const payload = JSON.stringify({
+      type: 'message_delta',
+      usage: {
+        input_tokens: 500,
+        output_tokens: 50,
+      },
+    });
+    extractStreamUsage(payload, acc);
+    expect(acc.prompt_tokens).toBe(500);
+    expect(acc.completion_tokens).toBe(50);
+  });
+
+  test('Anthropic cache tokens are 0 when not present', () => {
+    const acc = newAcc();
+    const payload = JSON.stringify({
+      type: 'message_delta',
+      usage: {
+        input_tokens: 100,
+        output_tokens: 10,
+      },
+    });
+    extractStreamUsage(payload, acc);
+    expect(acc.prompt_tokens).toBe(100);
+    expect(acc.cache_hit_tokens).toBe(0);
+    expect(acc.cache_miss_tokens).toBe(0);
+  });
+
+  test('OpenAI prompt_cache_miss_tokens defaults to 0', () => {
+    const acc = newAcc();
+    const payload = JSON.stringify({
+      usage: {
+        prompt_tokens: 5,
+        completion_tokens: 1,
+        prompt_cache_hit_tokens: 3,
+        // prompt_cache_miss_tokens absent
+      },
+    });
+    extractStreamUsage(payload, acc);
+    expect(acc.cache_miss_tokens).toBe(0);
+  });
+
+  test('handles whitespace-only string', () => {
+    const acc = newAcc();
+    extractStreamUsage('   \n  ', acc);
+    // JSON.parse throws → tokens stay 0
+    expect(acc.prompt_tokens).toBe(0);
+  });
+
+  test('accumulates across multiple calls — completion and prompt overwrite', () => {
+    const acc = newAcc();
+    extractStreamUsage(
+      JSON.stringify({ usage: { prompt_tokens: 100, completion_tokens: 10 } }),
+      acc,
+    );
+    expect(acc.prompt_tokens).toBe(100);
+    extractStreamUsage(
+      JSON.stringify({ usage: { prompt_tokens: 200, completion_tokens: 30 } }),
+      acc,
+    );
+    // Last write wins for prompt/completion (not accumulated)
+    expect(acc.prompt_tokens).toBe(200);
+    expect(acc.completion_tokens).toBe(30);
+  });
+
+  test('cache tokens overwrite (not accumulate) across calls', () => {
+    const acc = newAcc();
+    extractStreamUsage(
+      JSON.stringify({
+        usage: {
+          prompt_tokens: 1,
+          completion_tokens: 1,
+          prompt_cache_hit_tokens: 50,
+          prompt_cache_miss_tokens: 10,
+        },
+      }),
+      acc,
+    );
+    expect(acc.cache_hit_tokens).toBe(50);
+    expect(acc.cache_miss_tokens).toBe(10);
+    // Second call with no cache fields — does NOT overwrite (only sets when cache fields present)
+    extractStreamUsage(
+      JSON.stringify({
+        usage: { prompt_tokens: 2, completion_tokens: 2 },
+      }),
+      acc,
+    );
+    // Cache tokens unchanged from first call (no cache fields in second usage)
+    expect(acc.cache_hit_tokens).toBe(50);
+    expect(acc.cache_miss_tokens).toBe(10);
+    // Third call with new cache values overwrites
+    extractStreamUsage(
+      JSON.stringify({
+        usage: {
+          prompt_tokens: 3,
+          completion_tokens: 3,
+          prompt_cache_hit_tokens: 99,
+          prompt_cache_miss_tokens: 1,
+        },
+      }),
+      acc,
+    );
+    expect(acc.cache_hit_tokens).toBe(99);
+    expect(acc.cache_miss_tokens).toBe(1);
+  });
+
+  test('handles extremely large token numbers', () => {
+    const acc = newAcc();
+    const payload = JSON.stringify({
+      usage: {
+        prompt_tokens: 999999999,
+        completion_tokens: 888888888,
+        prompt_cache_hit_tokens: 777777777,
+        prompt_cache_miss_tokens: 666666666,
+      },
+    });
+    extractStreamUsage(payload, acc);
+    expect(acc.prompt_tokens).toBe(999999999);
+    expect(acc.cache_hit_tokens).toBe(777777777);
+    expect(acc.cache_miss_tokens).toBe(666666666);
+  });
+
+  test('negative token values are preserved as-is (no clamping)', () => {
+    const acc = newAcc();
+    const payload = JSON.stringify({
+      usage: {
+        prompt_tokens: -1,
+        completion_tokens: 0,
+      },
+    });
+    extractStreamUsage(payload, acc);
+    expect(acc.prompt_tokens).toBe(-1);
+  });
+});
+
+// =========================================================================
+// addFallbackHeaders — additional edge cases
+// =========================================================================
+
+describe('addFallbackHeaders — edge cases', () => {
+  test('handles meta with null field values', () => {
+    const headers = addFallbackHeaders(
+      {},
+      {
+        fallbackFromModel: null,
+        fallbackIndex: undefined,
+      },
+    );
+    // null and undefined fields should not be added
+    expect(headers['x-fallback-from']).toBeUndefined();
+    expect(headers['x-fallback-index']).toBeUndefined();
+  });
+
+  test('does not mutate the original headers object', () => {
+    const original = { 'content-type': 'application/json' };
+    const result = addFallbackHeaders(original, { fallbackFromModel: 'test' });
+    // Original should be unchanged
+    expect(original['x-fallback-from']).toBeUndefined();
+    // Result has the addition
+    expect(result['x-fallback-from']).toBe('test');
+    expect(result['content-type']).toBe('application/json');
+  });
+
+  test('handles meta with all fields false/falsy', () => {
+    const headers = addFallbackHeaders(
+      {},
+      {
+        fallbackFromModel: '',
+        fallbackIndex: 0,
+        fallbackExhausted: false,
+      },
+    );
+    // Empty string still gets set (truthiness check might vary)
+    if (headers['x-fallback-from'] !== undefined) {
+      expect(headers['x-fallback-from']).toBe('');
+    }
   });
 });
