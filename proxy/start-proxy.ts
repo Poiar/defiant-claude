@@ -9,6 +9,8 @@ import {
   translateRequest,
   createStreamTransformer,
   createAnthropicStreamInterceptor,
+  translateRequestToGemini,
+  createGeminiToAnthropicStream,
 } from './protocol-translate';
 import { injectThinkingBlocks } from './thinking-cache';
 import { reinjectReasoningContent } from './reasoning-cache';
@@ -1132,6 +1134,25 @@ if (probeIdx >= 2) {
             }
           }
 
+          // --- Google Gemini protocol translation ---
+          let geminiModelName = '';
+          if (target.format === 'gemini') {
+            try {
+              const reqParsed = JSON.parse(forwardedBody.toString());
+              const { geminiBody, model: gmModel } = translateRequestToGemini(reqParsed);
+              forwardedBody = Buffer.from(JSON.stringify(geminiBody));
+              geminiModelName = gmModel;
+              if (reqParsed.stream) {
+                streamTransformer = createGeminiToAnthropicStream();
+              }
+            } catch (e) {
+              log.error(
+                reqId,
+                'gemini protocol translation error: ' + truncateForLog((e as Error).message),
+              );
+            }
+          }
+
           // Build upstream path — map Anthropic client paths to the
           // format-appropriate upstream endpoint (same as probe + startup-check).
           const basePath = target.targetUrl.pathname.replace(/\/+$/, '');
@@ -1139,7 +1160,20 @@ if (probeIdx >= 2) {
           const endpointPath =
             target.format === 'openai'
               ? reqPath.replace(/\/v1\/messages/, '/v1/chat/completions')
-              : reqPath;
+              : target.format === 'gemini'
+                ? (() => {
+                    const isStream =
+                      parsedBody &&
+                      typeof (parsedBody as Record<string, unknown>).stream === 'boolean'
+                        ? ((parsedBody as Record<string, unknown>).stream as boolean)
+                        : false;
+                    return (
+                      '/v1beta/models/' +
+                      (geminiModelName || 'gemini-2.5-flash') +
+                      (isStream ? ':streamGenerateContent' : ':generateContent')
+                    );
+                  })()
+                : reqPath;
           const upstreamPath = deduplicatePath(
             basePath,
             endpointPath +

@@ -1,11 +1,12 @@
 'use strict';
 
 // =========================================================================
-// Protocol Types — Central type registry for Anthropic and OpenAI protocols.
+// Protocol Types — Central type registry for Anthropic, OpenAI, and Gemini.
 //
 // These types encode the EXACT wire formats used by:
 //   - Anthropic Messages API (request, response, SSE events)
 //   - OpenAI Chat Completions API (request, response, SSE chunks)
+//   - Google Gemini API (generateContent, streamGenerateContent)
 //
 // Also includes ProviderConstraints — a per-provider ruleset that encodes
 // behavioral quirks currently scattered as inline comments and ad-hoc mutations
@@ -297,6 +298,74 @@ export interface OpenAIStreamChunk {
   usage?: ExtendedOpenAIUsage;
 }
 
+// --- Google Gemini API types ------------------------------------------------
+
+export interface GeminiPart {
+  text?: string;
+  functionCall?: { name: string; args: Record<string, unknown> };
+  functionResponse?: { name: string; response: { content: unknown } };
+  inlineData?: { mimeType: string; data: string };
+  thought?: string;
+}
+
+export interface GeminiContent {
+  role: 'user' | 'model' | 'function';
+  parts: GeminiPart[];
+}
+
+export interface GeminiFunctionDeclaration {
+  name: string;
+  description?: string;
+  parameters?: Record<string, unknown>;
+}
+
+export interface GeminiTool {
+  functionDeclarations: GeminiFunctionDeclaration[];
+}
+
+export interface GeminiRequestBody {
+  contents: GeminiContent[];
+  systemInstruction?: { parts: GeminiPart[] };
+  tools?: GeminiTool[];
+  toolConfig?: {
+    functionCallingConfig: { mode: 'AUTO' | 'ANY' | 'NONE'; allowedFunctionNames?: string[] };
+  };
+  generationConfig?: {
+    temperature?: number;
+    maxOutputTokens?: number;
+    topP?: number;
+    stopSequences?: string[];
+  };
+  thinkingConfig?: {
+    thinkingBudget?: number;
+    includeThoughts?: boolean;
+  };
+}
+
+export interface GeminiCandidate {
+  content?: GeminiContent;
+  finishReason?: string;
+  safetyRatings?: unknown[];
+}
+
+export interface GeminiResponseBody {
+  candidates: GeminiCandidate[];
+  usageMetadata?: {
+    promptTokenCount: number;
+    candidatesTokenCount: number;
+    totalTokenCount: number;
+  };
+}
+
+export interface GeminiSSEEvent {
+  candidates?: GeminiCandidate[];
+  usageMetadata?: {
+    promptTokenCount: number;
+    candidatesTokenCount: number;
+    totalTokenCount: number;
+  };
+}
+
 // --- Provider Constraints --------------------------------------------------
 
 /**
@@ -307,7 +376,7 @@ export interface ProviderConstraints {
   /** Provider key in routes.json (ds, or, fw, an, oc, etc.) */
   readonly key: string;
   /** Wire format used by this provider */
-  readonly format: 'anthropic' | 'openai';
+  readonly format: 'anthropic' | 'openai' | 'gemini';
   /** Provider natively executes web_search_* / web_fetch_* as server-side tools.
    *  Only true for Anthropic direct. */
   readonly nativeServerTools: boolean;
@@ -547,6 +616,20 @@ export const PROVIDER_CONSTRAINTS: Record<string, ProviderConstraints> = {
     requiresThinkingEcho: false,
     thinkingFormat: 'openai',
     stripFields: ['top_k', 'metadata'],
+  },
+
+  // --- Google Gemini ---
+  gm: {
+    key: 'gm',
+    format: 'gemini',
+    nativeServerTools: false,
+    nativeServerToolUse: false,
+    requiresModelRewrite: true,
+    forbidsToolChoiceWithThinking: false,
+    requiresThinkingEcho: false,
+    thinkingFormat: null,
+    stripFields: ['top_k', 'metadata', 'stop_sequences'],
+    noAutoFallback: true,
   },
 } as const satisfies Record<string, ProviderConstraints>;
 
