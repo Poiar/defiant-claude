@@ -113,6 +113,8 @@ describe('providers.json', () => {
       'bp',
       'sf',
       'nv',
+      'oa',
+      'xa',
       'gm',
     ];
     const providers = (registry as Record<string, Record<string, unknown>>).providers;

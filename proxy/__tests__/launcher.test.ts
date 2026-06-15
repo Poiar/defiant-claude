@@ -773,6 +773,9 @@ describe('maskKey via key-status', () => {
       'bp',
       'sf',
       'nv',
+      'oa',
+      'xa',
+      'gm',
     ];
     for (const pk of knownProviders) {
       expect(keys[pk]).toBeDefined();

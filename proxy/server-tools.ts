@@ -302,6 +302,7 @@ interface SearchResult {
 
 export function ddgLiteSearch(query: string): Promise<SearchResult[]> {
   return new Promise((resolve) => {
+    const shortQuery = query.slice(0, 100);
     const url = `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`;
     https
       .get(
@@ -316,6 +317,7 @@ export function ddgLiteSearch(query: string): Promise<SearchResult[]> {
           res.on('data', (chunk: Buffer) => {
             dataSize += chunk.length;
             if (dataSize > 500_000) {
+              log.warn(null, 'ddgLiteSearch: response exceeded 500KB limit for: ' + shortQuery);
               resolve([]);
               res.destroy();
               return;
@@ -324,6 +326,7 @@ export function ddgLiteSearch(query: string): Promise<SearchResult[]> {
           });
           res.on('end', () => {
             if (!data) {
+              log.warn(null, 'ddgLiteSearch: empty response body for: ' + shortQuery);
               resolve([]);
               return;
             }
@@ -380,15 +383,34 @@ export function ddgLiteSearch(query: string): Promise<SearchResult[]> {
                 });
               }
               resolve(results.slice(0, 10));
-            } catch (_) {
+            } catch (e) {
+              log.error(
+                null,
+                'ddgLiteSearch: HTML parse failure for: ' +
+                  shortQuery +
+                  ' — ' +
+                  ((e as Error).message || ''),
+              );
               resolve([]);
             }
           });
-          res.on('error', () => resolve([]));
+          res.on('error', (err: Error) => {
+            log.warn(
+              null,
+              'ddgLiteSearch: response error for: ' + shortQuery + ' — ' + err.message,
+            );
+            resolve([]);
+          });
         },
       )
-      .on('error', () => resolve([]))
-      .on('timeout', () => resolve([]));
+      .on('error', (err: Error) => {
+        log.warn(null, 'ddgLiteSearch: request error for: ' + shortQuery + ' — ' + err.message);
+        resolve([]);
+      })
+      .on('timeout', () => {
+        log.warn(null, 'ddgLiteSearch: request timed out for: ' + shortQuery);
+        resolve([]);
+      });
   });
 }
 
@@ -481,6 +503,102 @@ export function isPrivateIPv4(host: string): boolean {
 }
 // Internal implementation without concurrency slot management.
 // Recursive redirect calls skip the slot to avoid deadlock.
+
+/**
+ * Attempt a single HTTP request pinned to one validated IP address.
+ * Used by webFetchImpl to try every DNS-resolved address until one connects.
+ * Returns the response body text on success, or an error string on failure.
+ */
+async function tryAddress(
+  url: string,
+  address: string,
+  family: number,
+  depth: number,
+  visited: Set<string>,
+): Promise<string> {
+  const parsedUrl = new URL(url);
+  const isHttps = parsedUrl.protocol === 'https:';
+  const transport = isHttps ? https : http;
+
+  const requestOptions: http.RequestOptions = {
+    hostname: parsedUrl.hostname,
+    port: parsedUrl.port ? parseInt(parsedUrl.port, 10) : isHttps ? 443 : 80,
+    path: parsedUrl.pathname + parsedUrl.search || '/',
+    method: 'GET',
+    headers: { 'User-Agent': 'deepclaude-proxy/1.0' },
+    timeout: 20000,
+    lookup(_hostname, _opts, callback) {
+      callback(null, address, family);
+    },
+  };
+
+  return new Promise((resolve) => {
+    let req: http.ClientRequest;
+    try {
+      req = transport.request(requestOptions, (res) => {
+        if (
+          res.statusCode &&
+          res.statusCode >= 300 &&
+          res.statusCode < 400 &&
+          res.headers.location
+        ) {
+          res.resume();
+          res.on('error', () => {
+            /* suppress — redirect already in progress */
+          });
+          webFetchImpl(new URL(res.headers.location, url).href, depth + 1, visited).then(resolve);
+          return;
+        }
+        let data = '';
+        res.on('data', (chunk: Buffer) => {
+          data += chunk.toString();
+          if (data.length > 1_000_000) {
+            res.destroy();
+            resolve(data.slice(0, 1_000_000) + '\n\n[Content truncated at 1MB]');
+          }
+        });
+        res.on('end', () => {
+          const text = safeSlice(
+            data
+              .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+              .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+              .replace(/<[^>]+>/g, ' ')
+              .replace(/&amp;/g, '&')
+              .replace(/&lt;/g, '<')
+              .replace(/&gt;/g, '>')
+              .replace(/&quot;/g, '"')
+              .replace(/&#39;/g, "'")
+              .replace(/\s+/g, ' ')
+              .trim(),
+            50000,
+          );
+          resolve(text || `Fetched ${scrubCredentials(url)} but could not extract text content.`);
+        });
+        res.on('error', (err: Error) =>
+          resolve(
+            `Web fetch failed: ${scrubCredentials(err.message)}. URL was: ${scrubCredentials(url)}`,
+          ),
+        );
+      });
+    } catch (e) {
+      resolve(
+        `Web fetch failed: ${scrubCredentials((e as Error).message)}. URL was: ${scrubCredentials(url)}`,
+      );
+      return;
+    }
+    req.on('error', (err: Error) =>
+      resolve(
+        `Web fetch failed: ${scrubCredentials(err.message)}. URL was: ${scrubCredentials(url)}`,
+      ),
+    );
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(`Web fetch timed out for URL: ${scrubCredentials(url)}`);
+    });
+    req.end();
+  });
+}
+
 async function webFetchImpl(
   url: string,
   depth: number = 0,
@@ -515,143 +633,101 @@ async function webFetchImpl(
     return 'Error: ' + validation.reason;
   }
 
-  // DNS resolution guard -- second-layer SSRF defense.
-  // Resolves the hostname once; the validated address is pinned via a
-  // custom lookup function on the HTTP connection to prevent DNS rebinding
-  // TOCTOU while still presenting the real hostname to CDNs (FIX 2).
-  let firstResolvedAddress: string | null = null;
-  let firstResolvedFamily: number = 4;
-  try {
-    const resolved = new URL(url);
-    const results = (await Promise.race([
-      dns.promises.lookup(resolved.hostname, { all: true }),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('DNS timeout')), 5000)),
-    ])) as dns.LookupAddress[];
-    for (const r of results) {
-      if (r.family === 4) {
-        if (isPrivateIPv4(r.address))
-          return 'Error: Access to internal/private networks is blocked.';
-        if (!firstResolvedAddress) {
-          firstResolvedAddress = r.address;
-          firstResolvedFamily = 4;
-        }
-      } else {
+  // Collect every validated address from the SSRF check so we can try
+  // them all — not just the first one.  Pinning to a single IP (old
+  // behaviour) caused ECONNREFUSED when that IP's server wasn't
+  // reachable even though other DNS entries work fine.
+  const validAddresses: Array<{ address: string; family: number }> = [];
+  if (validation.addresses && validation.addresses.length > 0) {
+    for (const addr of validation.addresses) {
+      if (addr.includes(':')) {
         if (
-          r.address === '::1' ||
-          r.address.startsWith('fc') ||
-          r.address.startsWith('fd') ||
-          r.address.startsWith('fe8') ||
-          r.address.startsWith('fe9') ||
-          r.address.startsWith('fea') ||
-          r.address.startsWith('feb') ||
-          r.address.startsWith('::ffff:')
+          addr === '::1' ||
+          addr.startsWith('fc') ||
+          addr.startsWith('fd') ||
+          addr.startsWith('fe8') ||
+          addr.startsWith('fe9') ||
+          addr.startsWith('fea') ||
+          addr.startsWith('feb') ||
+          addr.startsWith('::ffff:')
         ) {
-          return 'Error: Access to internal/private networks is blocked.';
+          continue;
         }
-        if (!firstResolvedAddress) {
-          firstResolvedAddress = r.address;
-          firstResolvedFamily = 6;
-        }
+        validAddresses.push({ address: addr, family: 6 });
+      } else {
+        if (isPrivateIPv4(addr)) continue;
+        validAddresses.push({ address: addr, family: 4 });
       }
     }
-  } catch (dnsErr) {
-    // DNS failure means we can't validate, so block the request.
-    // DNS errors are rare for legitimate URLs and common for SSRF probes.
-    log.error(
-      null,
-      'webFetch DNS lookup failed for ' +
-        scrubCredentials(url) +
-        ': ' +
-        ((dnsErr as Error).message || ''),
-    );
-    return 'Error: Could not resolve hostname.';
   }
 
-  if (!firstResolvedAddress) {
-    return 'Error: Could not resolve hostname to any address.';
-  }
-
-  return new Promise((resolve) => {
-    const parsedUrl = new URL(url);
-    const isHttps = parsedUrl.protocol === 'https:';
-    const transport = isHttps ? https : http;
-
-    // FIX 2: Use hostname for the connection (required by CDNs for correct
-    // TLS SNI and virtual-host routing) but pin DNS resolution to the
-    // pre-validated IP via a custom lookup function.  This prevents DNS
-    // rebinding TOCTOU without breaking sites behind CDNs.
-    const validatedAddr = firstResolvedAddress;
-    const validatedFamily = firstResolvedFamily;
-    const requestOptions: http.RequestOptions = {
-      hostname: parsedUrl.hostname,
-      port: parsedUrl.port ? parseInt(parsedUrl.port, 10) : isHttps ? 443 : 80,
-      path: parsedUrl.pathname + parsedUrl.search || '/',
-      method: 'GET',
-      headers: { 'User-Agent': 'deepclaude-proxy/1.0' },
-      timeout: 20000,
-      lookup(_hostname, _opts, callback) {
-        callback(null, validatedAddr, validatedFamily);
-      },
-    };
-
-    const req = transport.request(requestOptions, (res) => {
-      if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        // Drain the redirect response stream to prevent unhandled error
-        // events.  The response body for 3xx is typically empty, but
-        // destroying ensures we don't leak a dangling stream.
-        res.resume();
-        res.on('error', () => {
-          /* suppress — redirect already in progress */
-        });
-        webFetchImpl(new URL(res.headers.location, url).href, depth + 1, visited).then(resolve);
-        return;
-      }
-      let data = '';
-      res.on('data', (chunk: Buffer) => {
-        data += chunk.toString();
-        if (data.length > 1_000_000) {
-          res.destroy();
-          resolve(data.slice(0, 1_000_000) + '\n\n[Content truncated at 1MB]');
+  // Fallback: if validateUrl returned no addresses (shouldn't happen for a
+  // valid result, but guard anyway), do a one-shot DNS lookup.
+  if (validAddresses.length === 0) {
+    try {
+      const resolved = new URL(url);
+      const results = (await Promise.race([
+        dns.promises.lookup(resolved.hostname, { all: true }),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('DNS timeout')), 5000)),
+      ])) as dns.LookupAddress[];
+      for (const r of results) {
+        if (r.family === 4) {
+          if (!isPrivateIPv4(r.address)) validAddresses.push({ address: r.address, family: 4 });
+        } else {
+          if (
+            r.address !== '::1' &&
+            !r.address.startsWith('fc') &&
+            !r.address.startsWith('fd') &&
+            !r.address.startsWith('fe8') &&
+            !r.address.startsWith('fe9') &&
+            !r.address.startsWith('fea') &&
+            !r.address.startsWith('feb') &&
+            !r.address.startsWith('::ffff:')
+          ) {
+            validAddresses.push({ address: r.address, family: 6 });
+          }
         }
-      });
-      res.on('end', () => {
-        const text = safeSlice(
-          data
-            .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-            .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-            .replace(/<[^>]+>/g, ' ')
-            .replace(/&amp;/g, '&')
-            .replace(/&lt;/g, '<')
-            .replace(/&gt;/g, '>')
-            .replace(/&quot;/g, '"')
-            .replace(/&#39;/g, "'")
-            .replace(/\s+/g, ' ')
-            .trim(),
-          50000,
-        );
-        // FIX 1: Scrub credentials from URL in return messages
-        resolve(text || `Fetched ${scrubCredentials(url)} but could not extract text content.`);
-      });
-      // FIX 1: Scrub credentials from URL and error messages
-      res.on('error', (err: Error) =>
-        resolve(
-          `Web fetch failed: ${scrubCredentials(err.message)}. URL was: ${scrubCredentials(url)}`,
-        ),
+      }
+    } catch (dnsErr) {
+      log.error(
+        null,
+        'webFetch DNS lookup failed for ' +
+          scrubCredentials(url) +
+          ': ' +
+          ((dnsErr as Error).message || ''),
       );
-    });
-    // FIX 1: Scrub credentials from URL in error messages
-    req.on('error', (err: Error) =>
-      resolve(
-        `Web fetch failed: ${scrubCredentials(err.message)}. URL was: ${scrubCredentials(url)}`,
-      ),
-    );
-    req.on('timeout', () => {
-      req.destroy();
-      resolve(`Web fetch timed out for URL: ${scrubCredentials(url)}`);
-    });
-    // Send the request (transport.get auto-ends, transport.request does not)
-    req.end();
-  });
+      return 'Error: Could not resolve hostname.';
+    }
+  }
+
+  if (validAddresses.length === 0) {
+    return 'Error: Could not resolve hostname to any valid address.';
+  }
+
+  // Try every validated address until one connects.  ECONNREFUSED on one IP
+  // does not mean the whole host is down — the next IP may work.
+  let lastError = '';
+  for (const addr of validAddresses) {
+    const result = await tryAddress(url, addr.address, addr.family, depth, visited);
+    // If the result starts with an error marker, keep trying the next address.
+    if (
+      result.startsWith('Web fetch failed:') ||
+      result.startsWith('Web fetch timed out') ||
+      result.startsWith('Error:')
+    ) {
+      lastError = result;
+      continue;
+    }
+    // Success — return the fetched content.
+    return result;
+  }
+  return (
+    lastError ||
+    'Web fetch failed: all ' +
+      validAddresses.length +
+      ' resolved address(es) unreachable. URL was: ' +
+      scrubCredentials(url)
+  );
 }
 
 // Public webFetch with concurrency limiting.
