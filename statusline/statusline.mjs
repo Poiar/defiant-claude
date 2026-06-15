@@ -134,43 +134,37 @@ async function main() {
         : fg(80, 200, 120);
 
   // ── Health check (fire now, await later) ───────────────────
+  // Per-session proxy: port discovered from ANTHROPIC_BASE_URL env var.
+  // Falls back to DEEPCLAUDE_PROXY_PORT for explicit override.
   let proxyPort = 0;
   let healthPromise = Promise.resolve(null);
   try {
-    const proxyJsonPath = join(deepclaudeDir, 'proxy.json');
-    const proxyPidPath = join(deepclaudeDir, 'proxy.pid');
-    let proxyCfg = null;
-    if (existsSync(proxyJsonPath)) {
-      proxyCfg = JSON.parse(readFileSync(proxyJsonPath, 'utf8'));
-    } else if (existsSync(proxyPidPath)) {
-      const raw = readFileSync(proxyPidPath, 'utf8').trim();
-      const parts = raw.split(':');
-      if (parts.length >= 2 && parts[1]) {
-        const pid = parseInt(parts[0], 10);
-        const port = parseInt(parts[1], 10);
-        if (pid > 0 && port > 0) proxyCfg = { pid, port };
-      }
-    }
-    if (proxyCfg && proxyCfg.port > 0) {
-      proxyPort = proxyCfg.port;
-      healthPromise = new Promise((resolve) => {
-        const req = get(`http://127.0.0.1:${proxyCfg.port}/health`, { timeout: 1000 }, (res) => {
-          let data = '';
-          res.on('data', (chunk) => (data += chunk));
-          res.on('end', () => {
-            try {
-              resolve(JSON.parse(data));
-            } catch (_) {
-              resolve(null);
-            }
+    const baseUrl = process.env.ANTHROPIC_BASE_URL || '';
+    const explicitPort = process.env.DEEPCLAUDE_PROXY_PORT;
+    const portMatch = explicitPort || (baseUrl.match(/:(\d+)$/) || [])[1];
+    if (portMatch) {
+      const port = parseInt(portMatch, 10);
+      if (Number.isFinite(port) && port > 0 && port <= 65535) {
+        proxyPort = port;
+        healthPromise = new Promise((resolve) => {
+          const req = get(`http://127.0.0.1:${port}/health`, { timeout: 1000 }, (res) => {
+            let data = '';
+            res.on('data', (chunk) => (data += chunk));
+            res.on('end', () => {
+              try {
+                resolve(JSON.parse(data));
+              } catch (_) {
+                resolve(null);
+              }
+            });
+          });
+          req.on('error', () => resolve(null));
+          req.on('timeout', () => {
+            req.destroy();
+            resolve(null);
           });
         });
-        req.on('error', () => resolve(null));
-        req.on('timeout', () => {
-          req.destroy();
-          resolve(null);
-        });
-      });
+      }
     }
   } catch (_) {}
 

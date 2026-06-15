@@ -31,4 +31,4 @@ Then restart THIS Claude Code session manually.
 - New CLI flags (--providers was added after the running proxy started)
 - Those are rare. 95% of config changes work via hot-reload.
 
-**Reference:** proxy is at `~/.deepclaude/proxy.json` (PID, port); routes at `~/.deepclaude/current-routes.json`.
+**Reference:** each session gets its own isolated proxy on a unique port. The proxy port is available in `ANTHROPIC_BASE_URL` env var. Routes at `~/.deepclaude/current-routes.json`.

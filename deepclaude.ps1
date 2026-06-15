@@ -26,12 +26,8 @@
     deepclaude --remote -b anthropic                    # Anthropic direct
     deepclaude --remote ds:deepseek-v4-pro oc:big-pickle # Ad-hoc config
 
-    # Persistent proxy + mid-session switching
-    deepclaude --persist -b ds+oc    # Keep proxy alive after CC exits
-    deepclaude --switch ds+oc        # Switch running proxy to different config
-    deepclaude --switch ds:deepseek-v4-pro oc:big-pickle  # Switch to ad-hoc config
+    # Each session gets its own isolated proxy — no shared state
     deepclaude --models              # List all available model IDs
-    deepclaude --stop-proxy          # Kill the persistent proxy
 
     # Info / debugging
     deepclaude --status             # Show keys, providers, and active slot mapping
@@ -69,12 +65,9 @@ param(
     [switch]$Lint,
     [switch]$LintConfig,
     [switch]$FixAv,
-    [switch]$Persist,
-    [string]$Switch,
     [string]$SetSlot,
     [string]$SubagentModel,
     [switch]$Models,
-    [switch]$StopProxy,
     [switch]$Version,
     [switch]$Doctor,
     [switch]$InstallStatusline,
@@ -124,7 +117,7 @@ try {
 
 # Normalize --flag arguments (accept both --flag and -Flag forms)
 # Uses if/elseif instead of switch() — PowerShell switch statement creates a
-# scoping conflict when a $Switch variable exists, so assignments don't stick.
+# scoping conflict when certain variable names exist, so assignments don't stick.
 
 # PowerShell prefix-matches parameter names: --probe binds to $ProbeFile
 # (a [string] param with no [Parameter()] attribute), consuming the next
@@ -141,12 +134,7 @@ if (-not $Backend -and $PSBoundParameters.ContainsKey('ProbeFile')) {
 
 if ($Backend -match '^--(.+)$') {
     $flag = $Matches[1]
-    if ($flag -eq 'persist')             { $Persist = $true }
-    elseif ($flag -eq 'switch' -and $ModelSpecs -and $ModelSpecs.Count -gt 0) {
-        $Switch = $ModelSpecs[0]
-        $ModelSpecs = if ($ModelSpecs.Count -gt 1) { $ModelSpecs[1..($ModelSpecs.Count-1)] } else { @() }
-    }
-    elseif ($flag -eq 'set-slot' -and $ModelSpecs -and $ModelSpecs.Count -gt 0) {
+    if ($flag -eq 'set-slot' -and $ModelSpecs -and $ModelSpecs.Count -gt 0) {
         $SetSlot = $ModelSpecs[0]
         $ModelSpecs = if ($ModelSpecs.Count -gt 1) { $ModelSpecs[1..($ModelSpecs.Count-1)] } else { @() }
     }
@@ -167,7 +155,6 @@ if ($Backend -match '^--(.+)$') {
         $ModelSpecs = if ($ModelSpecs.Count -gt 1) { $ModelSpecs[1..($ModelSpecs.Count-1)] } else { @() }
     }
     elseif ($flag -eq 'models')          { $Models = $true }
-    elseif ($flag -eq 'stop-proxy')      { $StopProxy = $true }
     elseif ($flag -eq 'remote')          { $Remote = $true }
     elseif ($flag -eq 'status')          { $Status = $true }
     elseif ($flag -eq 'cost')            { $Cost = $true }
@@ -211,6 +198,10 @@ if ($Backend -match '^--(.+)$') {
         }
         $ModelSpecs = if ($ModelSpecs.Count -gt 1) { $ModelSpecs[1..($ModelSpecs.Count-1)] } else { @() }
     }
+    elseif ($flag -eq 'persist' -or $flag -eq 'switch' -or $flag -eq 'stop-proxy') {
+        Write-Host "NOTE: --$flag is removed. Each session now runs its own isolated proxy." -ForegroundColor DarkYellow
+        exit 0
+    }
     else {
         Write-Host "ERROR: Unknown flag '--$flag'. Use --help for available flags." -ForegroundColor Red
         exit 1
@@ -220,18 +211,13 @@ if ($Backend -match '^--(.+)$') {
 
 # Second pass: scan $ModelSpecs for flags that arrived via ValueFromRemainingArguments.
 # When using -b CONFIG --flag, PowerShell consumes -b CONFIG as $Backend and leaves
-# --flag in $ModelSpecs — so $DryRun, $Persist, etc. are never set. Process leading
+# --flag in $ModelSpecs — so $DryRun, etc. are never set. Process leading
 # flag-like entries here, stopping at the first positional spec.
 while ($ModelSpecs -and $ModelSpecs.Count -gt 0 -and $ModelSpecs[0] -match '^--(.+)$') {
     $flag = $Matches[1]
     $ModelSpecs = if ($ModelSpecs.Count -gt 1) { $ModelSpecs[1..($ModelSpecs.Count-1)] } else { @() }
 
-    if ($flag -eq 'persist' -and -not $Persist)       { $Persist = $true }
-    elseif ($flag -eq 'switch' -and $ModelSpecs -and $ModelSpecs.Count -gt 0) {
-        if (-not $Switch) { $Switch = $ModelSpecs[0]; $ModelSpecs = if ($ModelSpecs.Count -gt 1) { $ModelSpecs[1..($ModelSpecs.Count-1)] } else { @() } }
-        else { Write-Host "WARNING: --switch already set; ignoring second --switch" -ForegroundColor Yellow }
-    }
-    elseif ($flag -eq 'set-slot' -and $ModelSpecs -and $ModelSpecs.Count -gt 0) {
+    if ($flag -eq 'set-slot' -and $ModelSpecs -and $ModelSpecs.Count -gt 0) {
         if (-not $SetSlot) { $SetSlot = $ModelSpecs[0]; $ModelSpecs = if ($ModelSpecs.Count -gt 1) { $ModelSpecs[1..($ModelSpecs.Count-1)] } else { @() } }
         else { Write-Host "WARNING: --set-slot already set; ignoring second --set-slot" -ForegroundColor Yellow }
     }
@@ -253,7 +239,6 @@ while ($ModelSpecs -and $ModelSpecs.Count -gt 0 -and $ModelSpecs[0] -match '^--(
         $ModelSpecs = if ($ModelSpecs.Count -gt 1) { $ModelSpecs[1..($ModelSpecs.Count-1)] } else { @() }
     }
     elseif ($flag -eq 'models' -and -not $Models)         { $Models = $true }
-    elseif ($flag -eq 'stop-proxy' -and -not $StopProxy)   { $StopProxy = $true }
     elseif ($flag -eq 'remote' -and -not $Remote)           { $Remote = $true }
     elseif ($flag -eq 'status' -and -not $Status)           { $Status = $true }
     elseif ($flag -eq 'cost' -and -not $Cost)               { $Cost = $true }
@@ -298,6 +283,10 @@ while ($ModelSpecs -and $ModelSpecs.Count -gt 0 -and $ModelSpecs[0] -match '^--(
         $ThinkingBudget = $val
         $ModelSpecs = if ($ModelSpecs.Count -gt 1) { $ModelSpecs[1..($ModelSpecs.Count-1)] } else { @() }
     }
+    elseif ($flag -eq 'persist' -or $flag -eq 'switch' -or $flag -eq 'stop-proxy') {
+        Write-Host "NOTE: --$flag is removed. Each session now runs its own isolated proxy." -ForegroundColor DarkYellow
+        exit 0
+    }
     else {
         Write-Host "ERROR: Unknown flag '--$flag'. Use --help for available flags." -ForegroundColor Red
         exit 1
@@ -310,9 +299,8 @@ if ($Effort -notin @('low', 'medium', 'high', 'max')) {
     exit 1
 }
 
-# State directory for persistent proxy
+# State directory for configuration files
 $DeepClaudeDir = Join-Path $HOME ".deepclaude"
-$ProxyStateFile = Join-Path $DeepClaudeDir "proxy.json"
 $CurrentRoutesFile = Join-Path $DeepClaudeDir "current-routes.json"
 $SlotOverridesFile = Join-Path $DeepClaudeDir "slot-overrides.json"
 $ThinkingOverridesFile = Join-Path $DeepClaudeDir "thinking-overrides.json"
@@ -416,7 +404,7 @@ if ($Logs) {
     $logPath = Join-Path $DeepClaudeDir "proxy.log"
     if (-not (Test-Path $logPath)) {
         Write-Host "No proxy log found at $logPath" -ForegroundColor Yellow
-        Write-Host "Start the proxy first with: deepclaude --persist" -ForegroundColor DarkGray
+        Write-Host "Start the proxy first with: deepclaude" -ForegroundColor DarkGray
         exit 1
     }
     Write-Host "Tailing $logPath (Ctrl+C to stop)..." -ForegroundColor Cyan
@@ -477,7 +465,7 @@ if ($ModelSpecs) { $AllSpecs += $ModelSpecs }
 # unroll to a scalar string, breaking $AllSpecs[0] (returns first char).
 $AllSpecs = @($AllSpecs | ForEach-Object { $_ -replace '^\s+|\s+$', '' } | Where-Object { $_ -and $_ -notmatch '^-' })
 
-if (-not $AllSpecs -and -not $Status -and -not $Cost -and -not $Benchmark -and -not $Help -and -not $Lint -and -not $LintConfig -and -not $FixAv -and -not $Switch -and -not $SetSlot -and -not $SubagentModel -and -not $Models -and -not $StopProxy -and -not $Version -and -not $Doctor -and -not $Stats -and -not $PSBoundParameters.ContainsKey('ProbeFile') -and -not $DryRun -and -not $Logs -and -not $Health) {
+if (-not $AllSpecs -and -not $Status -and -not $Cost -and -not $Benchmark -and -not $Help -and -not $Lint -and -not $LintConfig -and -not $FixAv -and -not $SetSlot -and -not $SubagentModel -and -not $Models -and -not $Version -and -not $Doctor -and -not $Stats -and -not $PSBoundParameters.ContainsKey('ProbeFile') -and -not $DryRun -and -not $Logs -and -not $Health) {
     if ($env:DEEPCLAUDE_DEFAULT_BACKEND) {
         $AllSpecs = @($env:DEEPCLAUDE_DEFAULT_BACKEND)
     } elseif ($env:CHEAPCLAUDE_DEFAULT_BACKEND) {
@@ -585,36 +573,8 @@ function Write-ThinkingOverrides {
 
 # Initialize-SlotOverrides removed — superseded by proxy/launcher.mjs init-overrides
 
-# --- Persistent proxy state management ---
-function Get-ProxyState {
-    if (-not (Test-Path $ProxyStateFile)) { return $null }
-    try {
-        $state = Get-Content $ProxyStateFile -Raw | ConvertFrom-Json
-        $proc = Get-Process -Id $state.pid -ErrorAction SilentlyContinue
-        if (-not $proc) { Clear-ProxyState; return $null }
-        $tcp = [System.Net.Sockets.TcpClient]::new()
-        $connect = $tcp.BeginConnect("127.0.0.1", $state.port, $null, $null)
-        $connected = $connect.AsyncWaitHandle.WaitOne(500, $false)
-        if (-not $connected -or -not $tcp.Connected) { $tcp.Close(); Clear-ProxyState; return $null }
-        $tcp.Close()
-        return $state
-    } catch { Clear-ProxyState; return $null }
-}
-
-function Save-ProxyState {
-    param([int]$ProcessId, [int]$Port, [string]$RoutesFile)
-    $state = @{
-        pid        = $ProcessId
-        port       = $Port
-        routesFile = $RoutesFile
-        startedAt  = (Get-Date).ToString("o")
-    } | ConvertTo-Json
-    Set-Content -Path $ProxyStateFile -Value $state -NoNewline
-}
-
-function Clear-ProxyState {
-    Remove-Item $ProxyStateFile -ErrorAction SilentlyContinue
-}
+# Proxy state functions removed — each session runs its own isolated proxy.
+# Per-session proxy tracking is handled directly via the Process object.
 
 function Test-ContextLengthError($msg) {
     if ($msg -match "maximum context length") {
@@ -659,25 +619,6 @@ function Write-AtomicFile($path, $json) {
     } catch {
         try { Remove-Item ($path + ".lock") -Force -ErrorAction SilentlyContinue } catch {}
         Write-Host "  WARNING: Failed to write $path : $_" -ForegroundColor Yellow
-    }
-}
-
-function Stop-PersistentProxy {
-    [CmdletBinding(SupportsShouldProcess)]
-    param()
-    $state = Get-ProxyState
-    if (-not $state) {
-        Write-Host "  No persistent proxy is running." -ForegroundColor Yellow
-        return
-    }
-    if ($PSCmdlet.ShouldProcess("proxy on port $($state.port)", "Stop")) {
-        try {
-            $proc = Get-Process -Id $state.pid -ErrorAction Stop
-            $proc.Kill()
-            $proc.Dispose()
-        } catch { $null = $_ }
-        Clear-ProxyState
-        Write-Host "  Proxy stopped." -ForegroundColor Green
     }
 }
 
@@ -910,8 +851,7 @@ function Show-ProxyWarning {
 function Start-RoutingProxy {
     [CmdletBinding(SupportsShouldProcess)]
     param(
-        [string]$RoutesFile,
-        [switch]$Persist
+        [string]$RoutesFile
     )
 
     $PSCmdlet.ShouldProcess("127.0.0.1", "Start routing proxy") | Out-Null
@@ -923,11 +863,7 @@ function Start-RoutingProxy {
         throw "Proxy script not found at: $proxyScript"
     }
 
-    $outFile = if ($Persist) {
-        Join-Path $DeepClaudeDir "proxy-startup.txt"
-    } else {
-        Join-Path $env:TEMP "deepclaude-proxy-$([System.Guid]::NewGuid()).out"
-    }
+    $outFile = Join-Path $env:TEMP "deepclaude-proxy-$([System.Guid]::NewGuid()).out"
     $errFile = Join-Path $env:TEMP "deepclaude-proxy-$([System.Guid]::NewGuid()).err"
 
     $nodePath = try { (Get-Command node -ErrorAction Stop).Source } catch {
@@ -957,9 +893,7 @@ function Start-RoutingProxy {
     Write-Host ""
 
     $portStr = Get-Content $outFile -Raw
-    if (-not $Persist) {
-        Remove-Item $outFile -ErrorAction SilentlyContinue
-    }
+    Remove-Item $outFile -ErrorAction SilentlyContinue
 
     if ($portStr -match 'PORT:(\d+)') {
         $port = [int]$Matches[1]
@@ -969,25 +903,6 @@ function Start-RoutingProxy {
         Remove-Item $errFile -ErrorAction SilentlyContinue
         if (-not $proc.HasExited) { try { $proc.Kill() } catch { $null = $_ } }
         $proc.Dispose()
-
-        # If another proxy is already running, try to reuse it
-        if ($errStr -match 'already running.*PID (\d+)') {
-            $existingPid = [int]$Matches[1]
-            $existingState = Get-ProxyState
-            if ($existingState -and $existingState.pid -eq $existingPid) {
-                Write-Host "  Reusing existing proxy on port $($existingState.port) (PID $existingPid)" -ForegroundColor DarkGray
-                return @{ Port = $existingState.port; Process = $null; Persist = $true }
-            }
-            # Validate via Get-ProxyState which checks PID aliveness + TCP connect.
-            $existingState = Get-ProxyState
-            if ($existingState) {
-                Write-Host "  Reusing existing proxy on port $($existingState.port) (PID $($existingState.pid))" -ForegroundColor DarkGray
-                return @{ Port = $existingState.port; Process = $null; Persist = $true }
-            }
-            # PID file is stale — remove it
-            $pidFile = Join-Path $DeepClaudeDir "proxy.pid"
-            Remove-Item $pidFile -ErrorAction SilentlyContinue
-        }
 
         throw "Proxy failed to start. Output: '$portStr' Stderr: '$errStr'"
     }
@@ -1001,7 +916,7 @@ function Start-RoutingProxy {
         Write-Host "(That file survives AV deletion of the deepclaude directory.)" -ForegroundColor DarkGray
     }
 
-    return @{ Port = $port; Process = $proc; Persist = $Persist.IsPresent }
+    return @{ Port = $port; Process = $proc }
 }
 
 function Stop-RoutingProxy {
@@ -1009,10 +924,6 @@ function Stop-RoutingProxy {
     param($proxyInfo)
     $PSCmdlet.ShouldProcess("127.0.0.1", "Stop routing proxy") | Out-Null
     if (-not $proxyInfo) { return }
-    if ($proxyInfo.Persist) {
-        Write-Host "  Proxy is persistent (port $($proxyInfo.Port)). Use 'deepclaude --stop-proxy' to stop it." -ForegroundColor DarkGray
-        return
-    }
     if ($proxyInfo.Process) {
         try {
             if (-not $proxyInfo.Process.HasExited) { $proxyInfo.Process.Kill() }
@@ -1022,19 +933,15 @@ function Stop-RoutingProxy {
 }
 
 function Start-Watchdog {
-    param($ProxyProcess, $ProxyPort, $StateFile, $MaxRestarts, [switch]$Persist)
+    param($ProxyProcess, $ProxyPort, $MaxRestarts)
     return Start-Job -Name "DeepClaudeWatchdog" -ScriptBlock {
-        param($Pid, $Port, $StateFile, $MaxRestarts, $Persist)
+        param($Pid, $Port, $MaxRestarts)
         $pollMs = 5000
         $restartCount = 0
         while ($true) {
             Start-Sleep -Milliseconds $pollMs
             $procAlive = Get-Process -Id $Pid -ErrorAction SilentlyContinue
             if (-not $procAlive) {
-                if (-not (Test-Path $StateFile)) {
-                    Write-Host "Proxy (PID $Pid) exited and state file is gone. Watchdog exiting." -ForegroundColor DarkGray
-                    return
-                }
                 $restartCount++
                 if ($restartCount -gt $MaxRestarts) {
                     Write-Host "ERROR: Proxy restarted $MaxRestarts times. Watchdog giving up." -ForegroundColor Red
@@ -1043,9 +950,8 @@ function Start-Watchdog {
                 Write-Host "Proxy (PID $Pid) is no longer running. Restarting (attempt $restartCount of $MaxRestarts)..." -ForegroundColor Yellow
                 Start-Sleep -Seconds 2
                 try {
-                    $newProxy = Start-RoutingProxy -RoutesFile $using:CurrentRoutesFile -Persist:$Persist
+                    $newProxy = Start-RoutingProxy -RoutesFile $using:CurrentRoutesFile
                     if ($newProxy -and $newProxy.Process) {
-                        Save-ProxyState -ProcessId $newProxy.Process.Id -Port $newProxy.Port -RoutesFile $using:CurrentRoutesFile
                         $Pid = $newProxy.Process.Id
                         Write-Host "Proxy restarted on port $($newProxy.Port) (new PID $($newProxy.Process.Id))." -ForegroundColor Green
                     }
@@ -1055,7 +961,7 @@ function Start-Watchdog {
                 }
             }
         }
-    } -ArgumentList $ProxyProcess.Id, $ProxyPort, $StateFile, $MaxRestarts, $Persist.IsPresent
+    } -ArgumentList $ProxyProcess.Id, $ProxyPort, $MaxRestarts
 }
 
 function Get-KeyDisplay($k) {
@@ -1127,28 +1033,19 @@ if ($Stats) {
     Write-Host "`n  deepclaude - Proxy Stats" -ForegroundColor Cyan
     Write-Host "  ===========================" -ForegroundColor DarkGray
 
-    if (-not (Test-Path $ProxyStateFile)) {
+    $portFile = Join-Path $DeepClaudeDir "proxy.port"
+    if (-not (Test-Path $portFile)) {
         Write-Host "`n  No proxy running. Start a proxy first with any backend." -ForegroundColor Yellow
         Write-Host ""
         exit 0
     }
 
     try {
-        $state = Get-Content $ProxyStateFile -Raw | ConvertFrom-Json
-        $port = $state.port
-        $pid = $state.pid
-
-        $procAlive = try { (Get-Process -Id $pid -ErrorAction Stop) -ne $null } catch { $false }
-        if (-not $procAlive) {
-            Write-Host "  Proxy process (PID $pid) is no longer running." -ForegroundColor Red
-            Write-Host "  Removing stale state file..." -ForegroundColor DarkGray
-            Remove-Item $ProxyStateFile -Force
-            exit 1
-        }
+        $port = [int](Get-Content $portFile -Raw).Trim()
 
         $health = Invoke-RestMethod -Uri "http://127.0.0.1:${port}/health" -TimeoutSec 5
 
-        Write-Host "`n  Proxy: 127.0.0.1:$port (PID $pid)" -ForegroundColor Green
+        Write-Host "`n  Proxy: 127.0.0.1:$port" -ForegroundColor Green
         Write-Host "  Uptime: $([math]::Round($health.uptime / 1000))s"
         Write-Host ""
 
@@ -1297,14 +1194,11 @@ if ($Help) {
     Write-Host "  --stats         Show proxy request stats and health"
     Write-Host "  --cost          Pricing comparison"
     Write-Host "  --benchmark     Latency test"
-    Write-Host "  --persist       Keep proxy running after CC exits (enables --switch)"
     Write-Host "  --remote        Browser-based remote control (starts proxy automatically)"
-    Write-Host "  --switch CONFIG  Switch active config of a running persistent proxy"
     Write-Host "  --models        List all available models (for use with /model in CC)"
     Write-Host "  --set-slot SLOT MODEL  Override a slot's model: opus/sonnet/haiku/subagent/fable"
     Write-Host "                     e.g. --set-slot haiku or:z-ai/glm-4.5-air:free"
     Write-Host "                     e.g. --set-slot sonnet   (no model = clear override)"
-    Write-Host "  --stop-proxy    Kill the persistent proxy"
     Write-Host "  --lint          Self-lint with PSScriptAnalyzer"
     Write-Host "  --lint-config   Validate providers.json configuration"
     Write-Host "  --log-all       Log all requests to ~/.deepclaude/requests.log"
@@ -1323,13 +1217,7 @@ if ($Help) {
     Write-Host "  --open          Open dashboard in browser (use with --dashboard)"
     Write-Host "  --doctor        Run system health check (prereqs, keys, proxy test)"
     Write-Host "  --install-statusline  Install status bar showing model, effort, context (requires restart)"
-    Write-Host ""
-    Write-Host "  Session switching workflow:"
-    Write-Host "    1. deepclaude -b ds+oc --persist     # Start with proxy"
-    Write-Host "    2. deepclaude --switch ds+oc          # Switch configs (from within CC)"
-    Write-Host "    3. /model or:model-id                 # Switch opus model (in CC)"
-    Write-Host "    4. deepclaude --set-slot haiku oc:big-pickle  # Switch haiku model"
-    Write-Host "    5. deepclaude --stop-proxy            # Clean up when done"
+    Write-Host "`n  Each session gets its own isolated proxy — no shared state.`n"
     exit 0
 }
 
@@ -1733,12 +1621,6 @@ if ($Benchmark) {
     exit 0
 }
 
-# --- Stop Proxy ---
-if ($StopProxy) {
-    Stop-PersistentProxy
-    exit 0
-}
-
 # --- Set Slot ---
 if ($SetSlot -or $PSBoundParameters.ContainsKey('SetSlot')) {
     $setParts = $SetSlot -split '\s+', 2
@@ -1830,8 +1712,8 @@ if ($SetSlot -or $PSBoundParameters.ContainsKey('SetSlot')) {
     if ($slotName -eq 'fable') {
         Write-Host "  Note: For fable, /model also works directly in Claude Code." -ForegroundColor DarkGray
     }
-    $proxyState = Get-ProxyState
-    if ($proxyState) {
+    $portFile = Join-Path $DeepClaudeDir "proxy.port"
+    if (Test-Path $portFile) {
         Write-Host "  Proxy is running -- change takes effect immediately.`n" -ForegroundColor DarkGray
     } else {
         Write-Host "  No proxy running. Override saved for next launch.`n" -ForegroundColor DarkGray
@@ -1869,8 +1751,8 @@ if ($SubagentModel -or $PSBoundParameters.ContainsKey('SubagentModel')) {
     Write-AtomicFile $SubagentModelFile $subData
     Write-Host "`n  Set dedicated subagent model: $SubagentModel`n" -ForegroundColor Green
 
-    $proxyState = Get-ProxyState
-    if ($proxyState) {
+    $portFile = Join-Path $DeepClaudeDir "proxy.port"
+    if (Test-Path $portFile) {
         Write-Host "  Proxy is running -- change takes effect immediately.`n" -ForegroundColor DarkGray
     } else {
         Write-Host "  No proxy running. Subagent model saved for next launch.`n" -ForegroundColor DarkGray
@@ -1902,9 +1784,10 @@ if ($Models) {
             Write-Host "    $($pk):$m" -ForegroundColor White
         }
     }
-    $proxyState = Get-ProxyState
-    if ($proxyState) {
-        Write-Host "`n  Persistent proxy: RUNNING on port $($proxyState.port)" -ForegroundColor Green
+    $portFile = Join-Path $DeepClaudeDir "proxy.port"
+    if ((Test-Path $portFile)) {
+        $port = (Get-Content $portFile -Raw).Trim()
+        Write-Host "`n  Proxy: RUNNING on port $port" -ForegroundColor Green
 
         # Show slot overrides if any
         if (Test-Path $SlotOverridesFile) {
@@ -1920,73 +1803,11 @@ if ($Models) {
             } catch { $null = $_ }
         }
     } else {
-        Write-Host "`n  Persistent proxy: NOT RUNNING" -ForegroundColor DarkGray
+        Write-Host "`n  Proxy: NOT RUNNING" -ForegroundColor DarkGray
     }
     Write-Host "`n  Use /model providerKey:modelId in Claude Code to switch opus or fable." -ForegroundColor DarkGray
     Write-Host "  Use deepclaude --set-slot SLOT MODEL to switch sonnet/haiku/subagent." -ForegroundColor DarkGray
-    Write-Host "  Use deepclaude --switch CONFIG to change all slot mappings at once.`n" -ForegroundColor DarkGray
-    exit 0
-}
-
-# --- Switch ---
-if ($Switch -or $PSBoundParameters.ContainsKey('Switch')) {
-    $switchTarget = $Switch
-    if (-not $switchTarget) {
-        Write-Host "Usage: deepclaude --switch CONFIG-NAME" -ForegroundColor Yellow
-        Write-Host "Configs: $($Configs.Keys -join ', ')" -ForegroundColor DarkGray
-        Write-Host "Or: deepclaude --switch providerKey:modelId ..." -ForegroundColor DarkGray
-        exit 1
-    }
-
-    if ($Configs.Contains($switchTarget)) {
-        $switchResolved = Resolve-Config $switchTarget
-    } else {
-        $specs = $switchTarget -split '\s+'
-        $switchResolved = Build-AdHocConfig $specs
-    }
-
-    if (-not $switchResolved) {
-        Write-Host "ERROR: Could not resolve config '$switchTarget'" -ForegroundColor Red
-        exit 1
-    }
-
-    # Push env vars only for providers in this config
-    Set-UsedProviderEnv $switchResolved
-
-    $proxyState = Get-ProxyState
-
-    # Build routes and slot overrides via launcher.mjs
-    if ($Configs.Contains($switchTarget)) {
-        $routesJson = Invoke-LauncherMjs "build-routes", "--name=$switchTarget"
-        Initialize-SlotOverrides -Name $switchTarget | Out-Null
-    } else {
-        $specs = $switchTarget -split '\s+'
-        $routesJson = Invoke-LauncherMjs "build-routes", "--specs=$($specs -join ',')"
-        Initialize-SlotOverrides -Specs ($specs -join ',') | Out-Null
-    }
-
-    $routesFile = $CurrentRoutesFile
-    Write-AtomicFile $routesFile $routesJson
-
-    if (-not $proxyState) {
-        Write-Host "`n  Starting persistent proxy for $($switchResolved.name)..." -ForegroundColor Cyan
-        Show-ProxyWarning
-        Write-ThinkingOverrides
-        $proxyInfo = Start-RoutingProxy -RoutesFile $routesFile -Persist
-        Save-ProxyState -ProcessId $proxyInfo.Process.Id -Port $proxyInfo.Port -RoutesFile $routesFile
-        Write-Host "  Proxy on port $($proxyInfo.Port)" -ForegroundColor Green
-    } else {
-        Write-Host "`n  Proxy routes updated to: $($switchResolved.name)" -ForegroundColor Green
-    }
-
-    Write-Host "  Slot mappings:" -ForegroundColor DarkGray
-    foreach ($slot in @("opus","sonnet","haiku","subagent","fable")) {
-        $s = $switchResolved.slots[$slot]
-        $provName = $switchResolved.providers[$s.provider].name
-        Write-Host "    $($slot.PadRight(10)) $($s.provider):$($s.model)  ->  $provName" -ForegroundColor DarkGray
-    }
-    Write-Host "`n  Use /model providerKey:modelId in Claude Code to switch individual models." -ForegroundColor DarkGray
-    Write-Host "  Use 'deepclaude --stop-proxy' to stop the proxy when done.`n" -ForegroundColor DarkGray
+    Write-Host "  Use deepclaude --set-slot SLOT MODEL to switch sonnet/haiku/subagent.`n" -ForegroundColor DarkGray
     exit 0
 }
 
@@ -2043,21 +1864,11 @@ if ($Remote) {
         Initialize-SlotOverrides -Specs ($AllSpecs -join ',') | Out-Null
     }
 
-    $proxyState = Get-ProxyState
-
-    if ($proxyState) {
-        Write-AtomicFile $CurrentRoutesFile $routesJson
-        $proxyPort = $proxyState.port
-        $proxyInfo = @{ Port = $proxyPort; Process = $null; Persist = $true }
-        Write-Host "  Reusing persistent proxy on port $proxyPort" -ForegroundColor DarkGray
-    } else {
-        Write-AtomicFile $CurrentRoutesFile $routesJson
-        Show-ProxyWarning
-        $proxyInfo = Start-RoutingProxy -RoutesFile $CurrentRoutesFile -Persist
-        Save-ProxyState -ProcessId $proxyInfo.Process.Id -Port $proxyInfo.Port -RoutesFile $CurrentRoutesFile
-        $proxyPort = $proxyInfo.Port
-        Write-Host "  Proxy on :$proxyPort (persistent)" -ForegroundColor DarkGray
-    }
+    Write-AtomicFile $CurrentRoutesFile $routesJson
+    Show-ProxyWarning
+    $proxyInfo = Start-RoutingProxy -RoutesFile $CurrentRoutesFile
+    $proxyPort = $proxyInfo.Port
+    Write-Host "  Proxy on :$proxyPort" -ForegroundColor DarkGray
 
     $provNames = ($resolved.providers.Values | ForEach-Object { $_.name }) -join " + "
     Write-Host "  Providers: $provNames" -ForegroundColor DarkGray
@@ -2130,29 +1941,13 @@ if ($AllSpecs.Count -eq 1 -and $Configs.Contains($AllSpecs[0])) {
     Initialize-SlotOverrides -Specs ($AllSpecs -join ',') | Out-Null
 }
 
-$proxyState = Get-ProxyState
-
 Write-AtomicFile $CurrentRoutesFile $routesJson
 
-if ($proxyState) {
-    # Reuse persistent proxy
-    $proxyPort = $proxyState.port
-    $proxyInfo = @{ Port = $proxyPort; Process = $null; Persist = $true }
-    Write-Host "  Reusing persistent proxy on :$proxyPort" -ForegroundColor DarkGray
-    # Apply thinking overrides to running proxy (hot-reload picks up the file)
-    Write-ThinkingOverrides
-} else {
-    # Start new proxy (persistent if --persist flag set)
-    Show-ProxyWarning
-    Write-ThinkingOverrides
-    $proxyInfo = Start-RoutingProxy -RoutesFile $CurrentRoutesFile -Persist:$Persist
-    if ($Persist) {
-        Save-ProxyState -ProcessId $proxyInfo.Process.Id -Port $proxyInfo.Port -RoutesFile $CurrentRoutesFile
-        Write-Host "  Proxy on :$($proxyInfo.Port) (persistent)" -ForegroundColor DarkGray
-    } else {
-        Write-Host "  Proxy on :$($proxyInfo.Port)" -ForegroundColor DarkGray
-    }
-}
+# Start a fresh per-session proxy — each session gets its own isolated proxy.
+Show-ProxyWarning
+Write-ThinkingOverrides
+$proxyInfo = Start-RoutingProxy -RoutesFile $CurrentRoutesFile
+Write-Host "  Proxy on :$($proxyInfo.Port)" -ForegroundColor DarkGray
 
 # Set env vars via launcher.mjs (handles [1m] suffix, compaction window, etc.)
 $resolvedOpus = $resolved.slots['opus'].model
@@ -2177,7 +1972,7 @@ if ($Dashboard) {
 }
 
 if ($env:DEEPCLAUDE_WATCHDOG -eq 'true' -and $proxyInfo.Process) {
-    $watchdog = Start-Watchdog -ProxyProcess $proxyInfo.Process -ProxyPort $proxyInfo.Port -StateFile $ProxyStateFile -MaxRestarts 5 -Persist:$Persist
+    $watchdog = Start-Watchdog -ProxyProcess $proxyInfo.Process -ProxyPort $proxyInfo.Port -MaxRestarts 5
 }
 
 try {

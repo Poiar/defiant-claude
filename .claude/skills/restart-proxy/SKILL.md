@@ -1,39 +1,28 @@
 ---
 name: restart-proxy
-description: Start a NEW proxy and tell the user to switch. Old proxy forwards traffic and dies after 10min.
+description: Per-session proxies — exit CC and re-run to get a fresh proxy.
 ---
 
-## How it works
+# ⛔ FUCKING DON'T KILL THE PROXY. YOU WILL FUCKING KILL YOUR OWN CLAUDE CODE SESSION.
 
-1. Start a NEW proxy on a fresh port
-2. The OLD proxy detects it via `~/.deepclaude/next-proxy.port` and enters forwarding mode
-3. Old proxy forwards all traffic to the new proxy for 10 minutes, then exits silently
-4. User restarts CC → CC picks up the new proxy
+**The proxy IS your API connection.** If you kill it, your session dies instantly with "connection refused." The proxy is your lifeline. Don't touch it.
 
-**You NEVER kill the old proxy. It dies on its own after 10 minutes.**
+## Per-session proxy design
 
-## Steps
+Each `deepclaude` invocation starts its own isolated proxy on a unique port. The proxy lives only as long as the CC session — when CC exits, the proxy is killed.
 
-1. Read `~/.deepclaude/proxy.pid` — get current `PID:PORT`
-2. Determine a new port (current port + 1, or pick any free port)
-3. Get the launch args from the running process or use defaults:
-   - `--routes $env:USERPROFILE/.deepclaude/current-routes.json`
-   - `--overrides $env:USERPROFILE/.deepclaude/slot-overrides.json`
-   - `--providers C:\OC\deepclaude\proxy\providers.json`
-   - `--thinking-overrides $env:USERPROFILE/.deepclaude/thinking-overrides.json`
-4. Write the new port to `~/.deepclaude/next-proxy.port`
-5. Start the new proxy DETACHED in background:
-   ```powershell
-   Start-Process -WindowStyle Hidden -FilePath pwsh -ArgumentList @(
-     "-NoProfile","-Command",
-     "npx tsx C:\OC\deepclaude\proxy\start-proxy.ts --routes '...' --overrides '...' --providers '...' --thinking-overrides '...' --port <NEW_PORT>"
-   )
-   ```
-6. Wait up to 10 seconds for new proxy `/health` to respond
-7. Tell the user: "New proxy on port <NEW_PORT> is ready. Restart CC to pick it up."
+There is no shared proxy, no PID lock, no hot-swap, and no `--persist`/`--switch`/`--stop-proxy` flags.
+
+## To restart your proxy
+
+**Exit Claude Code and re-run `deepclaude`.** The new session gets a fresh proxy on a new port.
+
+**If you need to change proxy configuration mid-session:**
+- Edit `proxy/providers.json` — the proxy hot-reloads it every 15 seconds
+- Use `/model providerKey:modelId` in CC to switch opus/fable models
+- Use `deepclaude --set-slot SLOT MODEL` to switch sonnet/haiku/subagent
 
 ## What NOT to do
 
-- DO NOT kill the old proxy
-- DO NOT use `$pid` or `$port` as PowerShell variable names (reserved)
-- DO NOT forget `--port` flag on the new proxy
+- **DO NOT kill the proxy. DO NOT `Stop-Process`. DO NOT `taskkill`. DO NOT touch it at all.**
+- DO NOT run a second `deepclaude` from within CC expecting it to switch anything — it starts a NEW proxy on a DIFFERENT port, but your session's `ANTHROPIC_BASE_URL` still points to the old one

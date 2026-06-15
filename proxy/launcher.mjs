@@ -22,7 +22,6 @@ import { spawnSync } from 'child_process';
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const HOME = homedir();
 const DEEPCLAUDE_DIR = join(HOME, '.deepclaude');
-const PROXY_STATE_FILE = join(DEEPCLAUDE_DIR, 'proxy.json');
 const SLOT_OVERRIDES_FILE = join(DEEPCLAUDE_DIR, 'slot-overrides.json');
 const THINKING_OVERRIDES_FILE = join(DEEPCLAUDE_DIR, 'thinking-overrides.json');
 const SUBMODEL_FILE = join(DEEPCLAUDE_DIR, 'subagent-model.json');
@@ -435,49 +434,8 @@ function setSubagentModel(model) {
   return { set: true, providerKey: provKey, modelId };
 }
 
-// --- Proxy state ---
-function proxyStateCheck() {
-  if (!existsSync(PROXY_STATE_FILE)) return { running: false };
-  try {
-    const state = JSON.parse(readFileSync(PROXY_STATE_FILE, 'utf-8'));
-    const pid = state.pid,
-      port = state.port;
-    // Check if process is alive (platform-specific)
-    let alive = false;
-    try {
-      process.kill(pid, 0);
-      alive = true;
-    } catch {}
-    if (!alive) {
-      try {
-        rmSync(PROXY_STATE_FILE, { force: true });
-      } catch {}
-      return { running: false };
-    }
-    return { running: true, pid, port, routesFile: state.routesFile, startedAt: state.startedAt };
-  } catch {
-    return { running: false };
-  }
-}
-
-function proxyStateClear() {
-  try {
-    rmSync(PROXY_STATE_FILE, { force: true });
-  } catch {}
-  return { cleared: true };
-}
-
-function saveProxyState(pid, port, routesFile) {
-  mkdirSync(DEEPCLAUDE_DIR, { recursive: true, mode: 0o700 });
-  const state = {
-    pid: Number(pid),
-    port: Number(port),
-    routesFile,
-    startedAt: new Date().toISOString(),
-  };
-  writeAtomic(PROXY_STATE_FILE, JSON.stringify(state));
-  return state;
-}
+// Proxy state removed — each session runs its own isolated proxy.
+// Per-session proxy ports are discovered via ANTHROPIC_BASE_URL env var.
 
 // --- Context window logic ---
 export function append1m(modelSpec) {
@@ -835,7 +793,7 @@ async function main() {
     fail(
       'Usage: node launcher.mjs <action> [--key=value...]\nActions: ' +
         'resolve-config build-routes init-overrides read-override set-slot thinking-overrides ' +
-        'subagent-model proxy-state env-vars context-info cost-data model-list config-list ' +
+        'subagent-model env-vars context-info cost-data model-list config-list ' +
         'key-status version write-atomic doctor-json',
     );
 
@@ -909,17 +867,6 @@ async function main() {
         result = setSubagentModel(opts.model || '');
         break;
       }
-      case 'proxy-state': {
-        if (opts.check) result = proxyStateCheck();
-        else if (opts.clear) result = proxyStateClear();
-        else fail('proxy-state requires --check or --clear');
-        break;
-      }
-      case 'proxy-save': {
-        if (!opts.pid || !opts.port) fail('proxy-save requires --pid=N --port=N [--routes=PATH]');
-        result = saveProxyState(opts.pid, opts.port, opts.routes || '');
-        break;
-      }
       case 'env-vars': {
         if (!opts.port) fail('env-vars requires --port=N');
         result = computeEnvVars(
@@ -966,7 +913,7 @@ async function main() {
       }
       default:
         fail(
-          `Unknown action '${action}'. Actions: resolve-config build-routes init-overrides read-override set-slot thinking-overrides subagent-model proxy-state proxy-save env-vars context-info cost-data model-list config-list key-status version write-atomic doctor-json`,
+          `Unknown action '${action}'. Actions: resolve-config build-routes init-overrides read-override set-slot thinking-overrides subagent-model env-vars context-info cost-data model-list config-list key-status version write-atomic doctor-json`,
         );
     }
     console.log(JSON.stringify(result));

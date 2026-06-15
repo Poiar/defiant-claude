@@ -289,81 +289,10 @@ if (probeIdx >= 2) {
     );
   }
 
-  // --- PID file: prevent two proxy instances from sharing state ---
-  // Format: "PID:PORT" (PORT may be 0 before server starts listening)
-  const homeDir = process.env.HOME || process.env.USERPROFILE || '';
-  const deepclaudeDir = homeDir + '/.deepclaude';
-  let pidPath = '';
-  if (!process.env.DEEPCLAUDE_NO_PID_LOCK) {
-    try {
-      fs.mkdirSync(deepclaudeDir, { recursive: true });
-      // Clean up stale .tmp files from interrupted launcher writes
-      try {
-        for (const f of fs.readdirSync(deepclaudeDir)) {
-          if (f.endsWith('.tmp') || f.endsWith('.lock')) {
-            fs.rmSync(deepclaudeDir + '/' + f, { force: true });
-          }
-        }
-      } catch (_) {
-        /* non-fatal */
-      }
-      pidPath = deepclaudeDir + '/proxy.pid';
-      fs.writeFileSync(pidPath, String(process.pid) + ':0', { flag: 'wx' });
-    } catch (err: unknown) {
-      const e = err as NodeJS.ErrnoException;
-      if (e && e.code === 'EEXIST') {
-        try {
-          const raw = fs.readFileSync(pidPath, 'utf-8').trim();
-          const colonIdx = raw.indexOf(':');
-          const existingPid = parseInt(colonIdx >= 0 ? raw.slice(0, colonIdx) : raw, 10);
-          const existingPort = colonIdx >= 0 ? parseInt(raw.slice(colonIdx + 1), 10) : 0;
-          if (Number.isSafeInteger(existingPid) && existingPid > 0 && existingPid < 4194304) {
-            let processAlive = false;
-            try {
-              process.kill(existingPid, 0);
-              // PID signal succeeded, but verify it's actually our proxy process.
-              // After a computer restart PIDs get recycled — a stale proxy.pid
-              // might reference a completely different process.
-              try {
-                const cmd = execSync(
-                  `wmic process where ProcessId=${existingPid} get CommandLine /value`,
-                  { encoding: 'utf8', timeout: 2000, windowsHide: true },
-                );
-                if (cmd.includes('start-proxy') || cmd.includes('deepclaude')) {
-                  processAlive = true;
-                }
-              } catch {
-                /* wmic failed or PID isn't a proxy — treat as stale */
-              }
-            } catch {
-              /* process not found */
-            }
-            if (processAlive) {
-              if (existingPort > 0) {
-                // Existing proxy is alive and we know its port — reuse it
-                process.stdout.write('PORT:' + String(existingPort));
-                process.exit(0);
-              }
-              // Alive but old-format PID file (no port) — can't find port, can't proceed
-              console.error(
-                'Another proxy instance is already running (PID ' + existingPid + '). Exiting.',
-              );
-              process.exit(1);
-            }
-            // Stale PID — overwrite with new instance
-            fs.writeFileSync(pidPath, String(process.pid) + ':0');
-          } else {
-            fs.writeFileSync(pidPath, String(process.pid) + ':0');
-          }
-        } catch {
-          fs.writeFileSync(pidPath, String(process.pid) + ':0');
-        }
-      } else {
-        console.error('Failed to create PID file: ' + (err ? err.message : 'unknown error'));
-        process.exit(1);
-      }
-    }
-  } // DEEPCLAUDE_NO_PID_LOCK
+  // PID lock removed — each session runs an isolated proxy on its own port.
+  // The ~/.deepclaude directory is still used for user config files
+  // (slot-overrides.json, thinking-overrides.json) but proxy.pid and
+  // proxy.json session state are no longer written.
 
   // Extract display names from provider registry for the dashboard
   let providerDisplayNames: Record<string, string> | undefined;
@@ -1909,115 +1838,16 @@ if (probeIdx >= 2) {
       server.listen(parsed.port || 0, '127.0.0.1', () => {
         const port = (server.address() as { port: number }).port;
 
-        // --- Hot-swap: if we were started as the replacement, clean up the signal ---
-        const nextPortFile = deepclaudeDir + '/next-proxy.port';
-        try {
-          if (fs.existsSync(nextPortFile)) {
-            const nextPort = parseInt(fs.readFileSync(nextPortFile, 'utf-8').trim(), 10);
-            if (nextPort === port) {
-              fs.unlinkSync(nextPortFile);
-              log.info(
-                null,
-                'Hot-swap: running as replacement on port ' + port + ' — signal file removed',
-              );
-            }
-          }
-        } catch (_) {
-          /* ignore */
-        }
-
-        // --- Hot-swap superseded check: periodically look for replacement signal ---
-        // When another proxy is started with next-proxy.port pointing to a different
-        // port, we enter forwarding mode: all requests proxy to the new instance for
-        // a 10-minute grace period, then we exit. This lets CC sessions survive the
-        // transition — the user just needs to restart CC to pick up the new proxy.
-        const SUPERSEDED_GRACE_MS = 10 * 60 * 1000; // 10 minutes
-        let superseded = false;
-
-        const supersedeInterval = setInterval(() => {
-          if (superseded) return;
+        // Hot-swap mechanism removed — each session runs its own isolated proxy.
+        // To restart a proxy, exit CC and re-run deepclaude.
+        // Write a simple port file for diagnostics (--stats, --health).
+        // Each proxy overwrites this — it's best-effort, not a lock.
+        {
+          const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+          const portFile = homeDir + '/.deepclaude/proxy.port';
           try {
-            if (fs.existsSync(nextPortFile)) {
-              const targetPort = parseInt(fs.readFileSync(nextPortFile, 'utf-8').trim(), 10);
-              if (targetPort && targetPort !== port && !isNaN(targetPort)) {
-                // Check the new proxy is actually alive
-                const check = http.get(
-                  'http://127.0.0.1:' + targetPort + '/health',
-                  { timeout: 3000 },
-                  () => {
-                    superseded = true;
-                    clearInterval(supersedeInterval);
-                    log.info(
-                      null,
-                      'Hot-swap: superseded by port ' +
-                        targetPort +
-                        ' — entering forwarding mode for ' +
-                        SUPERSEDED_GRACE_MS / 60000 +
-                        ' minutes',
-                    );
-
-                    // Remove PID file — we're no longer the active proxy
-                    if (pidPath) {
-                      try {
-                        if (fs.existsSync(pidPath)) fs.unlinkSync(pidPath);
-                      } catch (_) {}
-                    }
-
-                    // Suicide timer
-                    setTimeout(() => {
-                      log.info(null, 'Hot-swap: grace period ended — shutting down');
-                      process.exit(0);
-                    }, SUPERSEDED_GRACE_MS).unref();
-
-                    // Forward all requests to the new proxy
-                    server.removeAllListeners('request');
-                    server.on(
-                      'request',
-                      (clientReq: http.IncomingMessage, clientRes: http.ServerResponse) => {
-                        const opts: http.RequestOptions = {
-                          hostname: '127.0.0.1',
-                          port: targetPort,
-                          path: clientReq.url,
-                          method: clientReq.method,
-                          headers: { ...clientReq.headers, host: '127.0.0.1:' + targetPort },
-                        };
-                        const upstream = http.request(opts, (upstreamRes) => {
-                          clientRes.writeHead(upstreamRes.statusCode || 200, upstreamRes.headers);
-                          upstreamRes.pipe(clientRes);
-                        });
-                        upstream.on('error', () => {
-                          clientRes.writeHead(502);
-                          clientRes.end(
-                            'Proxy migration in progress — restart CC to pick up new proxy on port ' +
-                              targetPort,
-                          );
-                        });
-                        clientReq.pipe(upstream);
-                      },
-                    );
-                  },
-                );
-                check.on('error', () => {
-                  /* new proxy not ready yet, keep checking */
-                });
-              }
-            }
-          } catch (_) {
-            /* ignore */
-          }
-        }, 5000);
-        supersedeInterval.unref();
-
-        // Update PID file with port so future instances can reuse this proxy
-        if (pidPath) {
-          try {
-            fs.writeFileSync(pidPath, String(process.pid) + ':' + String(port));
-          } catch (err: unknown) {
-            log.warn(
-              null,
-              'Failed to write PID file: ' + ((err instanceof Error && err.message) || String(err)),
-            );
-          }
+            fs.writeFileSync(portFile, String(port));
+          } catch (_) {}
         }
         process.stdout.write('PORT:' + String(port));
         if (hasDashboard) {
@@ -2054,18 +1884,13 @@ if (probeIdx >= 2) {
       null,
       signal + ' received -- draining ' + activeConnections + ' active connections...',
     );
-    // Remove PID file on graceful shutdown
-    if (pidPath) {
+    // Clean up port file written at startup
+    {
+      const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+      const portFile = homeDir + '/.deepclaude/proxy.port';
       try {
-        if (fs.existsSync(pidPath)) {
-          const currentPid = parseInt(fs.readFileSync(pidPath, 'utf-8').trim(), 10);
-          if (currentPid === process.pid) {
-            fs.unlinkSync(pidPath);
-          }
-        }
-      } catch (_) {
-        /* ignore cleanup errors */
-      }
+        if (fs.existsSync(portFile)) fs.unlinkSync(portFile);
+      } catch (_) {}
     }
     keepAliveAgent.destroy();
     server.close(() => {
