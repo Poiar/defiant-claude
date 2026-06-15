@@ -7,6 +7,17 @@ FAIL=0
 
 echo ""
 
+echo ""
+
+# README — ensure template and data sources haven't drifted from README.md
+echo "  README.md up to date..."
+npx tsx "$DIR/scripts/build-readme.ts" 2>/dev/null
+if ! git -C "$DIR" diff --exit-code -- README.md >/dev/null 2>&1; then
+  git -C "$DIR" checkout -- README.md 2>/dev/null
+  echo "  ✗ README.md is stale — run: npm run build:readme:apply && git add README.md"
+  FAIL=1
+fi
+
 # Shell
 echo "  bash -n..."
 bash -n "$DIR/deepclaude.sh" || FAIL=1
