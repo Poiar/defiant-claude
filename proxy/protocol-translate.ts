@@ -848,6 +848,19 @@ export function translateRequestToGemini(anthropicBody: AnthropicRequestBody): {
 
   // Messages → contents
   const messages = anthropicBody.messages || [];
+
+  // Build tool_use id → name lookup for correct functionResponse names
+  const toolNameById = new Map<string, string>();
+  for (const msg of messages) {
+    if (msg.role === 'assistant' && Array.isArray(msg.content)) {
+      for (const block of msg.content as AnthropicContentBlock[]) {
+        if (block.type === 'tool_use' && block.id) {
+          toolNameById.set(block.id, block.name);
+        }
+      }
+    }
+  }
+
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
     const parts: GeminiPart[] = [];
@@ -874,11 +887,12 @@ export function translateRequestToGemini(anthropicBody: AnthropicRequestBody): {
         } else if (block.type === 'tool_result') {
           const raw = block.content;
           const content = raw == null ? '' : typeof raw === 'string' ? raw : JSON.stringify(raw);
-          // Gemini expects tool results in a "function" role message, separated from user text
+          // Gemini requires functionResponse.name to match the functionCall name
+          const fcName = (block.tool_use_id && toolNameById.get(block.tool_use_id)) || 'unknown';
           const trParts: GeminiPart[] = [
             {
               functionResponse: {
-                name: block.tool_use_id ? 'tool_' + block.tool_use_id.slice(0, 8) : 'unknown',
+                name: fcName,
                 response: { content },
               },
             },
