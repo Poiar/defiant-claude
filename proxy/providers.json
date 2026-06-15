@@ -144,6 +144,16 @@
       "fallback": ["ds"],
       "streamUsageReporting": "openai_stream_options"
     },
+    "gm": {
+      "displayName": "Google Gemini",
+      "endpoint": "https://generativelanguage.googleapis.com",
+      "keyEnv": "GEMINI_API_KEY",
+      "authHeader": "x-api-key",
+      "wireFormat": "gemini",
+      "setupUrl": "https://aistudio.google.com/apikey",
+      "streamUsageReporting": null,
+      "noAutoFallback": true
+    },
     "an": {
       "displayName": "Anthropic (direct)",
       "endpoint": "https://api.anthropic.com",
@@ -195,6 +205,9 @@
     "byteplus/doubao-1.5-pro": 131072,
     "siliconflow/deepseek-v4-pro": 1048576,
     "novita/deepseek-v4-pro": 1048576,
+    "gemini-2.5-flash": 1048576,
+    "gemini-2.5-pro": 2097152,
+    "gemini-3.0-flash": 1048576,
     "claude-haiku-4-5-20251001": 200000,
     "claude-sonnet-4-6": 200000,
     "claude-opus-4-7": 200000
@@ -441,6 +454,18 @@
     "novita/deepseek-v4-pro": {
       "input": 0.435,
       "output": 0.87
+    },
+    "gemini-2.5-flash": {
+      "input": 0.15,
+      "output": 0.6
+    },
+    "gemini-2.5-pro": {
+      "input": 1.25,
+      "output": 10.0
+    },
+    "gemini-3.0-flash": {
+      "input": 0.25,
+      "output": 1.0
     },
     "claude-haiku-4-5-20251001": {
       "input": 1.0,

@@ -1,7 +1,7 @@
 # deepclaude
 
 <!-- AUTO:tagline -->
-Provider-agnostic Claude Code wrapper. Route each model slot (Opus, Sonnet, Haiku, subagent) to a different provider. Mix Alibaba, BytePlus, DeepSeek, Fireworks, Groq, Kimi, Mimo, MiniMax, Mistral, Novita, OpenCode, OpenRouter, SiliconFlow, Umans, Z.ai, Anthropic in one session.
+Provider-agnostic Claude Code wrapper. Route each model slot (Opus, Sonnet, Haiku, subagent) to a different provider. Mix Alibaba, BytePlus, DeepSeek, Fireworks, Groq, Kimi, Mimo, MiniMax, Mistral, Novita, OpenCode, OpenRouter, SiliconFlow, Umans, Z.ai, gm, Anthropic in one session.
 <!-- /AUTO:tagline -->
 
 ## Architecture
@@ -83,7 +83,7 @@ Config resolution, routes JSON construction, env var computation, slot/thinking 
 ### Test coverage
 
 <!-- AUTO:test-coverage -->
-1372 tests across 47 test files covering all proxy modules — transport errors, concurrency, LRU cache, provider registry validation, error codes, routing, stats, forwarding, server tools, config, protocol translation, thinking cache (including fingerprint-free cross-turn regression tests), reasoning cache, header sanitization, truncation, crypto, friendly errors, SSRF validation, dead stream detection, startup checks, and stream metrics. Run with `npm test`.
+1383 tests across 47 test files covering all proxy modules — transport errors, concurrency, LRU cache, provider registry validation, error codes, routing, stats, forwarding, server tools, config, protocol translation, thinking cache (including fingerprint-free cross-turn regression tests), reasoning cache, header sanitization, truncation, crypto, friendly errors, SSRF validation, dead stream detection, startup checks, and stream metrics. Run with `npm test`.
 <!-- /AUTO:test-coverage -->
 
 ### Pre-commit
@@ -226,6 +226,7 @@ deepclaude ds:deepseek-v4-pro ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-a
 | `BYTEPLUS_API_KEY` | BytePlus/Doubao | `bp` | bearer |
 | `SILICONFLOW_API_KEY` | SiliconFlow | `sf` | bearer |
 | `NOVITA_API_KEY` | Novita | `nv` | bearer |
+| `GEMINI_API_KEY` | Google Gemini | `gm` | x-api-key |
 | `ANTHROPIC_API_KEY` | Anthropic (direct) | `an` | x-api-key |
 <!-- /AUTO:providers-table -->
 
@@ -305,7 +306,8 @@ Per-model context limits are configured automatically:
 <!-- AUTO:context-table -->
 | Model | Context |
 |---|---|
-| `deepseek-v4-pro`, `deepseek-v4-flash`, `deepseek/deepseek-v4-pro`, `deepseek/deepseek-v4-flash`, `accounts/fireworks/models/deepseek-v4-pro`, `siliconflow/deepseek-v4-pro`, `novita/deepseek-v4-pro` | 1M |
+| `gemini-2.5-pro` | 1M |
+| `deepseek-v4-pro`, `deepseek-v4-flash`, `deepseek/deepseek-v4-pro`, `deepseek/deepseek-v4-flash`, `accounts/fireworks/models/deepseek-v4-pro`, `siliconflow/deepseek-v4-pro`, `novita/deepseek-v4-pro`, `gemini-2.5-flash`, `gemini-3.0-flash` | 1M |
 | `kimi-k2.6`, `umans-kimi-k2.6`, `umans-coder`, `minimax/minimax-m1` | 256K |
 | `claude-haiku-4-5-20251001`, `claude-sonnet-4-6`, `claude-opus-4-7` | 195K |
 | `z-ai/glm-4.5-air:free`, `big-pickle`, `mimo-v2.5-pro`, `umans-flash`, `umans-glm-5.1`, `groq/llama-4-maverick`, `groq/deepseek-r1-distill-qwen-32b`, `mistral/mistral-large`, `mistral/mistral-small`, `zai/glm-4.5`, `byteplus/doubao-1.5-pro` | 128K |

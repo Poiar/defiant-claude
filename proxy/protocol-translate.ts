@@ -18,6 +18,12 @@ import type {
   OpenAIResponseBody,
   OpenAIResponseChoice,
   ExtendedOpenAIUsage,
+  GeminiRequestBody,
+  GeminiContent,
+  GeminiPart,
+  GeminiFunctionDeclaration,
+  GeminiResponseBody,
+  GeminiSSEEvent,
 } from './protocol-types';
 import { mapFinishReason, translateToolChoice } from './protocol-types';
 
@@ -810,4 +816,408 @@ export function createAnthropicStreamInterceptor(
   }
 
   return new Interceptor();
+}
+
+// --- Google Gemini protocol translation ------------------------------------
+
+/**
+ * Convert an Anthropic request body to Google Gemini format.
+ * Returns the translated body and the model name (extracted for URL construction).
+ */
+export function translateRequestToGemini(anthropicBody: AnthropicRequestBody): {
+  geminiBody: GeminiRequestBody;
+  model: string;
+} {
+  const model = anthropicBody.model || 'gemini-2.5-flash';
+  const geminiBody: GeminiRequestBody = { contents: [] };
+
+  // System prompt → systemInstruction
+  if (anthropicBody.system) {
+    const parts: GeminiPart[] = [];
+    if (typeof anthropicBody.system === 'string') {
+      parts.push({ text: anthropicBody.system });
+    } else if (Array.isArray(anthropicBody.system)) {
+      for (const block of anthropicBody.system) {
+        if (block.type === 'text' && block.text) {
+          parts.push({ text: block.text });
+        }
+      }
+    }
+    if (parts.length > 0) geminiBody.systemInstruction = { parts };
+  }
+
+  // Messages → contents
+  const messages = anthropicBody.messages || [];
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    const parts: GeminiPart[] = [];
+    let role: GeminiContent['role'] = 'user';
+
+    if (msg.role === 'assistant') {
+      role = 'model';
+    }
+
+    if (typeof msg.content === 'string') {
+      parts.push({ text: msg.content });
+    } else if (Array.isArray(msg.content)) {
+      for (const block of msg.content as AnthropicContentBlock[]) {
+        if (block.type === 'text' && block.text) {
+          parts.push({ text: block.text });
+        } else if (block.type === 'tool_use') {
+          parts.push({
+            functionCall: {
+              name: block.name,
+              args: (block.input as Record<string, unknown>) || {},
+            },
+          });
+          role = 'model';
+        } else if (block.type === 'tool_result') {
+          const raw = block.content;
+          const content = raw == null ? '' : typeof raw === 'string' ? raw : JSON.stringify(raw);
+          // Gemini expects tool results in a "function" role message, separated from user text
+          const trParts: GeminiPart[] = [
+            {
+              functionResponse: {
+                name: block.tool_use_id ? 'tool_' + block.tool_use_id.slice(0, 8) : 'unknown',
+                response: { content },
+              },
+            },
+          ];
+          geminiBody.contents.push({ role: 'function', parts: trParts });
+          continue;
+        } else if (block.type === 'thinking') {
+          parts.push({ thought: block.thinking || '' });
+        }
+      }
+    }
+
+    if (parts.length > 0) {
+      geminiBody.contents.push({ role, parts });
+    }
+  }
+
+  // Tools → tools
+  if (anthropicBody.tools && anthropicBody.tools.length > 0) {
+    const functionDeclarations: GeminiFunctionDeclaration[] = anthropicBody.tools.map((t) => ({
+      name: t.name,
+      description: t.description || '',
+      parameters: (t.input_schema as Record<string, unknown>) || { type: 'object', properties: {} },
+    }));
+    geminiBody.tools = [{ functionDeclarations }];
+  }
+
+  // Tool choice → toolConfig
+  if (anthropicBody.tool_choice !== undefined) {
+    const tc = anthropicBody.tool_choice;
+    if (typeof tc === 'string') {
+      if (tc === 'auto') geminiBody.toolConfig = { functionCallingConfig: { mode: 'AUTO' } };
+      else if (tc === 'any') geminiBody.toolConfig = { functionCallingConfig: { mode: 'ANY' } };
+      else if (tc === 'none') geminiBody.toolConfig = { functionCallingConfig: { mode: 'NONE' } };
+    } else if (typeof tc === 'object') {
+      const obj = tc as { type?: string; name?: string };
+      if (obj.type === 'auto') geminiBody.toolConfig = { functionCallingConfig: { mode: 'AUTO' } };
+      else if (obj.type === 'any')
+        geminiBody.toolConfig = {
+          functionCallingConfig: {
+            mode: 'ANY',
+            allowedFunctionNames: obj.name ? [obj.name] : undefined,
+          },
+        };
+      else if (obj.type === 'none')
+        geminiBody.toolConfig = { functionCallingConfig: { mode: 'NONE' } };
+    }
+  }
+
+  // Generation config
+  const genConfig: GeminiRequestBody['generationConfig'] = {};
+  if (anthropicBody.max_tokens !== undefined) genConfig.maxOutputTokens = anthropicBody.max_tokens;
+  if (anthropicBody.temperature !== undefined) genConfig.temperature = anthropicBody.temperature;
+  if (anthropicBody.top_p !== undefined) genConfig.topP = anthropicBody.top_p;
+  if (anthropicBody.stop_sequences && anthropicBody.stop_sequences.length > 0) {
+    genConfig.stopSequences = anthropicBody.stop_sequences;
+  }
+  if (Object.keys(genConfig).length > 0) geminiBody.generationConfig = genConfig;
+
+  // Thinking config
+  if (anthropicBody.thinking) {
+    const thinkingCfg = anthropicBody.thinking as { type?: string; budget_tokens?: number };
+    if (thinkingCfg.type === 'enabled' && thinkingCfg.budget_tokens) {
+      geminiBody.thinkingConfig = { thinkingBudget: thinkingCfg.budget_tokens };
+    }
+  }
+
+  return { geminiBody, model };
+}
+
+/**
+ * Transform stream that converts Google Gemini SSE events to Anthropic SSE format.
+ * Gemini streams accumulate content in each event — the transform diffs against
+ * the previous state to produce clean Anthropic deltas.
+ */
+export function createGeminiToAnthropicStream(): Transform {
+  let started = false;
+  let finished = false;
+  let blockIndex = 0;
+  let currentBlockType: 'text' | 'tool_use' | null = null;
+  let prevText = '';
+  let toolCallName = '';
+  let toolCallId = '';
+  let usage = { input_tokens: 0, output_tokens: 0 };
+  const messageId = `msg_${crypto.randomUUID()}`;
+
+  function emit(eventType: string, data: Record<string, unknown>): string {
+    return `event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`;
+  }
+
+  function closeBlock(output: string[]): void {
+    if (!currentBlockType) return;
+    const idx = blockIndex - 1;
+    output.push(emit('content_block_stop', { type: 'content_block_stop', index: idx }));
+    currentBlockType = null;
+  }
+
+  function openBlock(
+    type: 'text' | 'tool_use',
+    contentBlock: Record<string, unknown>,
+    output: string[],
+  ): number {
+    const idx = blockIndex++;
+    currentBlockType = type;
+    output.push(
+      emit('content_block_start', {
+        type: 'content_block_start',
+        index: idx,
+        content_block: contentBlock,
+      }),
+    );
+    return idx;
+  }
+
+  function appendDelta(deltaType: string, delta: Record<string, unknown>, output: string[]): void {
+    const idx = blockIndex - 1;
+    output.push(
+      emit('content_block_delta', {
+        type: 'content_block_delta',
+        index: idx,
+        delta: { type: deltaType, ...delta },
+      }),
+    );
+  }
+
+  function startStream(output: string[]): void {
+    started = true;
+    output.push(
+      emit('message_start', {
+        type: 'message_start',
+        message: {
+          id: messageId,
+          type: 'message',
+          role: 'assistant',
+          content: [],
+          model: null,
+          stop_reason: null,
+          stop_sequence: null,
+          usage: { input_tokens: 0, output_tokens: 0 },
+        },
+      }),
+    );
+  }
+
+  function finishStream(stopReason: string, output: string[]): void {
+    closeBlock(output);
+    output.push(
+      emit('message_delta', {
+        type: 'message_delta',
+        delta: { stop_reason: stopReason, stop_sequence: null },
+        usage: { input_tokens: usage.input_tokens, output_tokens: usage.output_tokens },
+      }),
+    );
+    output.push(emit('message_stop', { type: 'message_stop' }));
+    finished = true;
+  }
+
+  // Map Gemini finishReason to Anthropic stop_reason
+  function mapGeminiStopReason(reason?: string): string {
+    if (!reason) return 'end_turn';
+    switch (reason) {
+      case 'STOP':
+        return 'end_turn';
+      case 'MAX_TOKENS':
+        return 'max_tokens';
+      case 'SAFETY':
+        return 'end_turn';
+      case 'RECITATION':
+        return 'end_turn';
+      case 'MALFORMED_FUNCTION_CALL':
+        return 'tool_use';
+      default:
+        return 'end_turn';
+    }
+  }
+
+  let buffer = '';
+
+  return new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      if (finished) {
+        callback(null);
+        return;
+      }
+
+      buffer += chunk.toString();
+      const output: string[] = [];
+
+      // Process complete SSE events (delimited by \n\n)
+      while (buffer.includes('\n\n')) {
+        const idx = buffer.indexOf('\n\n');
+        const eventStr = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+
+        const dataMatch = eventStr.match(/^data:\s*(.+)$/m);
+        if (!dataMatch) continue;
+
+        try {
+          const event: GeminiSSEEvent = JSON.parse(dataMatch[1]);
+          if (!event.candidates || event.candidates.length === 0) {
+            if (event.usageMetadata) {
+              usage = {
+                input_tokens: event.usageMetadata.promptTokenCount || 0,
+                output_tokens: event.usageMetadata.candidatesTokenCount || 0,
+              };
+            }
+            continue;
+          }
+
+          const candidate = event.candidates[0];
+          const content = candidate.content;
+
+          // Handle finish reason
+          if (candidate.finishReason && !finished) {
+            if (!started) startStream(output);
+            const stopReason = mapGeminiStopReason(candidate.finishReason);
+            finishStream(stopReason, output);
+            if (event.usageMetadata) {
+              usage = {
+                input_tokens: event.usageMetadata.promptTokenCount || 0,
+                output_tokens: event.usageMetadata.candidatesTokenCount || 0,
+              };
+            }
+            continue;
+          }
+
+          if (event.usageMetadata) {
+            usage = {
+              input_tokens: event.usageMetadata.promptTokenCount || 0,
+              output_tokens: event.usageMetadata.candidatesTokenCount || 0,
+            };
+          }
+
+          if (!content || !Array.isArray(content.parts)) continue;
+
+          for (const part of content.parts) {
+            if (part.text !== undefined) {
+              if (!started) startStream(output);
+
+              // Gemini streams the FULL accumulated text each event, not deltas.
+              // Diff against prevText to produce clean deltas.
+              const fullText = part.text;
+              const delta = fullText.slice(prevText.length);
+              prevText = fullText;
+
+              if (delta.length > 0) {
+                if (currentBlockType !== 'text') {
+                  closeBlock(output);
+                  openBlock('text', { type: 'text', text: '' }, output);
+                }
+                appendDelta('text_delta', { text: delta }, output);
+              }
+            } else if (part.functionCall) {
+              if (!started) startStream(output);
+              closeBlock(output);
+
+              toolCallName = part.functionCall.name;
+              toolCallId = `toolu_${crypto.randomUUID().replace(/-/g, '').slice(0, 24)}`;
+
+              openBlock(
+                'tool_use',
+                {
+                  type: 'tool_use',
+                  id: toolCallId,
+                  name: toolCallName,
+                  input: {},
+                },
+                output,
+              );
+              // Gemini sends the complete functionCall at once — emit full JSON
+              const argsJson = JSON.stringify(part.functionCall.args || {});
+              appendDelta('input_json_delta', { partial_json: argsJson }, output);
+              closeBlock(output);
+              prevText = '';
+            }
+          }
+        } catch (_e) {
+          // Skip malformed events
+        }
+      }
+
+      if (output.length > 0) {
+        callback(null, output.join(''));
+      } else {
+        callback(null);
+      }
+    },
+  });
+}
+
+/**
+ * Convert a Gemini non-streaming response to an Anthropic-format response body.
+ * Used for non-streaming requests.
+ */
+export function translateGeminiResponse(geminiBody: GeminiResponseBody): {
+  content: AnthropicContentBlock[];
+  stop_reason: string;
+  usage: { input_tokens: number; output_tokens: number };
+} {
+  const candidate = geminiBody.candidates?.[0];
+  const parts = candidate?.content?.parts || [];
+  const content: AnthropicContentBlock[] = [];
+
+  for (const part of parts) {
+    if (part.text !== undefined) {
+      content.push({ type: 'text', text: part.text });
+    } else if (part.functionCall) {
+      content.push({
+        type: 'tool_use',
+        id: `toolu_${crypto.randomUUID().replace(/-/g, '').slice(0, 24)}`,
+        name: part.functionCall.name,
+        input: part.functionCall.args,
+      });
+    }
+  }
+
+  const stopReason = (() => {
+    switch (candidate?.finishReason) {
+      case 'STOP':
+        return 'end_turn';
+      case 'MAX_TOKENS':
+        return 'max_tokens';
+      default:
+        return 'end_turn';
+    }
+  })();
+
+  const um = geminiBody.usageMetadata || {
+    promptTokenCount: 0,
+    candidatesTokenCount: 0,
+    totalTokenCount: 0,
+  };
+
+  return {
+    content,
+    stop_reason: stopReason,
+    usage: {
+      input_tokens: um.promptTokenCount,
+      output_tokens: um.candidatesTokenCount,
+    },
+  };
 }
