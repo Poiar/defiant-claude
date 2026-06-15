@@ -23,6 +23,8 @@ const SLOTS = ['opus', 'sonnet', 'haiku', 'subagent', 'fable'];
 const IS_WIN = platform() === 'win32';
 const NPX = IS_WIN ? 'npx.cmd' : 'npx';
 const TSX = join(ROOT, 'node_modules', '.bin', IS_WIN ? 'tsx.cmd' : 'tsx');
+// Claude Code installs as 'claude.cmd' on Windows, 'claude' on Unix.
+const CLAUDE = IS_WIN ? 'claude.cmd' : 'claude';
 
 // ─── Colors ──────────────────────────────────────────────────────────
 const C = {
@@ -1027,7 +1029,7 @@ async function launchCC(flags, configs) {
   if (flags.remote) {
     if (isAnthropic) {
       const r = spawnSync(
-        'claude',
+        CLAUDE,
         [
           '--effort',
           flags.effort,
@@ -1035,7 +1037,7 @@ async function launchCC(flags, configs) {
           'remote-control',
           ...flags.specs,
         ],
-        { stdio: 'inherit' },
+        { stdio: 'inherit', ...(IS_WIN ? { shell: true } : {}) },
       );
       process.exit(r.status || 0);
     }
@@ -1093,9 +1095,10 @@ async function launchCC(flags, configs) {
   // Normal (non-remote) launch
   if (isAnthropic) {
     // Anthropic direct — just launch CC
-    const r = spawnSync('claude', ['--effort', flags.effort, ...flags.specs], {
+    const r = spawnSync(CLAUDE, ['--effort', flags.effort, ...flags.specs], {
       stdio: 'inherit',
       env: { ...process.env },
+      ...(IS_WIN ? { shell: true } : {}),
     });
     process.exit(r.status || 0);
   }
@@ -1111,7 +1114,7 @@ async function launchCC(flags, configs) {
   writeAtomic(routesFile, typeof routesJson === 'string' ? routesJson : JSON.stringify(routesJson));
   writeFixAv();
 
-  const { port } = await startProxy(
+  const { port, proc: proxyProc } = await startProxy(
     routesFile,
     overridesFile,
     join(DEEPCLAUDE_DIR, 'thinking-overrides.json'),
@@ -1136,9 +1139,12 @@ async function launchCC(flags, configs) {
   for (const uk of envVars._unset || []) delete process.env[uk];
 
   // Launch CC
-  const proxyProc = proxyInfo.proc;
   const ccArgs = ['--effort', flags.effort, ...flags.specs];
-  const ccProc = spawn('claude', ccArgs, { stdio: 'inherit', env: { ...process.env } });
+  const ccProc = spawn(CLAUDE, ccArgs, {
+    stdio: 'inherit',
+    env: { ...process.env },
+    ...(IS_WIN ? { shell: true } : {}),
+  });
 
   // Cleanup on CC exit
   ccProc.on('exit', () => {

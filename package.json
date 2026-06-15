@@ -21,6 +21,7 @@
     "build": "npx tsc",
     "verify": "node scripts/verify.mjs",
     "restart-proxy": "node scripts/restart-proxy.mjs",
+    "uav": "node scripts/uav.mjs",
     "prepare": "husky"
   },
   "repository": {
