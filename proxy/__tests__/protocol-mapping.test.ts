@@ -197,8 +197,11 @@ describe('Scenario 2: DeepSeek /anthropic (ds) — constrained Anthropic protoco
     expect(tool.input_schema).toBeDefined();
     expect((tool.input_schema as any).properties.query).toBeDefined();
 
-    // tool_choice stripped (forbidsToolChoiceWithThinking: true)
-    expect(body.tool_choice).toBeUndefined();
+    // tool_choice is KEPT when web search tools are present
+    // (forbidsToolChoiceWithThinking + web search → keep tool_choice so the
+    // model is forced to invoke the tool; caller skips thinking injection)
+    expect(body.tool_choice).toBeDefined();
+    expect((body.tool_choice as any).name).toBe('web_search');
   });
 
   test('preprocessServerTools strips tool_choice even with non-web tools', () => {
@@ -493,8 +496,9 @@ describe('Scenario 4: Full end-to-end pipeline', () => {
 
     // Tool was detected and converted
     expect(preResult.hadWebSearch).toBe(true);
-    // tool_choice was stripped
-    expect(preBody.tool_choice).toBeUndefined();
+    // tool_choice is KEPT when web search tools are present (forces model
+    // to invoke the tool; caller skips thinking injection)
+    expect(preBody.tool_choice).toBeDefined();
     // Tool type prefix removed
     const tool = (preBody.tools as any[])[0] as any;
     expect(tool.type).toBeUndefined();

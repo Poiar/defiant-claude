@@ -11,6 +11,10 @@ import {
   recordStreamMetrics,
   recordSpend,
   recordProviderSpend,
+  recordSavings,
+  getTotalSavings,
+  getSpendHistory,
+  getModelBreakdown,
   isProviderHealthy,
   getHealthSnapshot,
   getCircuitBreakerState,
@@ -1066,6 +1070,73 @@ describe('getFullHealthSnapshot — provider circuit breaker state', () => {
     const providers = snap.providers as Record<string, Record<string, unknown>>;
     expect(providers[key].lastRequest).toBeDefined();
     expect(typeof providers[key].lastRequest).toBe('number');
+  });
+});
+
+describe('savings tracking', () => {
+  test('recordSavings accumulates positive deltas', () => {
+    _resetBudgetState();
+    recordSavings(1.0, 5.0); // saved $4.00
+    recordSavings(2.0, 6.0); // saved $4.00
+    expect(getTotalSavings()).toBe(8.0);
+  });
+
+  test('recordSavings ignores negative or zero savings', () => {
+    _resetBudgetState();
+    recordSavings(5.0, 5.0); // no savings
+    recordSavings(6.0, 5.0); // negative — ignore
+    expect(getTotalSavings()).toBe(0);
+  });
+
+  test('getTotalSavings returns 0 when no savings recorded', () => {
+    _resetBudgetState();
+    expect(getTotalSavings()).toBe(0);
+  });
+
+  test('savings appear in health snapshot', () => {
+    _resetBudgetState();
+    recordSavings(1.0, 3.0);
+    const snap = getFullHealthSnapshot({}, {});
+    expect(typeof snap.savings).toBe('number');
+    expect(snap.savings).toBe(2.0);
+  });
+});
+
+describe('spend history and model breakdown', () => {
+  test('getSpendHistory returns array', () => {
+    const history = getSpendHistory();
+    expect(Array.isArray(history)).toBe(true);
+    // Returns 7 entries when spend file exists, or empty array when no file
+    for (const entry of history) {
+      expect(typeof entry.date).toBe('string');
+      expect(typeof entry.total).toBe('number');
+      expect(typeof entry.sessions).toBe('number');
+    }
+  });
+
+  test('getSpendHistory returns empty array when no spend file', () => {
+    setSpendFilePath('/nonexistent/deepclaude-spend-test.json');
+    const history = getSpendHistory();
+    expect(Array.isArray(history)).toBe(true);
+    expect(history.length).toBe(0);
+  });
+
+  test('getModelBreakdown returns array', () => {
+    const breakdown = getModelBreakdown();
+    expect(Array.isArray(breakdown)).toBe(true);
+    if (breakdown.length > 0) {
+      for (const entry of breakdown) {
+        expect(typeof entry.model).toBe('string');
+        expect(typeof entry.tokens).toBe('number');
+        expect(typeof entry.cost).toBe('number');
+      }
+    }
+  });
+
+  test('spendHistory and modelBreakdown appear in health snapshot', () => {
+    const snap = getFullHealthSnapshot({}, {});
+    expect(Array.isArray(snap.spendHistory)).toBe(true);
+    expect(Array.isArray(snap.modelBreakdown)).toBe(true);
   });
 });
 

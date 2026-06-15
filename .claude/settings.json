@@ -16,6 +16,11 @@
             "type": "command",
             "command": "powershell -NoProfile -File .claude/hooks/stop-api-error-guard.ps1",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -File .claude/hooks/stop-guard.ps1",
+            "timeout": 5
           }
         ]
       }

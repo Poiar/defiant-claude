@@ -154,6 +154,17 @@ body{background:#0d1117;color:#c9d1d9;font-family:-apple-system,BlinkMacSystemFo
 .row-fallback td{background:rgba(210,153,34,0.06);color:#d29922}
 .loading{text-align:center;padding:40px;color:#8b949e}
 .model-cell{max-width:200px;overflow:hidden;text-overflow:ellipsis}
+.charts{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px}
+.chart-card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px}
+.chart-card h2{font-size:14px;font-weight:600;margin-bottom:12px;color:#c9d1d9}
+.chart-card canvas{max-height:280px}
+.breakdown-table{width:100%;border-collapse:collapse;margin-top:8px;font-size:12px}
+.breakdown-table th{text-align:left;padding:4px 8px;color:#8b949e;border-bottom:1px solid #21262d}
+.breakdown-table td{padding:4px 8px;border-bottom:1px solid #21262d}
+.config-status{display:inline-flex;align-items:center;gap:6px;font-size:13px;padding:4px 12px;border-radius:6px}
+.config-ok{background:#1b4721;color:#3fb950}
+.config-warn{background:#3d141b;color:#f85149}
+@media(max-width:800px){.charts{grid-template-columns:1fr}}
 @media(max-width:600px){.header{gap:12px;font-size:12px}.cards{grid-template-columns:1fr}.card-grid{grid-template-columns:1fr}}
 </style>
 </head>
@@ -163,10 +174,15 @@ body{background:#0d1117;color:#c9d1d9;font-family:-apple-system,BlinkMacSystemFo
 <span class="stat">Version: <strong id="version">--</strong></span>
 <span class="stat">Uptime: <strong id="uptime">0s</strong></span>
 <span class="stat">Spend: <strong id="spend">$0.0000</strong></span>
+<span class="stat">Saved: <strong id="savings">$0.0000</strong></span>
 <span class="stat" id="quota-summary"></span>
 </div>
 <div class="cards" id="cards">
 <div class="loading">Connecting to proxy...</div>
+</div>
+<div class="charts" id="charts" style="display:none">
+<div class="chart-card"><h2>Spend History (7 days)</h2><canvas id="spendChart"></canvas></div>
+<div class="chart-card"><h2>Model Usage</h2><canvas id="modelChart"></canvas><table class="breakdown-table" id="modelTable"><thead><tr><th>Model</th><th>Tokens</th><th>Cost</th></tr></thead><tbody id="modelTableBody"></tbody></table></div>
 </div>
 <div class="recent-section">
 <h2>Recent Requests</h2>
@@ -186,6 +202,7 @@ var requestsPlaceholder=document.getElementById("requests-placeholder");
 var verEl=document.getElementById("version");
 var uptimeEl=document.getElementById("uptime");
 var spendEl=document.getElementById("spend");
+var savingsEl=document.getElementById("savings");
 var quotaEl=document.getElementById("quota-summary");
 var lastData=null;
 function fmtUptime(ms){
@@ -238,6 +255,7 @@ lastData=data;
 verEl.textContent=data.version||"--";
 uptimeEl.textContent=fmtUptime(data.uptime||0);
 spendEl.textContent="$"+(data.spend||0).toFixed(4);
+savingsEl.textContent="$"+(data.savings||0).toFixed(4);
 var provs=data.providers||{};
 var keys=Object.keys(provs);
 // Quota summary in header: only show if any provider is warning or critical
@@ -319,6 +337,29 @@ rh+="<tr class=\\""+rc+"\\">"
 requestsBody.innerHTML=rh
 }
 }
+// Chart updates: spend history + model breakdown
+var chartsEl=document.getElementById("charts");
+var spendChart=null,modelChart=null;
+if(data.spendHistory&&data.spendHistory.length){
+chartsEl.style.display="";
+var labels=data.spendHistory.map(function(h){return h.date.slice(-5)});
+var totals=data.spendHistory.map(function(h){return h.total});
+var ctx1=document.getElementById("spendChart").getContext("2d");
+if(spendChart)spendChart.destroy();
+spendChart=new Chart(ctx1,{type:"bar",data:{labels:labels,datasets:[{label:"Daily Spend",data:totals,backgroundColor:"#58a6ff"}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,ticks:{callback:function(v){return "$"+v}}}}}});
+}
+if(data.modelBreakdown&&data.modelBreakdown.length){
+var bd=data.modelBreakdown;
+var ctx2=document.getElementById("modelChart").getContext("2d");
+if(modelChart)modelChart.destroy();
+modelChart=new Chart(ctx2,{type:"doughnut",data:{labels:bd.map(function(m){return m.model}),datasets:[{data:bd.map(function(m){return m.cost}),backgroundColor:["#58a6ff","#3fb950","#d29922","#f85149","#8b949e","#bc8cff","#ff8c6b","#79ead3"]}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:"bottom",labels:{boxWidth:10,font:{size:10}}}}}});
+var tbody=document.getElementById("modelTableBody");
+tbody.innerHTML="";
+for(var bi=0;bi<bd.length;bi++){
+tbody.innerHTML+="<tr><td>"+esc(bd[bi].model)+"</td><td>"+bd[bi].tokens.toLocaleString()+"</td><td>$"+bd[bi].cost.toFixed(4)+"</td></tr>"
+}
+}
+}
 var source=null;
 var pollTimer=null;
 function startPolling(){
@@ -375,6 +416,7 @@ window.addEventListener("error",function(e){showError(e)});
 window.addEventListener("unhandledrejection",function(e){showError({message:e.reason&&e.reason.message||String(e.reason),stack:e.reason&&e.reason.stack||""})})
 })();
 </script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 </body>
 </html>`;
 }

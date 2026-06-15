@@ -61,25 +61,23 @@ async function main() {
   writeFileSync(NEXT_PORT_FILE, String(newPort));
   console.log('Signal file written: ' + NEXT_PORT_FILE);
 
-  // 5. Start new proxy detached
+  // 5. Start new proxy detached with full env inheritance.
+  // On Windows cmd /c is more reliable than pwsh -NoProfile for env vars.
+  // The proxy needs API keys (DEEPSEEK_API_KEY etc.) from the parent process.
   const isWin = platform() === 'win32';
-  const child = spawn(
-    isWin ? 'pwsh' : 'npx',
-    isWin ? ['-NoProfile', '-Command', 'npx ' + args.join(' ')] : args,
-    {
-      cwd: REPO_DIR,
-      stdio: 'ignore',
-      detached: true,
-      ...(isWin ? {} : {}),
-    },
-  );
+  const child = spawn(isWin ? 'cmd' : 'npx', isWin ? ['/c', 'npx ' + args.join(' ')] : args, {
+    cwd: REPO_DIR,
+    stdio: 'ignore',
+    detached: true,
+    env: process.env, // explicit env inherit
+  });
   child.unref();
 
-  // 6. Wait for new proxy to be healthy
+  // 6. Wait for new proxy to be healthy (15s — some providers are slow to probe)
   console.log('Waiting for new proxy to be healthy...');
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < 30; i++) {
     await new Promise((r) => setTimeout(r, 500));
-    const healthy = await healthCheck(newPort);
+    const healthy = await healthCheck(newPort, 3000);
     if (healthy) {
       console.log('New proxy is healthy on port ' + newPort);
       console.log('');
@@ -89,7 +87,7 @@ async function main() {
     }
   }
 
-  fail('New proxy did not become healthy within 10 seconds');
+  fail('New proxy did not become healthy within 15 seconds');
   process.exit(1);
 }
 

@@ -4,6 +4,8 @@ import http from 'http';
 import https from 'https';
 import { pipeline, Transform } from 'stream';
 import fs from 'fs';
+import path from 'path';
+import os from 'os';
 
 import {
   translateRequest,
@@ -60,6 +62,8 @@ import {
   recordFallback,
   setActiveConnections,
 } from './stats';
+import { checkBudgetNotifications } from './notify';
+import { validateConfig as lintValidateConfig } from './config-lint';
 import { serveDashboard } from './dashboard';
 import {
   formatError,
@@ -427,6 +431,71 @@ if (probeIdx >= 2) {
       const metrics = buildPrometheusMetrics(concurrency.status(), mainRateLimiter.status());
       res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4' });
       res.end(metrics);
+      return;
+    }
+
+    // --- Config validation endpoint ---
+    if (req.method === 'GET' && req.url === '/health/config') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      try {
+        const issues = lintValidateConfig(state.providersFile || undefined);
+        res.end(
+          JSON.stringify({
+            valid: issues.length === 0,
+            issues: issues.map((i) => ({
+              category: i.category,
+              severity: i.severity,
+              message: i.message,
+              file: i.file,
+            })),
+            summary:
+              issues.length === 0 ? 'Configuration valid' : issues.length + ' issue(s) found',
+          }),
+        );
+      } catch (e) {
+        res.end(
+          JSON.stringify({
+            valid: false,
+            issues: [],
+            summary: 'Config validation error: ' + ((e as Error).message || ''),
+          }),
+        );
+      }
+      return;
+    }
+
+    // --- Request log browser endpoint ---
+    if (req.method === 'GET' && req.url?.startsWith('/api/requests')) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      try {
+        const url = new URL(req.url, 'http://127.0.0.1');
+        const page = Math.max(1, parseInt(url.searchParams.get('page') || '1', 10) || 1);
+        const limit = Math.min(
+          100,
+          Math.max(1, parseInt(url.searchParams.get('limit') || '50', 10) || 50),
+        );
+        const logPath = path.join(os.homedir(), '.deepclaude', 'requests.log');
+        const entries: Array<Record<string, unknown>> = [];
+        if (fs.existsSync(logPath)) {
+          const raw = fs.readFileSync(logPath, 'utf-8');
+          const lines = raw.trim().split('\n').filter(Boolean);
+          const total = lines.length;
+          const start = Math.max(0, total - page * limit);
+          const end = Math.max(0, total - (page - 1) * limit);
+          for (let i = end - 1; i >= start; i--) {
+            try {
+              entries.push(JSON.parse(lines[i]));
+            } catch (_) {
+              /* skip malformed */
+            }
+          }
+          res.end(JSON.stringify({ requests: entries, total, page, limit, hasMore: start > 0 }));
+        } else {
+          res.end(JSON.stringify({ requests: [], total: 0, page, limit, hasMore: false }));
+        }
+      } catch (_) {
+        res.end(JSON.stringify({ requests: [], total: 0, page: 1, limit: 50, hasMore: false }));
+      }
       return;
     }
 
@@ -910,6 +979,13 @@ if (probeIdx >= 2) {
         // Pre-process request body once (tool results, server tools)
         let baseBody = rawBody;
         let bodyPreprocessed = false;
+        // Track whether the request has web search/fetch tools that need
+        // tool_choice preservation.  When set, thinking injection is skipped
+        // for providers that reject tool_choice with thinking (DeepSeek).
+        let hasWebTools = false;
+        // Track whether we pre-executed DDG search so downstream code can
+        // skip tool conversion (web tools were already removed).
+        let _webSearchPreExecuted = false;
         if (parsedBody) {
           try {
             let modified = false;
@@ -919,6 +995,60 @@ if (probeIdx >= 2) {
             // tool_choice stripping (nativeServerTools, forbidsToolChoiceWithThinking).
             const constraints = getConstraints(resolved.primary?.providerKey || '');
             if (!constraints.nativeServerTools && parsedBody.tools) {
+              // Pre-execute web search for non-native providers.
+              // Instead of converting web_search tools and hoping the model
+              // invokes them (which requires tool_choice + no-thinking that
+              // breaks on DeepSeek), execute DDG search now and inject results
+              // as context.  The model responds naturally without tool_use.
+              const searchQuery =
+                parsedBody.messages && Array.isArray(parsedBody.messages)
+                  ? extractSearchQuery(parsedBody.messages as any[])
+                  : null;
+              if (searchQuery) {
+                try {
+                  log.info(reqId, 'pre-executing DDG search for: ' + searchQuery.slice(0, 100));
+                  const results = await webSearch(searchQuery);
+                  if (results && !results.startsWith('No results found')) {
+                    // Inject search results as a synthetic user message.
+                    // The model sees these as context and responds with text.
+                    const messages = parsedBody.messages as any[];
+                    messages.push({
+                      role: 'user',
+                      content: [
+                        {
+                          type: 'text',
+                          text: 'Web search results for "' + searchQuery + '":\n\n' + results,
+                        },
+                      ],
+                    });
+                    // Remove web search/fetch tools — we already executed.
+                    const WEB_PREFIXES = ['web_search_', 'web_fetch_', 'url_fetch_'];
+                    const isWeb = (t: any) =>
+                      t &&
+                      typeof t.type === 'string' &&
+                      WEB_PREFIXES.some((p) => t.type.startsWith(p));
+                    parsedBody.tools = (parsedBody.tools as any[]).filter((t: any) => !isWeb(t));
+                    if (parsedBody.tools.length === 0) delete parsedBody.tools;
+                    // Strip tool_choice if it targets web_search.
+                    const tc = parsedBody.tool_choice;
+                    if (tc && typeof tc === 'object' && (tc as any).name === 'web_search') {
+                      delete parsedBody.tool_choice;
+                    }
+                    _webSearchPreExecuted = true;
+                    hasWebTools = true;
+                    modified = true;
+                    log.info(reqId, 'DDG pre-execute: injected results, removed web tools');
+                  }
+                } catch (e) {
+                  log.warn(
+                    reqId,
+                    'DDG pre-execute failed: ' + truncateForLog((e as Error).message),
+                  );
+                }
+              }
+
+              // Still convert any remaining server tools (non-web ones
+              // like text_editor, bash, etc.) that pre-execution didn't handle.
               const result = preprocessServerTools(
                 parsedBody as Record<string, unknown> & {
                   tools?: unknown[];
@@ -927,6 +1057,7 @@ if (probeIdx >= 2) {
                 constraints,
               );
               if (result.modified) modified = true;
+              if (result.hadWebSearch || result.hadWebFetch) hasWebTools = true;
             }
 
             if (parsedBody.messages) {
@@ -953,6 +1084,15 @@ if (probeIdx >= 2) {
         // Budget cap check -- stop forwarding if spend exceeds configured caps
         const budgetReason = checkBudget();
         if (budgetReason) {
+          // Notify on budget exhaustion
+          try {
+            const dailyBudget = parseFloat(process.env.DEEPCLAUDE_DAILY_BUDGET || '0');
+            if (dailyBudget > 0) {
+              checkBudgetNotifications(dailyBudget, dailyBudget, 'daily budget');
+            }
+          } catch (_) {
+            /* non-fatal */
+          }
           if (!res.headersSent && !res.destroyed) {
             const streamingClient = isStreamingClient(
               req.headers as Record<string, string | string[] | undefined>,
@@ -1071,12 +1211,26 @@ if (probeIdx >= 2) {
               try {
                 const p = JSON.parse(forwardedBody.toString());
                 let bodyModified = false;
-                // Strip tool_choice for providers that reject it with thinking
-                if (constraints.forbidsToolChoiceWithThinking && p.tool_choice !== undefined) {
+                // Strip tool_choice for providers that reject it with thinking,
+                // UNLESS the request has web search tools (tool_choice is needed
+                // to force the tool invocation — preprocessServerTools preserved it).
+                if (hasWebTools && constraints.forbidsToolChoiceWithThinking) {
+                  // Web search needs tool_choice to force tool invocation,
+                  // but DeepSeek rejects thinking + tool_choice together.
+                  // Strip thinking (CC sends it from the user's effort level)
+                  // so tool_choice survives.
+                  if (p.thinking) {
+                    delete p.thinking;
+                    bodyModified = true;
+                  }
+                } else if (
+                  constraints.forbidsToolChoiceWithThinking &&
+                  p.tool_choice !== undefined
+                ) {
                   delete p.tool_choice;
                   bodyModified = true;
                 }
-                if (!p.thinking) {
+                if (!p.thinking && !hasWebTools) {
                   p.thinking = { type: thinkingCfg.type, budget_tokens: thinkingCfg.budget_tokens };
                   bodyModified = true;
                 }
@@ -1212,11 +1366,14 @@ if (probeIdx >= 2) {
           delete options.headers['x-real-ip'];
           delete options.headers['forwarded'];
 
-          // Strip effort beta from anthropic-beta header when targeting
-          // Haiku models (effort-2025-11-24 is only supported by Opus/Sonnet).
-          // Without this, Anthropic returns 400 "model does not support effort."
+          // Strip effort beta from anthropic-beta header when the target
+          // doesn't support it. Two cases:
+          //   1. Haiku models on Anthropic — returns 400 "model does not support effort"
+          //   2. Non-Anthropic providers (DeepSeek, Fireworks, etc.) — don't
+          //      implement Anthropic beta headers at all, returns 400
           const rewriteModel = target.rewriteModel || model || '';
-          if (rewriteModel.includes('haiku')) {
+          const isNative = getConstraints(target.providerKey).nativeServerTools;
+          if (rewriteModel.includes('haiku') || !isNative) {
             const beta = options.headers['anthropic-beta'];
             if (typeof beta === 'string') {
               options.headers['anthropic-beta'] = beta
