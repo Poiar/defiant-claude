@@ -407,6 +407,7 @@ Tip: `deepclaude --install-statusline` automates the manual setup above.
 | `DEEPCLAUDE_DEFAULT_BACKEND` | Default config name (falls back to `ds`; legacy `CHEAPCLAUDE_DEFAULT_BACKEND` also accepted) |
 | `DEEPCLAUDE_DEV` | Development mode — more verbose error details in responses (`1` or `true`) |
 | `DEEPCLAUDE_DIR` | (undocumented) |
+| `DEEPCLAUDE_DRAIN_GRACE_MS` | (undocumented) |
 | `DEEPCLAUDE_ENCRYPTION_KEY` | Master key for AES-256-GCM API key decryption (used with `--encrypt-key`) |
 | `DEEPCLAUDE_LOG_ALL_REQUESTS` | Log all requests to `~/.deepclaude/requests.log` (`true` to enable) |
 | `DEEPCLAUDE_LOG_LEVEL` | Set log level (`debug` for verbose output; defaults to `info`) |
