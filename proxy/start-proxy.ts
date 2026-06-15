@@ -365,6 +365,7 @@ if (probeIdx >= 2) {
   let tcpConnections = 0;
   let hadTcpClient = false;
   let drainTimer: ReturnType<typeof setTimeout> | null = null;
+  let superseded = false; // Set to true when entering forwarding mode
   const DRAIN_GRACE_MS = 30_000;
 
   const server = http.createServer((req: http.IncomingMessage, res: http.ServerResponse) => {
@@ -1798,15 +1799,17 @@ if (probeIdx >= 2) {
     });
   });
 
-  // Called whenever a connection closes OR activeConnections drops — both
-  // can happen in either order (race between socket close and handler finally).
-  // Only starts the timer if BOTH conditions are met.
+  // checkDrain only fires for superseded proxies in forwarding mode.
+  // Normal proxies must NEVER auto-exit — CC may open fresh connections
+  // per request (no keep-alive), so tcpConnections drops to 0 between
+  // API calls. A 30s drain timer would kill the session mid-conversation.
   function checkDrain(): void {
+    if (!superseded) return;
     if (hadTcpClient && tcpConnections <= 0 && activeConnections <= 0) {
-      if (drainTimer) return; // timer already running
+      if (drainTimer) return;
       drainTimer = setTimeout(() => {
         if (tcpConnections <= 0 && activeConnections <= 0) {
-          log.info(null, 'All client connections drained — shutting down');
+          log.info(null, 'Hot-swap: all connections drained — shutting down');
           process.exit(0);
         }
         drainTimer = null;
@@ -1902,11 +1905,6 @@ if (probeIdx >= 2) {
         }
 
         // --- Hot-swap superseded check: periodically look for replacement signal ---
-        // When another proxy is started with next-proxy.port pointing to a different
-        // port, we enter forwarding mode: all requests proxy to the new instance.
-        // We exit when all active connections have drained (no timer needed).
-        let superseded = false;
-
         const supersedeInterval = setInterval(() => {
           if (superseded) return;
           try {
