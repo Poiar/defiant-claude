@@ -183,7 +183,7 @@ function safeReadJson(filePath: string, schema: JsonSchema): Record<string, unkn
 
   for (const [key, expectedType] of Object.entries(schema)) {
     const value = data[key];
-    if (value === undefined) continue; // optional field
+    if (value === undefined || value === null) continue; // optional field
     if (expectedType === 'array') {
       if (!Array.isArray(value)) {
         log.warn(

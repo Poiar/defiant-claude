@@ -454,6 +454,9 @@ export function getFullHealthSnapshot(
   }
   // Spend and recent requests
   base.spend = parseFloat(sessionTotal.toFixed(4));
+  base.savings = parseFloat(totalSavings.toFixed(4));
+  base.spendHistory = getSpendHistory();
+  base.modelBreakdown = getModelBreakdown();
   base.recentRequests = recentRequests.slice().reverse();
   try {
     const mem = process.memoryUsage();
@@ -805,6 +808,7 @@ function repairDailySpend(): void {
 
 let sessionTotal = 0;
 let dailyAccumulator = 0;
+let totalSavings = 0; // Cumulative cost savings vs most expensive provider
 const providerDailyAccumulators: Record<string, number> = {};
 let sessionCap = 0;
 let sessionDailyBudget = 0;
@@ -1020,6 +1024,24 @@ export async function recordSpend(
   sessionTotal += cost;
   dailyAccumulator += cost;
   ccPendingSpend += cost;
+
+  // Compute savings vs most expensive reference (Claude Opus: $15/M input, $75/M output)
+  const maxCost =
+    (usage.prompt_tokens / 1_000_000) * 15.0 + (usage.completion_tokens / 1_000_000) * 75.0;
+  if (maxCost > cost) {
+    totalSavings += maxCost - cost;
+  }
+
+  // Check budget notification thresholds
+  try {
+    const { checkBudgetNotifications } = require('./notify');
+    const dailyBudget = parseFloat(process.env.DEEPCLAUDE_DAILY_BUDGET || '0');
+    if (dailyBudget > 0) {
+      checkBudgetNotifications(getDailySpend(), dailyBudget, 'daily budget');
+    }
+  } catch (_) {
+    /* non-fatal */
+  }
   if (providerKey) {
     recordProviderSpend(providerKey, cost, modelName);
     if (cacheHit > 0 || cacheMiss > 0) {
@@ -1220,6 +1242,84 @@ export function checkBudget(): string | null {
   return null;
 }
 
+// --- Savings tracking ---
+// Tracks how much money was saved by routing to cheaper models.
+// Compares actual cost against the most expensive provider configured for the same slot.
+
+export function recordSavings(actualCost: number, maxPossibleCost: number): void {
+  if (maxPossibleCost > actualCost) {
+    totalSavings += maxPossibleCost - actualCost;
+  }
+}
+
+export function getTotalSavings(): number {
+  return parseFloat(totalSavings.toFixed(4));
+}
+
+// --- Spend history & model breakdown helpers ---
+// Parses cc-spend-*.json files to build per-day and per-model aggregates.
+
+export function getSpendHistory(): Array<{ date: string; total: number; sessions: number }> {
+  const history: Array<{ date: string; total: number; sessions: number }> = [];
+  try {
+    if (!fs.existsSync(spendFile)) return history;
+    const raw = fs.readFileSync(spendFile, 'utf-8');
+    const data = JSON.parse(raw);
+    const daily = (data.daily as Record<string, unknown>) || {};
+    const now = new Date();
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      const ds = dateISO(d);
+      const entry = daily[ds];
+      if (typeof entry === 'object' && entry !== null) {
+        const e = entry as { total?: number };
+        history.push({ date: ds, total: e.total ?? 0, sessions: 1 });
+      } else if (typeof entry === 'number') {
+        history.push({ date: ds, total: entry, sessions: 1 });
+      } else {
+        history.push({ date: ds, total: 0, sessions: 0 });
+      }
+    }
+  } catch (_) {
+    /* non-fatal */
+  }
+  return history;
+}
+
+export function getModelBreakdown(): Array<{ model: string; tokens: number; cost: number }> {
+  const map = new Map<string, { tokens: number; cost: number }>();
+  try {
+    const ccSpendDir = path.join(os.homedir(), '.deepclaude');
+    if (!fs.existsSync(ccSpendDir)) return [];
+    const files = fs.readdirSync(ccSpendDir);
+    for (const f of files) {
+      if (!f.startsWith('cc-spend-') || !f.endsWith('.json')) continue;
+      try {
+        const raw = fs.readFileSync(path.join(ccSpendDir, f), 'utf-8');
+        const data = JSON.parse(raw);
+        if (data.byModel && typeof data.byModel === 'object') {
+          for (const [model, entry] of Object.entries(
+            data.byModel as Record<string, { cost?: number; tokens?: number }>,
+          )) {
+            const existing = map.get(model) || { tokens: 0, cost: 0 };
+            existing.tokens += entry.tokens || 0;
+            existing.cost += entry.cost || 0;
+            map.set(model, existing);
+          }
+        }
+      } catch (_) {
+        /* skip corrupt files */
+      }
+    }
+  } catch (_) {
+    /* non-fatal */
+  }
+  return Array.from(map.entries())
+    .map(([model, v]) => ({ model, tokens: v.tokens, cost: parseFloat(v.cost.toFixed(4)) }))
+    .sort((a, b) => b.cost - a.cost);
+}
+
 // Testing support
 export function setSpendFilePath(p: string): void {
   spendFile = p;
@@ -1238,6 +1338,7 @@ export function _resetBudgetState(): void {
   sessionDailyBudget = 0;
   sessionTotal = 0;
   runningTotal = 0;
+  totalSavings = 0;
   dailyAccumulator = 0;
   lastDailyRead = 0;
   cachedDailySpend = 0;

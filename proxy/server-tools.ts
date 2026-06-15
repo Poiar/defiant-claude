@@ -271,12 +271,22 @@ export function preprocessServerTools(
 
   // Step 3: Strip tool_choice for providers that reject it with thinking.
   // Encoded in ProviderConstraints.forbidsToolChoiceWithThinking.
-  // For backward compatibility (no constraints passed), strip unconditionally
-  // as was the historical behavior for all non-Anthropic providers.
+  //
+  // EXCEPTION: when the request contains web search/fetch tools, keep
+  // tool_choice so the model is forced to invoke the tool.  Without it,
+  // DeepSeek responds with text instead of tool_use and populateToolResults
+  // never fires.  The caller must skip thinking injection when this flag
+  // is set — see the hadWebSearch/hadWebFetch return values.
   if (constraints && 'tool_choice' in body) {
     if (constraints.forbidsToolChoiceWithThinking) {
-      delete body.tool_choice;
-      modified = true;
+      if (hadWebSearch || hadWebFetch) {
+        // Keep tool_choice — web search needs it to force the tool invocation.
+        // modified=true signals the caller to skip thinking injection.
+        modified = true;
+      } else {
+        delete body.tool_choice;
+        modified = true;
+      }
     }
   } else if ('tool_choice' in body) {
     // Legacy: no constraints = strip tool_choice unconditionally

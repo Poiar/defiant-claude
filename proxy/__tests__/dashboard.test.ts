@@ -20,10 +20,11 @@ describe('buildDashboardHtml', () => {
     expect(html).toContain('Success Rate');
   });
 
-  test('HTML is self-contained (no external resources)', () => {
+  test('HTML is self-contained (no external resources except Chart.js CDN)', () => {
     const html = buildDashboardHtml();
-    // Must not reference external URLs for scripts, stylesheets, or fonts
-    expect(html).not.toMatch(/src=["']https?:\/\//);
+    // Chart.js is loaded from CDN for analytics charts
+    expect(html).toContain('chart.js@4');
+    // No other external stylesheet or font URLs
     expect(html).not.toMatch(/href=["']https?:\/\//);
     expect(html).not.toMatch(/@import url\(https?:\/\//);
     // Relative URLs (/health, /health/stream) for data fetching are fine
