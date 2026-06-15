@@ -1,6 +1,6 @@
 ---
 name: safe-proxy-restart
-description: "Hot-swap: start new proxy, old forwards for 10min then dies. Never kill."
+description: "Hot-swap: start new proxy, old forwards until connections drain. Never kill."
 metadata: 
   node_type: memory
   type: project
@@ -9,12 +9,16 @@ metadata:
 
 ## CRITICAL: NEVER kill the proxy from within CC
 
-Killing the proxy = killing your session. Verified twice.
+Killing the proxy = killing your session. Verified multiple times.
 
-## Per-session proxy design
+## Hot-swap mechanism
 
-Each `deepclaude` invocation starts its own isolated proxy on a unique port. The proxy lives only as long as the CC session — when CC exits, the proxy is killed.
+1. Write new port to `~/.deepclaude/next-proxy.port`
+2. Start new proxy on that port (detached, with `--port <NEW_PORT>`)
+3. Old proxy polls every 5s, detects signal, verifies new proxy `/health`
+4. Old proxy enters forwarding mode — all requests proxy to new instance
+5. Old proxy exits when `activeConnections` reaches 0 (no timer needed)
 
-**To "restart" the proxy:** exit CC and re-run `deepclaude`. The new session gets a fresh proxy.
+**The old proxy dies naturally when all clients disconnect — no 10-minute timer.**
 
 **Related:** [[project-never-kill-proxy]]

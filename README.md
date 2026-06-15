@@ -36,6 +36,7 @@ DeepClaude runs a local HTTP routing proxy that intercepts Claude Code's Anthrop
 | `probe.ts` | Single-provider health probe with auth failure detection and latency measurement |
 | `prompt-router.ts` | Request prompt complexity classification (TRIVIAL/CHAT/CODE/TOOL/HEAVY) for cost-based routing |
 | `protocol-translate.ts` | Bidirectional Anthropic Messages ↔ OpenAI Chat Completions format translation (only active for OpenAI-format providers — `ds` bypasses this entirely via DeepSeek's `/anthropic` endpoint) |
+| `protocol-types.ts` | (undocumented) |
 | `rate-limiter.ts` | Per-IP fixed-window rate limiter with LRU eviction |
 | `reasoning-cache.ts` | OpenAI-format reasoning content cache with session-keyed LRU and re-injection — same UUID-keyed architecture as thinking-cache.ts, no conversation fingerprint (only for OpenAI-format providers; `ds` handles this natively) |
 | `request-log.ts` | Opt-in request logging to `~/.deepclaude/requests.log` (`--log-all` or `DEEPCLAUDE_LOG_ALL_REQUESTS=true`) |
@@ -82,7 +83,7 @@ All business logic — config resolution, routes JSON construction, env var comp
 ### Test coverage
 
 <!-- AUTO:test-coverage -->
-1233 tests across 43 test files covering all proxy modules — transport errors, concurrency, LRU cache, provider registry validation, error codes, routing, stats, forwarding, server tools, config, protocol translation, thinking cache (including fingerprint-free cross-turn regression tests), reasoning cache, header sanitization, truncation, crypto, friendly errors, SSRF validation, dead stream detection, startup checks, and stream metrics. Run with `npm test`.
+1396 tests across 46 test files covering all proxy modules — transport errors, concurrency, LRU cache, provider registry validation, error codes, routing, stats, forwarding, server tools, config, protocol translation, thinking cache (including fingerprint-free cross-turn regression tests), reasoning cache, header sanitization, truncation, crypto, friendly errors, SSRF validation, dead stream detection, startup checks, and stream metrics. Run with `npm test`.
 <!-- /AUTO:test-coverage -->
 
 ### Pre-commit
@@ -173,11 +174,8 @@ deepclaude ds:deepseek-v4-pro ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-a
 --benchmark     Latency test across all configs (parallel via background jobs)
 --models        List all available model IDs (for /model in CC)
 --remote        Browser-based remote control (starts proxy automatically)
---persist       Keep proxy alive after CC exits
---switch CONFIG  Switch a running persistent proxy to a different config (use with --persist)
 --set-slot SLOT MODEL  Override a slot (opus/sonnet/haiku/subagent/fable)
 --subagent-model MODEL  Set a dedicated subagent model (e.g., oc:big-pickle)
---stop-proxy    Kill the persistent proxy
 --probe [FILE]  Test each provider with a minimal prompt (latency, tokens, auth)
 --dry-run [FILE] Show resolved routing table without starting the proxy
 --what-if       Alias for --dry-run
@@ -308,25 +306,26 @@ Models at 1M tokens get `CLAUDE_CODE_AUTO_COMPACT_WINDOW` set (clamped to 1,000,
 
 DeepSeek V4 models use a `compactionWindow` of 950K tokens to preserve automatic disk cache hits. Compaction rewrites conversation history, which invalidates the prefix and forces an expensive cache miss ($0.435/M). By delaying compaction to 950K (near the 1M wall), most requests stay within the same prefix and hit the disk cache at $0.0036/M — a 50× discount. The cache persists for hours to days and requires no configuration.
 
-## Persistent proxy workflow
+## Per-session proxy design
 
-The proxy routes each model name to the right provider. It runs on `127.0.0.1` with a dynamic port.
+Each `deepclaude` invocation starts its own isolated proxy on a unique port. The proxy lives only as long as the CC session — when CC exits, the proxy is killed. There is no shared proxy, no PID lock, and no `--persist`/`--switch`/`--stop-proxy` flags.
+
+**Hot-swap:** To restart the proxy mid-session, write the new port to `~/.deepclaude/next-proxy.port`, start a new proxy on that port (detached, with `--port <N>`), and the old proxy detects the signal and enters forwarding mode. It forwards all traffic to the new proxy and exits when all client connections drain. Then restart CC to pick up the new proxy.
 
 ```
-deepclaude -b ds+oc --persist      # Start with proxy, keep it alive after exit
+deepclaude                                    # Starts isolated proxy on a random port
 
-# Mid-session, from another terminal or within CC via /model:
-deepclaude --switch fw             # Switch everything to Fireworks
-deepclaude --set-slot haiku oc:big-pickle  # Change just the haiku slot
+# Mid-session slot/model changes (use in CC):
+/model oc:big-pickle                         # Switch opus to OpenCode
+/model or:z-ai/glm-4.5-air:free              # Switch opus to a free OR model
 
-deepclaude --models                # List all available models
-deepclaude --stop-proxy            # Kill the proxy when done
+deepclaude --set-slot haiku oc:big-pickle    # Change just the haiku slot (from another terminal)
+deepclaude --models                          # List all available models
 ```
 
 State files live in `~/.deepclaude/`:
 <!-- AUTO:state-files -->
-- `proxy.json` — PID, port, routes file
-- `proxy.pid` — PID lock file (prevents dual-instance state corruption)
+- `proxy.port` — port number of most recently started proxy (diagnostics)
 - `current-routes.json` — active routing table (reloaded on every request)
 - `slot-overrides.json` — per-slot model overrides
 - `thinking-overrides.json` — thinking mode overrides (--no-thinking / --thinking-budget)
@@ -345,7 +344,7 @@ deepclaude --remote ds:deepseek-v4-pro oc:big-pickle  # Ad-hoc
 deepclaude --remote -b anthropic    # Anthropic direct
 ```
 
-Starts the routing proxy, prints a `claude.ai/code/session_...` URL. Works on phone, tablet, any browser. Proxy auto-stops on exit (unless `--persist`).
+Starts the routing proxy, prints a `claude.ai/code/session_...` URL. Works on phone, tablet, any browser. Proxy auto-stops on exit.
 
 ## Doctor
 
@@ -400,7 +399,6 @@ Tip: `deepclaude --install-statusline` automates the manual setup above.
 | `DEEPCLAUDE_LOG_ALL_REQUESTS` | Log all requests to `~/.deepclaude/requests.log` (`true` to enable) |
 | `DEEPCLAUDE_LOG_LEVEL` | Set log level (`debug` for verbose output; defaults to `info`) |
 | `DEEPCLAUDE_MAX_CONCURRENT` | Max concurrent upstream requests for main slots (default: `25`) |
-| `DEEPCLAUDE_NO_PID_LOCK` | Skip PID file locking at startup (`1` to skip; used by integration tests) |
 | `DEEPCLAUDE_SKIP_STARTUP_CHECK` | Skip provider health checks on proxy startup (`true` to skip) |
 | `DEEPCLAUDE_STREAM_DEADLINE_MS` | Hard wall-clock cap on total streaming duration in ms (default: `300000`) |
 | `DEEPCLAUDE_STREAM_HEARTBEAT_MS` | Stream silence timeout in ms before heartbeat triggers (default: `180000`) |
