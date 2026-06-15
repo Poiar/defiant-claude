@@ -682,7 +682,12 @@ export function hasPendingToolResult(messages: Message[]): PendingToolResult {
     for (const block of content) {
       if (
         block.type === 'tool_use' &&
-        (block.name === 'web_search' || block.name === 'web_fetch')
+        (block.name === 'web_search' ||
+          block.name === 'web_fetch' ||
+          (typeof block.name === 'string' &&
+            (block.name.startsWith('web_search_') ||
+              block.name.startsWith('web_fetch_') ||
+              block.name.startsWith('url_fetch_'))))
       ) {
         toolUseIds.set(block.id!, { name: block.name, input: block.input || {} });
       }
@@ -761,7 +766,8 @@ export async function populateToolResults(messages: Message[]): Promise<boolean>
   if (!emptyResults || emptyResults.length === 0) return false;
 
   for (const { block, toolInfo } of emptyResults) {
-    if (toolInfo.name === 'web_search') {
+    const name = toolInfo.name || '';
+    if (name === 'web_search' || name.startsWith('web_search_')) {
       const query = (toolInfo.input.query ||
         toolInfo.input.q ||
         toolInfo.input.search ||
@@ -770,7 +776,11 @@ export async function populateToolResults(messages: Message[]): Promise<boolean>
         const result = await webSearch(query);
         block.content = result;
       }
-    } else if (toolInfo.name === 'web_fetch') {
+    } else if (
+      name === 'web_fetch' ||
+      name.startsWith('web_fetch_') ||
+      name.startsWith('url_fetch_')
+    ) {
       const url = (toolInfo.input.url || toolInfo.input.uri || '') as string;
       if (url) {
         const result = await webFetch(url);
