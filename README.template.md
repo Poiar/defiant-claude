@@ -163,19 +163,21 @@ Models at 1M tokens get `CLAUDE_CODE_AUTO_COMPACT_WINDOW` set (clamped to 1,000,
 
 DeepSeek V4 models use a `compactionWindow` of 950K tokens to preserve automatic disk cache hits. Compaction rewrites conversation history, which invalidates the prefix and forces an expensive cache miss ($0.435/M). By delaying compaction to 950K (near the 1M wall), most requests stay within the same prefix and hit the disk cache at $0.0036/M — a 50× discount. The cache persists for hours to days and requires no configuration.
 
-## Persistent proxy workflow
+## Per-session proxy design
 
-The proxy routes each model name to the right provider. It runs on `127.0.0.1` with a dynamic port.
+Each `deepclaude` invocation starts its own isolated proxy on a unique port. The proxy lives only as long as the CC session — when CC exits, the proxy is killed. There is no shared proxy, no PID lock, and no `--persist`/`--switch`/`--stop-proxy` flags.
+
+**Hot-swap:** To restart the proxy mid-session, write the new port to `~/.deepclaude/next-proxy.port`, start a new proxy on that port (detached, with `--port <N>`), and the old proxy detects the signal and enters forwarding mode. It forwards all traffic to the new proxy and exits when all client connections drain. Then restart CC to pick up the new proxy.
 
 ```
-deepclaude -b ds+oc --persist      # Start with proxy, keep it alive after exit
+deepclaude                                    # Starts isolated proxy on a random port
 
-# Mid-session, from another terminal or within CC via /model:
-deepclaude --switch fw             # Switch everything to Fireworks
-deepclaude --set-slot haiku oc:big-pickle  # Change just the haiku slot
+# Mid-session slot/model changes (use in CC):
+/model oc:big-pickle                         # Switch opus to OpenCode
+/model or:z-ai/glm-4.5-air:free              # Switch opus to a free OR model
 
-deepclaude --models                # List all available models
-deepclaude --stop-proxy            # Kill the proxy when done
+deepclaude --set-slot haiku oc:big-pickle    # Change just the haiku slot (from another terminal)
+deepclaude --models                          # List all available models
 ```
 
 State files live in `~/.deepclaude/`:
@@ -191,7 +193,7 @@ deepclaude --remote ds:deepseek-v4-pro oc:big-pickle  # Ad-hoc
 deepclaude --remote -b anthropic    # Anthropic direct
 ```
 
-Starts the routing proxy, prints a `claude.ai/code/session_...` URL. Works on phone, tablet, any browser. Proxy auto-stops on exit (unless `--persist`).
+Starts the routing proxy, prints a `claude.ai/code/session_...` URL. Works on phone, tablet, any browser. Proxy auto-stops on exit.
 
 ## Doctor
 

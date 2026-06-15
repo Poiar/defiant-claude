@@ -293,6 +293,8 @@ if (probeIdx >= 2) {
   // The ~/.deepclaude directory is still used for user config files
   // (slot-overrides.json, thinking-overrides.json) but proxy.pid and
   // proxy.json session state are no longer written.
+  const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+  const deepclaudeDir = homeDir + '/.deepclaude';
 
   // Extract display names from provider registry for the dashboard
   let providerDisplayNames: Record<string, string> | undefined;
@@ -358,6 +360,13 @@ if (probeIdx >= 2) {
   // --- HTTP Server ---
 
   let activeConnections = 0;
+
+  // Track TCP connections — single-tenant proxy: no connections = no reason to live.
+  // Grace period avoids premature death from transient disconnects between API calls.
+  let tcpConnections = 0;
+  let hadTcpClient = false;
+  let drainTimer: ReturnType<typeof setTimeout> | null = null;
+  const DRAIN_GRACE_MS = 30_000;
 
   const server = http.createServer((req: http.IncomingMessage, res: http.ServerResponse) => {
     req.setTimeout(30000); // Prevent slow-body trickle from starving concurrency slots
@@ -497,6 +506,7 @@ if (probeIdx >= 2) {
     req.on('end', () => {
       activeConnections++;
       setActiveConnections(activeConnections);
+      hadTcpClient = true; // Mark that a real client connected (not just health checks)
       if (body === null) {
         activeConnections--;
         setActiveConnections(activeConnections);
@@ -1784,7 +1794,36 @@ if (probeIdx >= 2) {
         .finally(() => {
           activeConnections--;
           setActiveConnections(activeConnections);
+          checkDrain();
         });
+    });
+  });
+
+  // Called whenever a connection closes OR activeConnections drops — both
+  // can happen in either order (race between socket close and handler finally).
+  // Only starts the timer if BOTH conditions are met.
+  function checkDrain(): void {
+    if (hadTcpClient && tcpConnections <= 0 && activeConnections <= 0) {
+      if (drainTimer) return; // timer already running
+      drainTimer = setTimeout(() => {
+        if (tcpConnections <= 0 && activeConnections <= 0) {
+          log.info(null, 'All client connections drained — shutting down');
+          process.exit(0);
+        }
+        drainTimer = null;
+      }, DRAIN_GRACE_MS).unref();
+    }
+  }
+
+  server.on('connection', (socket) => {
+    tcpConnections++;
+    if (drainTimer) {
+      clearTimeout(drainTimer);
+      drainTimer = null;
+    }
+    socket.on('close', () => {
+      tcpConnections--;
+      checkDrain();
     });
   });
 
@@ -1838,17 +1877,110 @@ if (probeIdx >= 2) {
       server.listen(parsed.port || 0, '127.0.0.1', () => {
         const port = (server.address() as { port: number }).port;
 
-        // Hot-swap mechanism removed — each session runs its own isolated proxy.
-        // To restart a proxy, exit CC and re-run deepclaude.
-        // Write a simple port file for diagnostics (--stats, --health).
-        // Each proxy overwrites this — it's best-effort, not a lock.
+        // --- Hot-swap: if we were started as the replacement, clean up the signal ---
+        const nextPortFile = deepclaudeDir + '/next-proxy.port';
+        try {
+          if (fs.existsSync(nextPortFile)) {
+            const nextPort = parseInt(fs.readFileSync(nextPortFile, 'utf-8').trim(), 10);
+            if (nextPort === port) {
+              fs.unlinkSync(nextPortFile);
+              log.info(
+                null,
+                'Hot-swap: running as replacement on port ' + port + ' — signal file removed',
+              );
+            }
+          }
+        } catch (_) {
+          /* ignore */
+        }
+
+        // Write port file for diagnostics (--stats, --health)
         {
-          const homeDir = process.env.HOME || process.env.USERPROFILE || '';
-          const portFile = homeDir + '/.deepclaude/proxy.port';
+          const portFile = deepclaudeDir + '/proxy.port';
           try {
             fs.writeFileSync(portFile, String(port));
           } catch (_) {}
         }
+
+        // --- Hot-swap superseded check: periodically look for replacement signal ---
+        // When another proxy is started with next-proxy.port pointing to a different
+        // port, we enter forwarding mode: all requests proxy to the new instance.
+        // We exit when all active connections have drained (no timer needed).
+        let superseded = false;
+        let forwardedConnections = 0;
+
+        const supersedeInterval = setInterval(() => {
+          if (superseded) return;
+          try {
+            if (fs.existsSync(nextPortFile)) {
+              const targetPort = parseInt(fs.readFileSync(nextPortFile, 'utf-8').trim(), 10);
+              if (targetPort && targetPort !== port && !isNaN(targetPort)) {
+                // Check the new proxy is actually alive
+                const check = http.get(
+                  'http://127.0.0.1:' + targetPort + '/health',
+                  { timeout: 3000 },
+                  () => {
+                    superseded = true;
+                    clearInterval(supersedeInterval);
+                    log.info(
+                      null,
+                      'Hot-swap: superseded by port ' + targetPort + ' — entering forwarding mode',
+                    );
+
+                    // Forward all requests to the new proxy
+                    server.removeAllListeners('request');
+                    server.on(
+                      'request',
+                      (clientReq: http.IncomingMessage, clientRes: http.ServerResponse) => {
+                        forwardedConnections++;
+                        const opts: http.RequestOptions = {
+                          hostname: '127.0.0.1',
+                          port: targetPort,
+                          path: clientReq.url,
+                          method: clientReq.method,
+                          headers: { ...clientReq.headers, host: '127.0.0.1:' + targetPort },
+                        };
+                        const upstream = http.request(opts, (upstreamRes) => {
+                          clientRes.writeHead(upstreamRes.statusCode || 200, upstreamRes.headers);
+                          upstreamRes.pipe(clientRes);
+                        });
+                        upstream.on('error', () => {
+                          if (!clientRes.headersSent) {
+                            clientRes.writeHead(502);
+                            clientRes.end(
+                              'Proxy migration in progress — restart CC to pick up new proxy on port ' +
+                                targetPort,
+                            );
+                          }
+                        });
+                        clientReq.pipe(upstream);
+                        clientRes.on('close', () => {
+                          forwardedConnections--;
+                          if (activeConnections <= 0 && forwardedConnections <= 0) {
+                            log.info(null, 'Hot-swap: no active connections — shutting down');
+                            process.exit(0);
+                          }
+                        });
+                      },
+                    );
+
+                    // Check immediately in case all connections already drained
+                    if (activeConnections <= 0 && forwardedConnections <= 0) {
+                      log.info(null, 'Hot-swap: no active connections — shutting down immediately');
+                      process.exit(0);
+                    }
+                  },
+                );
+                check.on('error', () => {
+                  /* new proxy not ready yet, keep checking */
+                });
+              }
+            }
+          } catch (_) {
+            /* ignore */
+          }
+        }, 5000);
+        supersedeInterval.unref();
         process.stdout.write('PORT:' + String(port));
         if (hasDashboard) {
           const url = 'http://127.0.0.1:' + port + '/dashboard';
@@ -1886,8 +2018,7 @@ if (probeIdx >= 2) {
     );
     // Clean up port file written at startup
     {
-      const homeDir = process.env.HOME || process.env.USERPROFILE || '';
-      const portFile = homeDir + '/.deepclaude/proxy.port';
+      const portFile = deepclaudeDir + '/proxy.port';
       try {
         if (fs.existsSync(portFile)) fs.unlinkSync(portFile);
       } catch (_) {}
