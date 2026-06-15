@@ -221,12 +221,15 @@ async function main() {
         parts.push(fg(120, 120, 120) + '$' + Number(todaySpend).toFixed(2) + reset);
       }
       if (parts.length > 0) spendGroup = parts.join(' ');
-      if (proxyPort > 0)
-        spendGroup = spendGroup
-          ? spendGroup + ' ' + fg(90, 90, 90) + proxyPort + reset
-          : fg(90, 90, 90) + proxyPort + reset;
     }
   } catch (_) {}
+
+  // Port display — always show when known, independent of spend data
+  if (proxyPort > 0 && !spendGroup) {
+    spendGroup = fg(90, 90, 90) + proxyPort + reset;
+  } else if (proxyPort > 0) {
+    spendGroup = spendGroup + ' ' + fg(90, 90, 90) + proxyPort + reset;
+  }
 
   // ── Await health check result ──────────────────────────────
   const health = await healthPromise;

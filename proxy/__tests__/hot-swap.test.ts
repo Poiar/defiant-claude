@@ -425,6 +425,7 @@ describe('Hot-swap mechanism', () => {
         // Mark old proxy as having had a real client
         try {
           await request(oldPort, 'POST', '/v1/messages', {
+            headers: { 'content-type': 'application/json', connection: 'close' },
             body: JSON.stringify({
               model: 'fake',
               messages: [{ role: 'user', content: 'hi' }],
@@ -439,8 +440,8 @@ describe('Hot-swap mechanism', () => {
         // Signal the old proxy to enter forwarding mode
         fs.writeFileSync(NEXT_PORT_FILE, String(newPort));
 
-        // Wait for old proxy to enter forwarding mode + drain
-        await new Promise((r) => setTimeout(r, 15000));
+        // Wait for old proxy to detect signal (5s poll) + 30s drain grace + buffer
+        await new Promise((r) => setTimeout(r, 40000));
 
         // Old proxy should have exited (all connections drained)
         expect(oldProxy.exitCode).not.toBe(null);
