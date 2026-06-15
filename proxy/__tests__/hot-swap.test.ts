@@ -283,7 +283,7 @@ describe('Hot-swap mechanism', () => {
       }
     });
 
-    it('exits after a real API client disconnects', async () => {
+    it('does NOT auto-exit when client disconnects (only superseded proxies drain)', async () => {
       const port = 56000 + Math.floor(Math.random() * 1000);
       const { process: proxyProc, portPromise } = startProxy(port, routesFile, overridesFile);
 
@@ -291,9 +291,7 @@ describe('Hot-swap mechanism', () => {
         await portPromise;
         await new Promise((r) => setTimeout(r, 500));
 
-        // Send a real API request (this sets hadTcpClient = true).
-        // Must include content-type: application/json or the proxy rejects
-        // synchronously with 415 before req.on('end') fires.
+        // Send a real API request (sets hadTcpClient = true).
         // Connection: close forces the TCP socket to fully close afterwards.
         try {
           await request(port, 'POST', '/v1/messages', {
@@ -309,13 +307,14 @@ describe('Hot-swap mechanism', () => {
           // Expected to fail — no real provider configured
         }
 
-        // Wait for the 30s drain grace + buffer for socket teardown
+        // Wait past the drain grace period — proxy should STILL be alive
+        // because checkDrain only fires for superseded (forwarding) proxies.
         await new Promise((r) => setTimeout(r, 35000));
 
-        // Proxy should have exited on its own
-        expect(proxyProc.exitCode).not.toBe(null);
+        // Normal proxies never auto-exit — only forwarding proxies drain.
+        expect(proxyProc.exitCode).toBe(null);
       } finally {
-        killProxy(proxyProc); // Safety — might already be dead
+        killProxy(proxyProc);
       }
     });
   });
