@@ -748,9 +748,8 @@ show_models() {
     fi
 
     echo ""
-    echo "  Use /model providerKey:modelId in Claude Code to switch opus."
+    echo "  Use /model providerKey:modelId in Claude Code to switch opus or fable."
     echo "  Use deepclaude --set-slot SLOT MODEL to switch sonnet/haiku/subagent."
-    echo "  Use deepclaude --switch CONFIG to change all slot mappings at once."
     echo ""
 }
 
@@ -1116,8 +1115,7 @@ while [[ $# -gt 0 ]]; do
             esac
             shift 2 ;;
         --persist|--switch|--stop-proxy)
-            echo "NOTE: $1 is removed. Each session now runs its own isolated proxy." >&2
-            shift ;;
+            echo "ERROR: $1 is not a valid flag. Use --help for available flags." >&2; exit 1 ;;
         --status)
             ACTION="status"; shift ;;
         --stats)
@@ -1271,13 +1269,12 @@ case "$ACTION" in
     status)     show_status ;;
     stats)      show_stats ;;
     health)
-        local state_file="${DEEPCLAUDE_DIR}/proxy.json"
-        if [[ ! -f "$state_file" ]]; then
-            # Hook-friendly: exit 0 so SessionStart hooks don't error on clean state.
-            # Claude Code hooks treat any non-zero exit as a failure.
+        local port_file="${DEEPCLAUDE_DIR}/proxy.port"
+        if [[ ! -f "$port_file" ]]; then
+            echo "No proxy.port found — is a proxy running?" >&2
             exit 0
         fi
-        local port; port=$(jq -r '.port' "$state_file" 2>/dev/null)
+        local port; port=$(cat "$port_file" 2>/dev/null | tr -d '[:space:]')
         local health; health=$(curl -sf "http://127.0.0.1:${port}/health" 2>/dev/null || true)
         if [[ -z "$health" ]]; then echo "Proxy not responding on port $port"; exit 1; fi
         local up down; up=$(echo "$health" | jq '[.providers // {} | to_entries[] | select(.value.circuitBreaker != "OPEN")] | length' 2>/dev/null || echo 0)
