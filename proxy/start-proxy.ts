@@ -368,7 +368,9 @@ if (probeIdx >= 2) {
   let hadTcpClient = false;
   let drainTimer: ReturnType<typeof setTimeout> | null = null;
   let superseded = false; // Set to true when entering forwarding mode
-  const DRAIN_GRACE_MS = 30_000;
+  const DRAIN_GRACE_MS = process.env.DEEPCLAUDE_DRAIN_GRACE_MS
+    ? parseInt(process.env.DEEPCLAUDE_DRAIN_GRACE_MS, 10)
+    : 30_000;
 
   const server = http.createServer((req: http.IncomingMessage, res: http.ServerResponse) => {
     req.setTimeout(30000); // Prevent slow-body trickle from starving concurrency slots

@@ -23,14 +23,14 @@ import type {
 describe('ProviderConstraints', () => {
   const providers = Object.entries(PROVIDER_CONSTRAINTS);
 
-  test('all 16 providers are configured', () => {
-    expect(Object.keys(PROVIDER_CONSTRAINTS).length).toBe(16);
+  test('all 17 providers are configured', () => {
+    expect(Object.keys(PROVIDER_CONSTRAINTS).length).toBe(17);
   });
 
   test.each(providers)('%s has required fields', (_key, c: ProviderConstraints) => {
     expect(typeof c.key).toBe('string');
     expect(c.key.length).toBeGreaterThan(0);
-    expect(['anthropic', 'openai']).toContain(c.format);
+    expect(['anthropic', 'openai', 'gemini']).toContain(c.format);
     expect(typeof c.nativeServerTools).toBe('boolean');
     expect(typeof c.nativeServerToolUse).toBe('boolean');
     expect(typeof c.requiresModelRewrite).toBe('boolean');

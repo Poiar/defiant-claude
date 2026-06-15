@@ -15,9 +15,11 @@ const IS_WIN = process.platform === 'win32';
 const shellSafe = (cmd: string, args: string[]): [string, string[]] =>
   IS_WIN ? [`${cmd} ${args.join(' ')}`, []] : [cmd, args];
 
-// These tests spawn real proxies and wait for TCP drain timers (30s grace).
-// 60s per test is generous but safe.
-jest.setTimeout(60_000);
+// These tests spawn real proxies and wait for TCP drain timers.
+// DEEPCLAUDE_DRAIN_GRACE_MS shortens the 30s drain grace to 5s in test mode.
+// Full suite runs 47 suites concurrently — under load, proxy startup + drain
+// waits need generous headroom.
+jest.setTimeout(120_000);
 
 // CRITICAL: use an isolated DEEPCLAUDE_DIR so hot-swap signal files
 // (next-proxy.port) never leak to real running proxies. Without this,
@@ -100,14 +102,19 @@ function startProxy(
     {
       cwd: path.resolve(__dirname, '../..'),
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env },
+      env: {
+        ...process.env,
+        DEEPCLAUDE_SKIP_STARTUP_CHECK: 'true',
+        DEEPCLAUDE_NO_PID_LOCK: '1',
+        DEEPCLAUDE_DRAIN_GRACE_MS: '5000',
+      },
       ...(IS_WIN ? { shell: true } : {}),
     },
   );
 
   const portPromise = new Promise<number>((resolve, reject) => {
     let out = '';
-    const timer = setTimeout(() => reject(new Error('Proxy did not start within 25s')), 25000);
+    const timer = setTimeout(() => reject(new Error('Proxy did not start within 40s')), 40000);
     proxyProc.stdout!.on('data', (chunk: Buffer) => {
       out += chunk.toString();
       const m = out.match(/PORT:(\d+)/);
@@ -167,6 +174,9 @@ afterAll(() => {
 describe('Hot-swap mechanism', () => {
   let routesFile: string;
   let overridesFile: string;
+  // Deterministic base port to prevent collisions under load.
+  // Offset by PID to avoid conflicts between concurrent test processes.
+  let portCounter = 59000 + (process.pid % 100);
 
   beforeEach(() => {
     routesFile = path.join(
@@ -204,7 +214,7 @@ describe('Hot-swap mechanism', () => {
         if (fs.existsSync(PORT_FILE)) savedPort = fs.readFileSync(PORT_FILE, 'utf-8').trim();
       } catch {}
 
-      const port = 56000 + Math.floor(Math.random() * 1000);
+      const port = portCounter++;
       const { process: proxyProc, portPromise } = startProxy(port, routesFile, overridesFile);
 
       try {
@@ -225,7 +235,7 @@ describe('Hot-swap mechanism', () => {
 
   describe('signal file cleanup', () => {
     it('deletes next-proxy.port when started as the replacement', async () => {
-      const port = 56000 + Math.floor(Math.random() * 1000);
+      const port = portCounter++;
 
       // Write the signal file BEFORE starting the proxy
       fs.mkdirSync(TEST_DEEPCLAUDE_DIR, { recursive: true });
@@ -245,8 +255,8 @@ describe('Hot-swap mechanism', () => {
     });
 
     it('does NOT delete next-proxy.port when started on a different port', async () => {
-      const signalPort = 56000 + Math.floor(Math.random() * 1000);
-      const actualPort = signalPort + 1;
+      const signalPort = portCounter++;
+      const actualPort = portCounter++;
 
       // Write the signal file for a different port
       fs.mkdirSync(TEST_DEEPCLAUDE_DIR, { recursive: true });
@@ -268,7 +278,7 @@ describe('Hot-swap mechanism', () => {
 
   describe('TCP connection tracking', () => {
     it('stays alive after health checks (hadTcpClient not set)', async () => {
-      const port = 56000 + Math.floor(Math.random() * 1000);
+      const port = portCounter++;
       const { process: proxyProc, portPromise } = startProxy(port, routesFile, overridesFile);
 
       try {
@@ -279,8 +289,8 @@ describe('Hot-swap mechanism', () => {
         const healthy = await healthCheck(port);
         expect(healthy).toBe(true);
 
-        // Wait past the 5s drain grace period
-        await new Promise((r) => setTimeout(r, 6000));
+        // Wait past the 5s drain grace period (DEEPCLAUDE_DRAIN_GRACE_MS=5000)
+        await new Promise((r) => setTimeout(r, 8000));
 
         // Proxy should still be alive (exitCode is null — still running)
         expect(proxyProc.exitCode).toBe(null);
@@ -290,7 +300,7 @@ describe('Hot-swap mechanism', () => {
     });
 
     it('does NOT auto-exit when client disconnects (only superseded proxies drain)', async () => {
-      const port = 56000 + Math.floor(Math.random() * 1000);
+      const port = portCounter++;
       const { process: proxyProc, portPromise } = startProxy(port, routesFile, overridesFile);
 
       try {
@@ -313,9 +323,9 @@ describe('Hot-swap mechanism', () => {
           // Expected to fail — no real provider configured
         }
 
-        // Wait past the drain grace period — proxy should STILL be alive
+        // Wait past the drain grace period (5s) — proxy should STILL be alive
         // because checkDrain only fires for superseded (forwarding) proxies.
-        await new Promise((r) => setTimeout(r, 35000));
+        await new Promise((r) => setTimeout(r, 10000));
 
         // Normal proxies never auto-exit — only forwarding proxies drain.
         expect(proxyProc.exitCode).toBe(null);
@@ -327,8 +337,8 @@ describe('Hot-swap mechanism', () => {
 
   describe('hot-swap forwarding', () => {
     it('old proxy enters forwarding mode when next-proxy.port appears', async () => {
-      const oldPort = 56000 + Math.floor(Math.random() * 1000);
-      const newPort = oldPort + 1;
+      const oldPort = portCounter++;
+      const newPort = portCounter++;
 
       // Start the "old" proxy
       const { process: oldProxy, portPromise: oldPortPromise } = startProxy(
@@ -413,8 +423,8 @@ describe('Hot-swap mechanism', () => {
         if (fs.existsSync(PORT_FILE)) fs.unlinkSync(PORT_FILE);
       } catch {}
 
-      const oldPort = 56000 + Math.floor(Math.random() * 1000);
-      const newPort = oldPort + 1;
+      const oldPort = portCounter++;
+      const newPort = portCounter++;
 
       const { process: oldProxy, portPromise: oldPortPromise } = startProxy(
         oldPort,
@@ -463,8 +473,8 @@ describe('Hot-swap mechanism', () => {
         // Signal the old proxy to enter forwarding mode
         fs.writeFileSync(NEXT_PORT_FILE, String(newPort));
 
-        // Wait for old proxy to detect signal (5s poll) + 30s drain grace + buffer
-        await new Promise((r) => setTimeout(r, 40000));
+        // Wait for old proxy to detect signal (5s poll) + 5s drain grace + buffer
+        await new Promise((r) => setTimeout(r, 15000));
 
         // Old proxy should have exited (all connections drained)
         expect(oldProxy.exitCode).not.toBe(null);
