@@ -115,6 +115,15 @@ dc                                            # Shortcut — same as deepclaude 
 - **macOS/Linux:** bash 4+, jq, netcat (nc), Node.js 18+
 - Node.js 18+ (for the proxy)
 
+## Scripts
+
+```
+npm run verify          # Full verification: tests + lint
+npm run restart-proxy   # Hot-swap to a new proxy (old forwards, dies when drained)
+npm run build:readme    # Regenerate README.md from template
+npm test               # Run test suite
+```
+
 ## Usage
 
 ### Named configs (`-b`)

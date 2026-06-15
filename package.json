@@ -19,6 +19,8 @@
     "build:readme": "npx tsx scripts/build-readme.ts",
     "build:readme:apply": "npx tsx scripts/build-readme.ts --apply",
     "build": "npx tsc",
+    "verify": "node scripts/verify.mjs",
+    "restart-proxy": "node scripts/restart-proxy.mjs",
     "prepare": "husky"
   },
   "repository": {
