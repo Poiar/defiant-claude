@@ -638,6 +638,8 @@ describe('statusline output format', () => {
 
     expect(result.status).toBe(0);
     expect(stripAnsi(result.stdout)).not.toMatch(/\s{2,}/);
+    // Port should appear in output even without spend.json
+    expect(stripAnsi(result.stdout)).toContain('50000');
   });
 });
 

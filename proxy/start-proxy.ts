@@ -1907,7 +1907,6 @@ if (probeIdx >= 2) {
         // port, we enter forwarding mode: all requests proxy to the new instance.
         // We exit when all active connections have drained (no timer needed).
         let superseded = false;
-        let forwardedConnections = 0;
 
         const supersedeInterval = setInterval(() => {
           if (superseded) return;
@@ -1932,7 +1931,6 @@ if (probeIdx >= 2) {
                     server.on(
                       'request',
                       (clientReq: http.IncomingMessage, clientRes: http.ServerResponse) => {
-                        forwardedConnections++;
                         const opts: http.RequestOptions = {
                           hostname: '127.0.0.1',
                           port: targetPort,
@@ -1955,20 +1953,15 @@ if (probeIdx >= 2) {
                         });
                         clientReq.pipe(upstream);
                         clientRes.on('close', () => {
-                          forwardedConnections--;
-                          if (activeConnections <= 0 && forwardedConnections <= 0) {
-                            log.info(null, 'Hot-swap: no active connections — shutting down');
-                            process.exit(0);
-                          }
+                          checkDrain();
                         });
                       },
                     );
 
-                    // Check immediately in case all connections already drained
-                    if (activeConnections <= 0 && forwardedConnections <= 0) {
-                      log.info(null, 'Hot-swap: no active connections — shutting down immediately');
-                      process.exit(0);
-                    }
+                    // Kick checkDrain in case activeConnections is already 0.
+                    // This won't exit immediately because hadTcpClient is still
+                    // true (CC has a persistent TCP connection open).
+                    checkDrain();
                   },
                 );
                 check.on('error', () => {
