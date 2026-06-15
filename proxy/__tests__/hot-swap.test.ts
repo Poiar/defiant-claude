@@ -12,9 +12,13 @@ const npxCmd = process.platform === 'win32' ? 'npx.cmd' : 'npx';
 // 60s per test is generous but safe.
 jest.setTimeout(60_000);
 
-const DEEPCLAUDE_DIR = path.join(os.homedir(), '.deepclaude');
-const NEXT_PORT_FILE = path.join(DEEPCLAUDE_DIR, 'next-proxy.port');
-const PORT_FILE = path.join(DEEPCLAUDE_DIR, 'proxy.port');
+// CRITICAL: use an isolated DEEPCLAUDE_DIR so hot-swap signal files
+// (next-proxy.port) never leak to real running proxies. Without this,
+// a real proxy would detect the test's signal file, enter forwarding
+// mode to the test proxy, and die when the test proxy is killed.
+const TEST_DEEPCLAUDE_DIR = path.join(os.tmpdir(), 'dc-hotswap-test-' + process.pid);
+const NEXT_PORT_FILE = path.join(TEST_DEEPCLAUDE_DIR, 'next-proxy.port');
+const PORT_FILE = path.join(TEST_DEEPCLAUDE_DIR, 'proxy.port');
 
 let testDir: string;
 
@@ -137,11 +141,21 @@ function cleanupSignalFiles(): void {
 
 beforeAll(() => {
   testDir = os.tmpdir();
+  // Create isolated .deepclaude directory so signal files never touch
+  // real running proxies' state.
+  try {
+    fs.mkdirSync(TEST_DEEPCLAUDE_DIR, { recursive: true });
+  } catch {}
+  process.env.DEEPCLAUDE_DIR = TEST_DEEPCLAUDE_DIR;
   cleanupSignalFiles();
 });
 
 afterAll(() => {
   cleanupSignalFiles();
+  try {
+    fs.rmSync(TEST_DEEPCLAUDE_DIR, { recursive: true, force: true });
+  } catch {}
+  delete process.env.DEEPCLAUDE_DIR;
 });
 
 describe('Hot-swap mechanism', () => {
@@ -177,9 +191,11 @@ describe('Hot-swap mechanism', () => {
 
   describe('port file on startup', () => {
     it('writes proxy.port with its listening port', async () => {
-      // Clean up any stale port file first
+      // Save any existing port file (from a running real proxy) so we can
+      // restore it after this test overwrites it.
+      let savedPort = '';
       try {
-        if (fs.existsSync(PORT_FILE)) fs.unlinkSync(PORT_FILE);
+        if (fs.existsSync(PORT_FILE)) savedPort = fs.readFileSync(PORT_FILE, 'utf-8').trim();
       } catch {}
 
       const port = 56000 + Math.floor(Math.random() * 1000);
@@ -187,14 +203,16 @@ describe('Hot-swap mechanism', () => {
 
       try {
         await portPromise;
-        // Give the filesystem a moment
         await new Promise((r) => setTimeout(r, 500));
 
-        expect(fs.existsSync(PORT_FILE)).toBe(true);
         const writtenPort = parseInt(fs.readFileSync(PORT_FILE, 'utf-8').trim(), 10);
         expect(writtenPort).toBe(port);
       } finally {
         killProxy(proxyProc);
+        // Restore the real proxy's port file
+        try {
+          if (savedPort) fs.writeFileSync(PORT_FILE, savedPort);
+        } catch {}
       }
     });
   });
@@ -204,7 +222,7 @@ describe('Hot-swap mechanism', () => {
       const port = 56000 + Math.floor(Math.random() * 1000);
 
       // Write the signal file BEFORE starting the proxy
-      fs.mkdirSync(DEEPCLAUDE_DIR, { recursive: true });
+      fs.mkdirSync(TEST_DEEPCLAUDE_DIR, { recursive: true });
       fs.writeFileSync(NEXT_PORT_FILE, String(port));
 
       const { process: proxyProc, portPromise } = startProxy(port, routesFile, overridesFile);
@@ -225,7 +243,7 @@ describe('Hot-swap mechanism', () => {
       const actualPort = signalPort + 1;
 
       // Write the signal file for a different port
-      fs.mkdirSync(DEEPCLAUDE_DIR, { recursive: true });
+      fs.mkdirSync(TEST_DEEPCLAUDE_DIR, { recursive: true });
       fs.writeFileSync(NEXT_PORT_FILE, String(signalPort));
 
       const { process: proxyProc, portPromise } = startProxy(actualPort, routesFile, overridesFile);

@@ -289,12 +289,11 @@ if (probeIdx >= 2) {
     );
   }
 
-  // PID lock removed — each session runs an isolated proxy on its own port.
-  // The ~/.deepclaude directory is still used for user config files
-  // (slot-overrides.json, thinking-overrides.json) but proxy.pid and
-  // proxy.json session state are no longer written.
-  const homeDir = process.env.HOME || process.env.USERPROFILE || '';
-  const deepclaudeDir = homeDir + '/.deepclaude';
+  // DEEPCLAUDE_DIR env var overrides the base directory (used by tests
+  // to isolate hot-swap signal files from real running proxies).
+  const deepclaudeDir =
+    process.env.DEEPCLAUDE_DIR ||
+    (process.env.HOME || process.env.USERPROFILE || '') + '/.deepclaude';
 
   // Extract display names from provider registry for the dashboard
   let providerDisplayNames: Record<string, string> | undefined;

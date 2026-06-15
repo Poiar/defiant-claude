@@ -476,12 +476,12 @@ describe('recordSpend end-to-end flush', () => {
     expect(entry.byProvider['ds:deepseek-v4-pro']).toBeGreaterThan(0);
   });
 
-  test('self-healing clamp fixes inflated total from format migration artifact', async () => {
+  test('total survives even when byProvider is incomplete (no self-healing clamp)', async () => {
     const today = dateISO(new Date());
 
-    // Simulate the exact bug we hit 2026-06-13: a daily entry where
-    // total far exceeds the byProvider sum due to a legacy plain-number
-    // total being merged with a newer {total, byProvider} entry.
+    // Simulate a daily entry where total exceeds byProvider sum (happens when
+    // byProvider tracking lags behind or misses some provider<->model mappings).
+    // The total is authoritative — we must never clamp it down.
     const dailyData: Record<string, { total: number; byProvider: Record<string, number> }> = {};
     dailyData[today] = { total: 5.0, byProvider: { ds: 0.5 } };
 
@@ -504,13 +504,10 @@ describe('recordSpend end-to-end flush', () => {
     const raw = fs.readFileSync(tmpFile, 'utf-8');
     const data = JSON.parse(raw);
     const entry = data.daily[today];
-    const bpSum = Object.values(entry.byProvider).reduce((a: number, b: number) => a + b, 0);
 
-    // After the clamp + accumulator addition, total must match byProvider sum.
-    expect(entry.total).toBeCloseTo(bpSum, 4);
-    // The inflated 5.0 was clamped to 0.5, then new spend added — still < 1.0.
-    expect(entry.total).toBeLessThan(1.0);
-    expect(entry.total).toBeGreaterThan(0.5);
+    // Total should be the old 5.0 + new spend (~0.0444) — NOT clamped to byProvider.
+    expect(entry.total).toBeCloseTo(5.0444, 3);
+    expect(entry.total).toBeGreaterThan(5.0);
   });
 
   test('self-healing clamp does nothing when total is already consistent', async () => {
