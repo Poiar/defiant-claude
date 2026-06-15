@@ -7,5 +7,18 @@
       "mcp__plugin_playwright_playwright__browser_wait_for",
       "mcp__plugin_playwright_playwright__browser_take_screenshot"
     ]
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -File .claude/hooks/stop-api-error-guard.ps1",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
   }
 }

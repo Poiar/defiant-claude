@@ -8,7 +8,7 @@
 import { spawn, spawnSync, execSync } from 'child_process';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, chmodSync } from 'fs';
 import { join, dirname, resolve } from 'path';
-import { homedir, platform, tmpdir } from 'os';
+import { homedir, platform } from 'os';
 import { fileURLToPath } from 'url';
 import http from 'http';
 
@@ -22,7 +22,6 @@ const DEEPCLAUDE_DIR = join(homedir(), '.deepclaude');
 const SLOTS = ['opus', 'sonnet', 'haiku', 'subagent', 'fable'];
 const IS_WIN = platform() === 'win32';
 const NPX = IS_WIN ? 'npx.cmd' : 'npx';
-const TSX = join(ROOT, 'node_modules', '.bin', IS_WIN ? 'tsx.cmd' : 'tsx');
 // Claude Code installs as 'claude.cmd' on Windows, 'claude' on Unix.
 const CLAUDE = IS_WIN ? 'claude.cmd' : 'claude';
 
@@ -50,9 +49,6 @@ function fail(msg) {
 }
 function warn(msg) {
   console.error(`${C.Y}WARNING: ${msg}${C.X}`);
-}
-function info(msg) {
-  console.error(`${C.C}${msg}${C.X}`);
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────
@@ -319,7 +315,7 @@ function cmdStatus(providers, configs) {
   console.log(`\n  deepclaude - Provider Status`);
   console.log(`  ============================\n`);
   console.log(`  Keys:`);
-  for (const [pk, pv] of Object.entries(providers)) {
+  for (const [_pk, pv] of Object.entries(providers)) {
     console.log(`    ${pv.keyName.padEnd(28)} ${keyDisplay(pv.key)}`);
   }
   console.log(`\n  Configurations:`);
@@ -477,7 +473,7 @@ async function cmdDoctor(flags, providers, configs) {
   console.log(`\n  API Keys:`);
   let keysOk = 0,
     keysTotal = 0;
-  for (const [pk, pv] of Object.entries(providers)) {
+  for (const [_pk, pv] of Object.entries(providers)) {
     keysTotal++;
     if (pv.key) {
       console.log(`    ${pv.keyName.padEnd(28)} ${C.G}PASS${C.X}  ${keyDisplay(pv.key)}`);
@@ -659,7 +655,7 @@ async function cmdDryRun(flags, configs) {
 }
 
 // ─── Config resolution ────────────────────────────────────────────────
-function resolveSpecs(flags, configs) {
+function resolveSpecs(flags, _configs) {
   let specs = [...flags.specs];
   if (flags.backend) specs.unshift(flags.backend);
   if (!specs.length) {
@@ -930,7 +926,7 @@ async function launchCC(flags, configs) {
       warn('No proxy log found.');
       return;
     }
-    const tail = spawn(
+    spawn(
       IS_WIN ? 'powershell' : 'tail',
       IS_WIN
         ? ['-Command', `Get-Content "${logPath}" -Tail 50 -Wait`]
