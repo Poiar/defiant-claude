@@ -198,10 +198,6 @@ if ($Backend -match '^--(.+)$') {
         }
         $ModelSpecs = if ($ModelSpecs.Count -gt 1) { $ModelSpecs[1..($ModelSpecs.Count-1)] } else { @() }
     }
-    elseif ($flag -eq 'persist' -or $flag -eq 'switch' -or $flag -eq 'stop-proxy') {
-        Write-Host "NOTE: --$flag is removed. Each session now runs its own isolated proxy." -ForegroundColor DarkYellow
-        exit 0
-    }
     else {
         Write-Host "ERROR: Unknown flag '--$flag'. Use --help for available flags." -ForegroundColor Red
         exit 1
@@ -419,14 +415,13 @@ if ($Logs) {
 
 # --- Health check ---
 if ($Health) {
-    $stateFile = Join-Path $DeepClaudeDir "proxy.json"
-    if (-not (Test-Path $stateFile)) {
-        # Hook-friendly: exit 0 so SessionStart hooks don't error on clean state.
-        # Claude Code hooks treat any non-zero exit as a failure.
+    $portFile = Join-Path $DeepClaudeDir "proxy.port"
+    if (-not (Test-Path $portFile)) {
+        Write-Host "No proxy.port found — is a proxy running?" -ForegroundColor Yellow
         exit 0
     }
-    $state = Get-Content $stateFile -Raw | ConvertFrom-Json
-    $health = Invoke-RestMethod -Uri "http://127.0.0.1:$($state.port)/health" -TimeoutSec 5
+    $port = (Get-Content $portFile -Raw).Trim()
+    $health = Invoke-RestMethod -Uri "http://127.0.0.1:${port}/health" -TimeoutSec 5
     $providers = $health.providers
     $healthy = 0; $down = 0; $total = 0
     foreach ($p in $providers.PSObject.Properties) {
@@ -1806,7 +1801,6 @@ if ($Models) {
         Write-Host "`n  Proxy: NOT RUNNING" -ForegroundColor DarkGray
     }
     Write-Host "`n  Use /model providerKey:modelId in Claude Code to switch opus or fable." -ForegroundColor DarkGray
-    Write-Host "  Use deepclaude --set-slot SLOT MODEL to switch sonnet/haiku/subagent." -ForegroundColor DarkGray
     Write-Host "  Use deepclaude --set-slot SLOT MODEL to switch sonnet/haiku/subagent.`n" -ForegroundColor DarkGray
     exit 0
 }
