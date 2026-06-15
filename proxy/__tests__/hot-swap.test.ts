@@ -7,6 +7,11 @@ import os from 'os';
 import { spawn, ChildProcess, execSync } from 'child_process';
 
 const npxCmd = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+const IS_WIN = process.platform === 'win32';
+
+// Shell-safe spawn: avoid DEP0190 on Windows (args + shell:true)
+const shellSafe = (cmd: string, args: string[]): [string, string[]] =>
+  IS_WIN ? [`${cmd} ${args.join(' ')}`, []] : [cmd, args];
 
 // These tests spawn real proxies and wait for TCP drain timers (30s grace).
 // 60s per test is generous but safe.
@@ -80,8 +85,7 @@ function startProxy(
   overridesFile: string,
 ): { process: ChildProcess; portPromise: Promise<number> } {
   const proxyProc = spawn(
-    npxCmd,
-    [
+    ...shellSafe(npxCmd, [
       'tsx',
       'proxy/start-proxy.ts',
       '--routes',
@@ -90,12 +94,12 @@ function startProxy(
       overridesFile,
       '--port',
       String(port),
-    ],
+    ]),
     {
       cwd: path.resolve(__dirname, '../..'),
       stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env },
-      ...(process.platform === 'win32' ? { shell: true } : {}),
+      ...(IS_WIN ? { shell: true } : {}),
     },
   );
 

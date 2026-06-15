@@ -7,6 +7,12 @@ import os from 'os';
 import { spawn, ChildProcess, execSync } from 'child_process';
 
 const npxCmd = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+const IS_WIN = process.platform === 'win32';
+
+// Shell-safe spawn: avoid DEP0190 on Windows (args + shell:true)
+const winQuote = (s: string) => `"${s.replace(/"/g, '\\"')}"`;
+const shellSafe = (cmd: string, args: string[]): [string, string[]] =>
+  IS_WIN ? [`${winQuote(cmd)} ${args.map(winQuote).join(' ')}`, []] : [cmd, args];
 
 let proxyProcess: ChildProcess;
 let proxyPort: number;
@@ -69,13 +75,19 @@ beforeAll(async () => {
   fs.writeFileSync(overridesFile, JSON.stringify({}));
 
   proxyProcess = spawn(
-    npxCmd,
-    ['tsx', 'proxy/start-proxy.ts', '--routes', routesFile, '--overrides', overridesFile],
+    ...shellSafe(npxCmd, [
+      'tsx',
+      'proxy/start-proxy.ts',
+      '--routes',
+      routesFile,
+      '--overrides',
+      overridesFile,
+    ]),
     {
       cwd: path.resolve(__dirname, '../..'),
       stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env, DEEPCLAUDE_NO_PID_LOCK: '1' },
-      ...(process.platform === 'win32' ? { shell: true } : {}),
+      ...(IS_WIN ? { shell: true } : {}),
     },
   );
 
@@ -464,8 +476,7 @@ describe.skip('Protocol routing integration', () => {
     process.env.TEST_KEY = 'test-key-123';
 
     protoProxyProcess = spawn(
-      npxCmd,
-      [
+      ...shellSafe(npxCmd, [
         'tsx',
         'proxy/start-proxy.ts',
         '--routes',
@@ -474,12 +485,12 @@ describe.skip('Protocol routing integration', () => {
         protoOverridesFile,
         '--providers',
         protoProvidersFile,
-      ],
+      ]),
       {
         cwd: path.resolve(__dirname, '../..'),
         stdio: ['ignore', 'pipe', 'pipe'],
         env: { ...process.env, DEEPCLAUDE_NO_PID_LOCK: '1', TEST_KEY: 'test-key-123' },
-        ...(process.platform === 'win32' ? { shell: true } : {}),
+        ...(IS_WIN ? { shell: true } : {}),
       },
     );
 

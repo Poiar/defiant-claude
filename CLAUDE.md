@@ -1,6 +1,6 @@
 # DeepClaude
 
-- **Test**: `npm test` — 1412 tests, 46 suites (includes integration). 53 cache-specific tests (thinking + reasoning cache round-trip and regression).
+- **Test**: `npm test` — ~1374 tests, 46 suites (includes integration). 53 cache-specific tests (thinking + reasoning cache round-trip and regression).
 - **Verify**: `npm run verify` — full suite: tests + ESLint (`--max-warnings 0`). Also `node scripts/verify.mjs`.
 - **Push**: standard git — commit + push, no special workflow. Pre-push hook runs lint (`--max-warnings 0`).
 - **Proxy restart**: `npm run restart-proxy` or `node scripts/restart-proxy.mjs` — hot-swap to a new proxy.
