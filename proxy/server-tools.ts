@@ -516,9 +516,11 @@ async function webFetchImpl(
   }
 
   // DNS resolution guard -- second-layer SSRF defense.
-  // Also resolves the hostname once and uses the pre-validated IP for
-  // the actual HTTP connection (FIX 2: DNS rebinding TOCTOU).
+  // Resolves the hostname once; the validated address is pinned via a
+  // custom lookup function on the HTTP connection to prevent DNS rebinding
+  // TOCTOU while still presenting the real hostname to CDNs (FIX 2).
   let firstResolvedAddress: string | null = null;
+  let firstResolvedFamily: number = 4;
   try {
     const resolved = new URL(url);
     const results = (await Promise.race([
@@ -529,7 +531,10 @@ async function webFetchImpl(
       if (r.family === 4) {
         if (isPrivateIPv4(r.address))
           return 'Error: Access to internal/private networks is blocked.';
-        if (!firstResolvedAddress) firstResolvedAddress = r.address;
+        if (!firstResolvedAddress) {
+          firstResolvedAddress = r.address;
+          firstResolvedFamily = 4;
+        }
       } else {
         if (
           r.address === '::1' ||
@@ -543,7 +548,10 @@ async function webFetchImpl(
         ) {
           return 'Error: Access to internal/private networks is blocked.';
         }
-        if (!firstResolvedAddress) firstResolvedAddress = r.address;
+        if (!firstResolvedAddress) {
+          firstResolvedAddress = r.address;
+          firstResolvedFamily = 6;
+        }
       }
     }
   } catch (dnsErr) {
@@ -568,23 +576,23 @@ async function webFetchImpl(
     const isHttps = parsedUrl.protocol === 'https:';
     const transport = isHttps ? https : http;
 
-    // FIX 2: Use pre-validated IP for the actual connection to prevent
-    // DNS rebinding TOCTOU (the guard above and the connection below
-    // share the same resolved address).
+    // FIX 2: Use hostname for the connection (required by CDNs for correct
+    // TLS SNI and virtual-host routing) but pin DNS resolution to the
+    // pre-validated IP via a custom lookup function.  This prevents DNS
+    // rebinding TOCTOU without breaking sites behind CDNs.
+    const validatedAddr = firstResolvedAddress;
+    const validatedFamily = firstResolvedFamily;
     const requestOptions: http.RequestOptions = {
-      hostname: firstResolvedAddress,
+      hostname: parsedUrl.hostname,
       port: parsedUrl.port ? parseInt(parsedUrl.port, 10) : isHttps ? 443 : 80,
       path: parsedUrl.pathname + parsedUrl.search || '/',
       method: 'GET',
-      headers: { Host: parsedUrl.hostname, 'User-Agent': 'deepclaude-proxy/1.0' },
+      headers: { 'User-Agent': 'deepclaude-proxy/1.0' },
       timeout: 20000,
-      setHost: false,
+      lookup(_hostname, _opts, callback) {
+        callback(null, validatedAddr, validatedFamily);
+      },
     };
-
-    // For HTTPS, set servername for correct TLS SNI
-    if (isHttps) {
-      (requestOptions as https.RequestOptions).servername = parsedUrl.hostname;
-    }
 
     const req = transport.request(requestOptions, (res) => {
       if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
@@ -698,11 +706,23 @@ export function hasPendingToolResult(messages: Message[]): PendingToolResult {
       const resultContent = block.content;
       const isEmpty =
         !resultContent ||
-        (typeof resultContent === 'string' && resultContent.trim() === '') ||
-        (typeof resultContent === 'string' && resultContent.includes('not recognized')) ||
+        (Array.isArray(resultContent) && resultContent.length === 0) ||
         (typeof resultContent === 'string' &&
-          resultContent.includes('No tool implementation found')) ||
-        (Array.isArray(resultContent) && resultContent.length === 0);
+          (() => {
+            const t = resultContent.trim();
+            if (t === '') return true;
+            if (t.includes('not recognized')) return true;
+            if (t.includes('No tool implementation found')) return true;
+            if (t.includes('Did 0 searches')) return true;
+            if (/^\s*(Error|fetch failed|Search failed|Web fetch failed)/i.test(t)) return true;
+            if (/^\s*(Transport error|Network error|Timed out|No results found)/i.test(t))
+              return true;
+            return false;
+          })()) ||
+        (typeof resultContent === 'object' &&
+          resultContent !== null &&
+          !Array.isArray(resultContent) &&
+          ('is_error' in resultContent || 'error' in resultContent));
 
       if (isEmpty) {
         emptyResults.push({ block: block as unknown as Record<string, unknown>, toolInfo });

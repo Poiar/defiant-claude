@@ -210,7 +210,7 @@ const MODULE_DESCRIPTIONS: Record<string, string> = {
   'config-lint.ts': '`providers.json` structural validation (used by `--lint-config`)',
   'dry-run.ts': 'Resolved routing table display without starting the proxy (used by `--dry-run`)',
   'launcher.mjs':
-    'Unified Node.js engine shared by deepclaude.ps1 and deepclaude.sh — config resolution, routes JSON, env vars with [1m] suffix and compaction window, slot/thinking overrides, proxy state, pricing/model/key data. Zero npm deps, single source of truth.',
+    'Unified Node.js engine shared by deepclaude.ps1, deepclaude.sh, and scripts/cli.mjs — config resolution, routes JSON, env vars with [1m] suffix and compaction window, slot/thinking overrides, proxy state, pricing/model/key data. Zero npm deps, single source of truth.',
 };
 
 function genModuleTable(): string {
