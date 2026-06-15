@@ -89,13 +89,13 @@ describe('providers.json', () => {
       expect(def.streamUsageReporting).toBeDefined();
       if (def.wireFormat === 'openai') {
         expect(def.streamUsageReporting).toBe('openai_stream_options');
-      } else if (def.wireFormat === 'anthropic') {
+      } else {
         expect(def.streamUsageReporting).toBeNull();
       }
     }
   });
 
-  test('all 15 providers present', () => {
+  test('all expected providers present', () => {
     const expected = [
       'ds',
       'or',
@@ -113,6 +113,7 @@ describe('providers.json', () => {
       'bp',
       'sf',
       'nv',
+      'gm',
     ];
     const providers = (registry as Record<string, Record<string, unknown>>).providers;
     for (const key of expected) {
