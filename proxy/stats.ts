@@ -753,6 +753,56 @@ try {
 } catch (_) {
   /* non-fatal */
 }
+// Repair daily spend from cc-spend files — the self-healing clamp that
+// previously existed could silently destroy data when byProvider sums
+// didn't match the authoritative total. This repair runs once at startup.
+function repairDailySpend(): void {
+  try {
+    if (!fs.existsSync(spendFile)) return;
+    const raw = fs.readFileSync(spendFile, 'utf-8');
+    const data = JSON.parse(raw);
+    const daily = (data.daily as Record<string, unknown>) || {};
+    const today = todayISO();
+    const ccSpendDir = path.join(os.homedir(), '.deepclaude');
+
+    // Sum cc-spend files created/modified today
+    let ccSum = 0;
+    if (fs.existsSync(ccSpendDir)) {
+      for (const f of fs.readdirSync(ccSpendDir)) {
+        if (!f.startsWith('cc-spend-') || !f.endsWith('.json')) continue;
+        try {
+          const stat = fs.statSync(path.join(ccSpendDir, f));
+          if (stat.mtime.toISOString().slice(0, 10) !== today) continue;
+          ccSum += parseFloat(fs.readFileSync(path.join(ccSpendDir, f), 'utf-8').trim()) || 0;
+        } catch (_) {}
+      }
+    }
+
+    if (ccSum <= 0) return;
+
+    const todayEntry = daily[today] as { total?: number } | undefined;
+    const currentTotal = todayEntry?.total ?? 0;
+
+    // If cc-spend files sum to more than the recorded daily total,
+    // repair it. cc-spend files are per-session accumulations and
+    // represent ground-truth actual spend.
+    if (ccSum > currentTotal && ccSum > currentTotal * 1.01) {
+      log.warn(
+        null,
+        `Repairing daily spend for ${today}: ${currentTotal.toFixed(4)} → ${ccSum.toFixed(4)} (from ${Math.round(ccSum / currentTotal)} CC sessions)`,
+      );
+      if (!todayEntry) daily[today] = { total: parseFloat(ccSum.toFixed(4)), byProvider: {} };
+      else todayEntry.total = parseFloat(ccSum.toFixed(4));
+
+      const tmpFile = spendFile + '.tmp';
+      fs.writeFileSync(tmpFile, JSON.stringify(data) + '\n');
+      fs.renameSync(tmpFile, spendFile);
+    }
+  } catch (_) {
+    /* non-fatal */
+  }
+}
+
 let sessionTotal = 0;
 let dailyAccumulator = 0;
 const providerDailyAccumulators: Record<string, number> = {};
@@ -762,6 +812,9 @@ let lastDailyRead = 0;
 let cachedDailySpend = 0;
 const BUDGET_CHECK_THROTTLE_MS = 1000;
 const sessionStarted = new Date().toISOString();
+
+// Run once at startup: repair daily spend from cc-spend ground-truth data
+repairDailySpend();
 
 let pricingData: Record<string, { input: number; output: number }> = {};
 try {
@@ -1019,18 +1072,9 @@ export async function recordSpend(
       }
     }
 
-    // Self-healing: clamp any daily total that exceeds its byProvider sum
-    // to prevent data corruption from format migration artifacts.
-    for (const [date, entry] of Object.entries(daily)) {
-      const bpSum = Object.values(entry.byProvider).reduce((a: number, b: number) => a + b, 0);
-      if (entry.total > bpSum && bpSum > 0 && entry.total > bpSum * 1.01) {
-        log.warn(
-          null,
-          `Clamping daily total for ${date}: ${entry.total.toFixed(4)} → ${bpSum.toFixed(4)} (byProvider sum)`,
-        );
-        entry.total = parseFloat(bpSum.toFixed(4));
-      }
-    }
+    // The total field is authoritative. byProvider is best-effort reporting
+    // and may lag behind (e.g. when models don't map cleanly to provider keys).
+    // Never clamp total down to byProvider sum — that destroys real spend data.
 
     // Update today's entry with accumulated totals
     const todayEntry = daily[today] || { total: 0, byProvider: {} };
