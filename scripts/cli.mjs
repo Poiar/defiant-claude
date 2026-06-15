@@ -240,7 +240,7 @@ function parseArgs(argv) {
       '-r',
     ];
     if (boolFlags.includes(a)) {
-      flags[a.replace(/^-+/, '')] = true;
+      flags[a.replace(/^-+/, '').replace(/-/g, '')] = true;
       i++;
       continue;
     }
@@ -587,6 +587,7 @@ async function cmdDoctor(flags, providers, configs) {
         encoding: 'utf-8',
         timeout: 60000,
         stdio: 'pipe',
+        shell: IS_WIN,
       });
       if (probeResult.status === 0) console.log(probeResult.stdout);
       else ok = false;
@@ -630,6 +631,7 @@ async function cmdProbe(flags, providers, configs) {
     cwd: ROOT,
     stdio: 'inherit',
     timeout: 120000,
+    shell: IS_WIN,
   });
   process.exit(r.status || 0);
 }
@@ -646,6 +648,7 @@ async function cmdDryRun(flags, configs) {
     cwd: ROOT,
     stdio: 'inherit',
     timeout: 60000,
+    shell: IS_WIN,
   });
   process.exit(r.status || 0);
 }
@@ -827,6 +830,7 @@ async function launchCC(flags, configs) {
     const r = spawnSync(NPX, ['tsx', join(PROXY_DIR, 'config-lint.ts')], {
       cwd: ROOT,
       stdio: 'inherit',
+      shell: IS_WIN,
     });
     process.exit(r.status || 0);
   }
