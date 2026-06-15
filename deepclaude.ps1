@@ -1,27 +1,27 @@
 <#
 .SYNOPSIS
-    deepclaude — Use Claude Code with cheap backends. Provider-agnostic.
+    deepclaude - Use Claude Code with cheap backends. Provider-agnostic.
     Thin wrapper around scripts/cli.mjs (Node.js unified launcher).
 #>
+[CmdletBinding()]
 param(
     [Parameter(ValueFromRemainingArguments)]
-    [string[]]$Args
+    [string[]]$RemainingArgs
 )
 
-$ErrorActionPreference = "Stop"
-try { Set-PSReadLineOption -HistorySaveStyle SaveAtExit -ErrorAction Stop } catch {}
+$ErrorActionPreference = 'Stop'
 
-$cli = Join-Path $PSScriptRoot "scripts\cli.mjs"
+$cli = Join-Path $PSScriptRoot 'scripts\cli.mjs'
 if (-not (Test-Path $cli)) {
-    Write-Host "ERROR: cli.mjs not found at $cli" -ForegroundColor Red
+    Write-Error 'cli.mjs not found at $cli'
     exit 1
 }
 
-$nodePath = try { (Get-Command node -ErrorAction Stop).Source } catch { $null }
+$nodePath = (Get-Command node -ErrorAction SilentlyContinue).Source
 if (-not $nodePath) {
-    Write-Host "ERROR: Node.js is not installed or not in PATH." -ForegroundColor Red
+    Write-Error 'Node.js is not installed or not in PATH.'
     exit 1
 }
 
-& node $cli @Args
+& node $cli @RemainingArgs
 exit $LASTEXITCODE
