@@ -842,7 +842,9 @@ describe('hasPendingToolResult — edge cases', () => {
     const messages = [
       {
         role: 'assistant',
-        content: [{ type: 'tool_use', id: 't18', name: 'web_search_20260209', input: { query: 'x' } }],
+        content: [
+          { type: 'tool_use', id: 't18', name: 'web_search_20260209', input: { query: 'x' } },
+        ],
       },
       {
         role: 'user',
@@ -857,7 +859,14 @@ describe('hasPendingToolResult — edge cases', () => {
     const messages = [
       {
         role: 'assistant',
-        content: [{ type: 'tool_use', id: 't19', name: 'web_fetch_20260209', input: { url: 'https://x.com' } }],
+        content: [
+          {
+            type: 'tool_use',
+            id: 't19',
+            name: 'web_fetch_20260209',
+            input: { url: 'https://x.com' },
+          },
+        ],
       },
       {
         role: 'user',
@@ -872,7 +881,14 @@ describe('hasPendingToolResult — edge cases', () => {
     const messages = [
       {
         role: 'assistant',
-        content: [{ type: 'tool_use', id: 't20', name: 'url_fetch_20241022', input: { url: 'https://x.com' } }],
+        content: [
+          {
+            type: 'tool_use',
+            id: 't20',
+            name: 'url_fetch_20241022',
+            input: { url: 'https://x.com' },
+          },
+        ],
       },
       {
         role: 'user',
