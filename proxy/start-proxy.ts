@@ -1908,6 +1908,106 @@ if (probeIdx >= 2) {
       // --- Lifecycle ---
       server.listen(parsed.port || 0, '127.0.0.1', () => {
         const port = (server.address() as { port: number }).port;
+
+        // --- Hot-swap: if we were started as the replacement, clean up the signal ---
+        const nextPortFile = deepclaudeDir + '/next-proxy.port';
+        try {
+          if (fs.existsSync(nextPortFile)) {
+            const nextPort = parseInt(fs.readFileSync(nextPortFile, 'utf-8').trim(), 10);
+            if (nextPort === port) {
+              fs.unlinkSync(nextPortFile);
+              log.info(
+                null,
+                'Hot-swap: running as replacement on port ' + port + ' — signal file removed',
+              );
+            }
+          }
+        } catch (_) {
+          /* ignore */
+        }
+
+        // --- Hot-swap superseded check: periodically look for replacement signal ---
+        // When another proxy is started with next-proxy.port pointing to a different
+        // port, we enter forwarding mode: all requests proxy to the new instance for
+        // a 10-minute grace period, then we exit. This lets CC sessions survive the
+        // transition — the user just needs to restart CC to pick up the new proxy.
+        const SUPERSEDED_GRACE_MS = 10 * 60 * 1000; // 10 minutes
+        let superseded = false;
+
+        const supersedeInterval = setInterval(() => {
+          if (superseded) return;
+          try {
+            if (fs.existsSync(nextPortFile)) {
+              const targetPort = parseInt(fs.readFileSync(nextPortFile, 'utf-8').trim(), 10);
+              if (targetPort && targetPort !== port && !isNaN(targetPort)) {
+                // Check the new proxy is actually alive
+                const check = http.get(
+                  'http://127.0.0.1:' + targetPort + '/health',
+                  { timeout: 3000 },
+                  () => {
+                    superseded = true;
+                    clearInterval(supersedeInterval);
+                    log.info(
+                      null,
+                      'Hot-swap: superseded by port ' +
+                        targetPort +
+                        ' — entering forwarding mode for ' +
+                        SUPERSEDED_GRACE_MS / 60000 +
+                        ' minutes',
+                    );
+
+                    // Remove PID file — we're no longer the active proxy
+                    if (pidPath) {
+                      try {
+                        if (fs.existsSync(pidPath)) fs.unlinkSync(pidPath);
+                      } catch (_) {}
+                    }
+
+                    // Suicide timer
+                    setTimeout(() => {
+                      log.info(null, 'Hot-swap: grace period ended — shutting down');
+                      process.exit(0);
+                    }, SUPERSEDED_GRACE_MS).unref();
+
+                    // Forward all requests to the new proxy
+                    server.removeAllListeners('request');
+                    server.on(
+                      'request',
+                      (clientReq: http.IncomingMessage, clientRes: http.ServerResponse) => {
+                        const opts: http.RequestOptions = {
+                          hostname: '127.0.0.1',
+                          port: targetPort,
+                          path: clientReq.url,
+                          method: clientReq.method,
+                          headers: { ...clientReq.headers, host: '127.0.0.1:' + targetPort },
+                        };
+                        const upstream = http.request(opts, (upstreamRes) => {
+                          clientRes.writeHead(upstreamRes.statusCode || 200, upstreamRes.headers);
+                          upstreamRes.pipe(clientRes);
+                        });
+                        upstream.on('error', () => {
+                          clientRes.writeHead(502);
+                          clientRes.end(
+                            'Proxy migration in progress — restart CC to pick up new proxy on port ' +
+                              targetPort,
+                          );
+                        });
+                        clientReq.pipe(upstream);
+                      },
+                    );
+                  },
+                );
+                check.on('error', () => {
+                  /* new proxy not ready yet, keep checking */
+                });
+              }
+            }
+          } catch (_) {
+            /* ignore */
+          }
+        }, 5000);
+        supersedeInterval.unref();
+
         // Update PID file with port so future instances can reuse this proxy
         if (pidPath) {
           try {
