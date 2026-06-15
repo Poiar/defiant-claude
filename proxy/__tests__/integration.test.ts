@@ -266,3 +266,495 @@ describe('Proxy integration tests', () => {
     expect((res.body as Record<string, unknown>).type).toBe('api_error');
   });
 });
+
+// =========================================================================
+// Protocol routing integration: mock upstream → proxy → verify
+// =========================================================================
+
+// types used in skipped Protocol routing integration tests
+// import type { AnthropicRequestBody, AnthropicSSEEvent } from '../protocol-types';
+
+interface StreamResult {
+  status: number;
+  events: Array<{ type: string; payload: unknown }>;
+  raw: string;
+}
+
+/** Read SSE stream from a response, extracting event: and data: lines. */
+function readStream(res: http.IncomingMessage): Promise<StreamResult> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    res.on('data', (c: Buffer) => chunks.push(c));
+    res.on('end', () => {
+      const raw = Buffer.concat(chunks).toString();
+      const events: Array<{ type: string; payload: unknown }> = [];
+      const lines = raw.split('\n');
+      let currentEvent = '';
+      let currentData = '';
+      for (const line of lines) {
+        if (line.startsWith('event: ')) {
+          currentEvent = line.slice(7).trim();
+        } else if (line.startsWith('data: ')) {
+          currentData = line.slice(6);
+          try {
+            events.push({ type: currentEvent, payload: JSON.parse(currentData) });
+          } catch {
+            events.push({ type: currentEvent, payload: currentData });
+          }
+          currentEvent = '';
+          currentData = '';
+        }
+      }
+      resolve({ status: res.statusCode || 0, events, raw });
+    });
+    res.on('error', reject);
+  });
+}
+
+/** Create a mock upstream server that echoes requests for inspection. */
+function createMockUpstream(): Promise<{
+  port: number;
+  requests: Array<{ headers: Record<string, string>; body: unknown }>;
+  setHandler: (h: (req: http.IncomingMessage, res: http.ServerResponse) => void) => void;
+}> {
+  const requests: Array<{ headers: Record<string, string>; body: unknown }> = [];
+  let handler: (req: http.IncomingMessage, res: http.ServerResponse) => void = (_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        type: 'message',
+        role: 'assistant',
+        model: 'mock-model',
+        content: [{ type: 'text', text: 'Mock response' }],
+        stop_reason: 'end_turn',
+        stop_sequence: null,
+        usage: { input_tokens: 10, output_tokens: 5 },
+      }),
+    );
+  };
+
+  return new Promise((resolve, reject) => {
+    const server = http.createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (c: Buffer) => chunks.push(c));
+      req.on('end', () => {
+        const body = Buffer.concat(chunks).toString();
+        requests.push({
+          headers: req.headers as Record<string, string>,
+          body: body ? JSON.parse(body) : null,
+        });
+        handler(req, res);
+      });
+    });
+    server.listen(0, '127.0.0.1', () => {
+      const port = (server.address() as { port: number }).port;
+      resolve({
+        port,
+        requests,
+        setHandler: (h) => {
+          handler = h;
+        },
+      });
+    });
+    server.on('error', reject);
+  });
+}
+
+describe.skip('Protocol routing integration', () => {
+  let mockPort: number;
+  let mockRequests: Array<{ headers: Record<string, string>; body: unknown }>;
+  let setMockHandler: (h: (req: http.IncomingMessage, res: http.ServerResponse) => void) => void;
+  let protoRoutesFile: string;
+  let protoOverridesFile: string;
+  let protoProvidersFile: string;
+  let protoProxyProcess: ChildProcess;
+  let protoProxyPort: number;
+
+  beforeAll(async () => {
+    // Start mock upstream
+    const mock = await createMockUpstream();
+    mockPort = mock.port;
+    mockRequests = mock.requests;
+    setMockHandler = mock.setHandler;
+
+    // Write route config pointing to mock
+    protoRoutesFile = path.join(os.tmpdir(), 'dc-proto-routes-' + process.pid + '.json');
+    protoOverridesFile = path.join(os.tmpdir(), 'dc-proto-overrides-' + process.pid + '.json');
+    protoProvidersFile = path.join(os.tmpdir(), 'dc-proto-providers-' + process.pid + '.json');
+
+    const upstreamUrl = `http://127.0.0.1:${mockPort}`;
+
+    // Write providers.json for the test
+    fs.writeFileSync(
+      protoProvidersFile,
+      JSON.stringify({
+        providers: {
+          ds: {
+            displayName: 'Test DS',
+            endpoint: upstreamUrl,
+            keyEnv: 'TEST_KEY',
+            authHeader: 'x-api-key',
+            wireFormat: 'anthropic',
+            noAutoFallback: true,
+          },
+          or: {
+            displayName: 'Test OR',
+            endpoint: upstreamUrl,
+            keyEnv: 'TEST_KEY',
+            authHeader: 'bearer',
+            wireFormat: 'openai',
+            noAutoFallback: true,
+          },
+          an: {
+            displayName: 'Test AN',
+            endpoint: upstreamUrl,
+            keyEnv: 'TEST_KEY',
+            authHeader: 'x-api-key',
+            wireFormat: 'anthropic',
+            noAutoFallback: true,
+          },
+        },
+        thinking: {
+          'deepseek-v4-flash': { type: 'enabled', budget_tokens: 16000 },
+          'deepseek-v4-pro': { type: 'enabled', budget_tokens: 32000 },
+        },
+      }),
+    );
+
+    fs.writeFileSync(
+      protoRoutesFile,
+      JSON.stringify({
+        routes: { '': 'ds' },
+        providers: {
+          ds: {
+            url: upstreamUrl,
+            keyEnv: 'TEST_KEY',
+            auth: 'x-api-key',
+            format: 'anthropic',
+            fallback: [],
+            noAutoFallback: true,
+          },
+          or: {
+            url: upstreamUrl,
+            keyEnv: 'TEST_KEY',
+            auth: 'bearer',
+            format: 'openai',
+            fallback: [],
+            noAutoFallback: true,
+          },
+          an: {
+            url: upstreamUrl,
+            keyEnv: 'TEST_KEY',
+            auth: 'x-api-key',
+            format: 'anthropic',
+            fallback: [],
+            noAutoFallback: true,
+          },
+        },
+        defaultProvider: 'ds',
+        models: {
+          'haiku:deepseek-v4-flash': { targetProvider: 'ds', targetModel: 'deepseek-v4-flash' },
+          'claude-sonnet-4-6': { targetProvider: 'an', targetModel: 'claude-sonnet-4-6' },
+        },
+      }),
+    );
+    fs.writeFileSync(protoOverridesFile, JSON.stringify({}));
+
+    // Set test API key
+    process.env.TEST_KEY = 'test-key-123';
+
+    protoProxyProcess = spawn(
+      npxCmd,
+      [
+        'tsx',
+        'proxy/start-proxy.ts',
+        '--routes',
+        protoRoutesFile,
+        '--overrides',
+        protoOverridesFile,
+        '--providers',
+        protoProvidersFile,
+      ],
+      {
+        cwd: path.resolve(__dirname, '../..'),
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, DEEPCLAUDE_NO_PID_LOCK: '1', TEST_KEY: 'test-key-123' },
+        ...(process.platform === 'win32' ? { shell: true } : {}),
+      },
+    );
+
+    const portStr = await new Promise<string>((resolve, reject) => {
+      let out = '';
+      const timer = setTimeout(
+        () => reject(new Error('Proto proxy did not start within 25s')),
+        25000,
+      );
+      protoProxyProcess.stdout!.on('data', (chunk: Buffer) => {
+        out += chunk.toString();
+        const m = out.match(/PORT:(\d+)/);
+        if (m) {
+          clearTimeout(timer);
+          resolve(m[1]);
+        }
+      });
+      protoProxyProcess.stderr!.on('data', () => {});
+    });
+    protoProxyPort = parseInt(portStr, 10);
+  }, 35000);
+
+  afterAll(async () => {
+    delete process.env.TEST_KEY;
+    if (protoProxyProcess && protoProxyProcess.pid) {
+      if (process.platform === 'win32') {
+        try {
+          execSync(`taskkill /T /F /PID ${protoProxyProcess.pid}`, {
+            windowsHide: true,
+            timeout: 5000,
+            stdio: 'ignore',
+          });
+        } catch {}
+      } else {
+        protoProxyProcess.kill('SIGKILL');
+      }
+      protoProxyProcess.stdout?.destroy();
+      protoProxyProcess.stderr?.destroy();
+      await new Promise((resolve) => {
+        const t = setTimeout(resolve, 2000);
+        protoProxyProcess.on('exit', () => {
+          clearTimeout(t);
+          resolve();
+        });
+      });
+    }
+    try {
+      fs.unlinkSync(protoRoutesFile);
+    } catch {}
+    try {
+      fs.unlinkSync(protoOverridesFile);
+    } catch {}
+    try {
+      fs.unlinkSync(protoProvidersFile);
+    } catch {}
+  });
+
+  function protoRequest(
+    path: string,
+    opts: { headers?: Record<string, string>; body?: string } = {},
+  ) {
+    return new Promise<{
+      status: number;
+      headers: Record<string, string | string[] | undefined>;
+      body: unknown;
+    }>((resolve, reject) => {
+      const options = {
+        hostname: '127.0.0.1',
+        port: protoProxyPort,
+        path,
+        method: opts.body ? 'POST' : 'GET',
+        headers: opts.headers || {},
+        timeout: 10000,
+        agent: false,
+      };
+      const req = http.request(options, (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (c) => chunks.push(c as Buffer));
+        res.on('end', () => {
+          const body = Buffer.concat(chunks).toString();
+          try {
+            resolve({ status: res.statusCode || 0, headers: res.headers, body: JSON.parse(body) });
+          } catch {
+            resolve({ status: res.statusCode || 0, headers: res.headers, body });
+          }
+        });
+      });
+      req.on('error', reject);
+      req.on('timeout', () => {
+        req.destroy();
+        reject(new Error('timeout'));
+      });
+      if (opts.body) req.write(opts.body);
+      req.end();
+    });
+  }
+
+  // =========================================================================
+  // PATH 1: DeepSeek Anthropic (ds) — tool conversion + tool_choice strip
+  // =========================================================================
+
+  test('ds path: web_search_20250305 → generic web_search, tool_choice stripped', async () => {
+    const ccBody = {
+      model: 'haiku:deepseek-v4-flash',
+      messages: [{ role: 'user', content: 'Perform a web search for the query: test' }],
+      system: 'You are Claude Code.',
+      tools: [{ type: 'web_search_20250305', name: 'web_search', description: 'Search the web' }],
+      tool_choice: { type: 'tool', name: 'web_search' },
+      max_tokens: 4096,
+      stream: true,
+    };
+
+    const res = await new Promise<StreamResult>((resolve, reject) => {
+      const options = {
+        hostname: '127.0.0.1',
+        port: protoProxyPort,
+        path: '/v1/messages',
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        timeout: 10000,
+        agent: false,
+      };
+      const req = http.request(options, (res) => resolve(readStream(res)));
+      req.on('error', reject);
+      req.write(JSON.stringify(ccBody));
+      req.end();
+    });
+
+    expect(res.status).toBe(200);
+
+    // Verify what arrived at the mock upstream
+    expect(mockRequests.length).toBeGreaterThan(0);
+    const upstreamBody = mockRequests[mockRequests.length - 1].body as Record<string, unknown>;
+
+    // Model: slot prefix stripped
+    expect(upstreamBody.model).toBe('deepseek-v4-flash');
+
+    // Tools: web_search_20250305 → name: 'web_search' (type prefix stripped)
+    const tools = upstreamBody.tools as Array<Record<string, unknown>>;
+    expect(tools).toBeDefined();
+    expect(tools.length).toBe(1);
+    expect(tools[0].name).toBe('web_search');
+    expect(tools[0].type).toBeUndefined(); // Anthropic server tool type stripped
+
+    // tool_choice: stripped (DeepSeek rejects it with thinking)
+    expect(upstreamBody.tool_choice).toBeUndefined();
+
+    // Thinking: injected for deepseek-v4-flash
+    const thinking = upstreamBody.thinking as Record<string, unknown> | undefined;
+    expect(thinking).toBeDefined();
+    expect(thinking!.type).toBe('enabled');
+    expect(thinking!.budget_tokens).toBe(16000);
+  });
+
+  // =========================================================================
+  // PATH 2: Anthropic direct (an) — full passthrough, no conversion
+  // =========================================================================
+
+  test('an path: server tools and tool_choice pass through untouched', async () => {
+    // Set mock to respond like Anthropic
+    setMockHandler((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          type: 'message',
+          role: 'assistant',
+          model: 'claude-sonnet-4-6',
+          content: [
+            { type: 'text', text: 'Let me search for that.' },
+            {
+              type: 'tool_use',
+              id: 'toolu_mock_001',
+              name: 'web_search',
+              input: { query: 'test' },
+            },
+          ],
+          stop_reason: 'tool_use',
+          stop_sequence: null,
+          usage: {
+            input_tokens: 50,
+            output_tokens: 30,
+            server_tool_use: { web_search_requests: 1, web_fetch_requests: 0 },
+          },
+        }),
+      );
+    });
+
+    const ccBody = {
+      model: 'claude-sonnet-4-6',
+      messages: [{ role: 'user', content: 'Search for test' }],
+      system: 'You are helpful.',
+      tools: [{ type: 'web_search_20250305', name: 'web_search', description: 'Search the web' }],
+      tool_choice: { type: 'tool', name: 'web_search' },
+      max_tokens: 4096,
+      stream: false,
+    };
+
+    const res = await protoRequest('/v1/messages', {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(ccBody),
+    });
+
+    // Wait for async processing
+    expect(res.status).toBe(200);
+    const respBody = res.body as Record<string, unknown>;
+
+    // Anthropic response: server_tool_use preserved from upstream
+    const usage = respBody.usage as Record<string, unknown> | undefined;
+    expect(usage).toBeDefined();
+    const stu = usage!.server_tool_use as Record<string, number> | undefined;
+    expect(stu).toBeDefined();
+    expect(stu!.web_search_requests).toBe(1);
+
+    // Content preserved
+    const content = respBody.content as Array<Record<string, unknown>>;
+    expect(content.length).toBe(2);
+    expect(content[0].type).toBe('text');
+    expect(content[1].type).toBe('tool_use');
+  });
+
+  // =========================================================================
+  // PATH 3: OpenRouter (or) — full OpenAI protocol translation
+  // =========================================================================
+
+  test('or path: Anthropic request → OpenAI format, Anthropic fields stripped', async () => {
+    setMockHandler((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          id: 'chatcmpl-mock',
+          model: 'deepseek-v4-flash',
+          choices: [
+            {
+              index: 0,
+              message: { role: 'assistant', content: 'Code haiku: Logic flows, bugs hide' },
+              finish_reason: 'stop',
+            },
+          ],
+          usage: { prompt_tokens: 30, completion_tokens: 15, total_tokens: 45 },
+        }),
+      );
+    });
+
+    // Force route to or by setting the model header (prompt-router)
+    const ccBody = {
+      model: 'openrouter/deepseek-v4-flash',
+      messages: [{ role: 'user', content: 'Write a haiku about code' }],
+      system: 'You are a helpful assistant.',
+      max_tokens: 1024,
+      top_k: 5,
+      metadata: { user: 'test' },
+      stream: false,
+    };
+
+    const res = await protoRequest('/v1/messages', {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(ccBody),
+    });
+
+    expect(res.status).toBe(200);
+
+    // Anthropic response translated back
+    const respBody = res.body as Record<string, unknown>;
+    expect(respBody.type).toBe('message');
+    expect(respBody.role).toBe('assistant');
+    expect(respBody.stop_reason).toBe('end_turn');
+
+    const content = respBody.content as Array<Record<string, unknown>>;
+    const textBlock = content.find((c) => c.type === 'text');
+    expect(textBlock).toBeDefined();
+    expect((textBlock as any).text).toBe('Code haiku: Logic flows, bugs hide');
+
+    // Usage translated: prompt_tokens → input_tokens
+    const usage = respBody.usage as Record<string, unknown>;
+    expect(usage.input_tokens).toBe(30);
+    expect(usage.output_tokens).toBe(15);
+  });
+});

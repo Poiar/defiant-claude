@@ -1,38 +1,34 @@
 ---
 name: safe-proxy-restart
-description: "Killing the proxy kills the session. CC does NOT auto-recover."
+description: "Hot-swap: start new proxy, old forwards for 10min then dies. Never kill."
 metadata: 
   node_type: memory
   type: project
   originSessionId: 05421d94-2b91-477c-8caf-eef543d46a4b
 ---
 
-## CRITICAL: Killing the proxy = dead session
+## CRITICAL: NEVER kill the proxy from within CC
 
-**Verified 2026-06-14:** When the proxy dies, CC just retries the same dead
-port. No auto-recovery. The only way back is restarting the launcher (`dc`).
+Killing the proxy = killing your session. Verified twice.
 
-## What happened
+## Hot-swap procedure (the right way)
 
-User tested this live. I killed the proxy on port 64865. CC showed:
-```
-Unable to connect to API (ConnectionRefused)
-Retrying in 16s · attempt 6/10
-```
-It never recovered on its own. The user had to restart `dc`, which spawned
-a fresh proxy on a new port.
+The proxy supports self-superseding via `~/.deepclaude/next-proxy.port`:
 
-## Smooth restart (avoid sesion death)
+1. Write the new port to `~/.deepclaude/next-proxy.port`
+2. Start a new proxy on that port (detached, background)
+3. The OLD proxy detects `next-proxy.port`, verifies the new proxy is healthy,
+   and enters **forwarding mode**: all requests proxy through to the new instance
+4. Old proxy sets a 10-minute timer and then exits silently
+5. User restarts CC → CC picks up the new proxy directly
 
-From an external terminal:
-1. Start new proxy: `npx tsx proxy/start-proxy.ts --routes ... --port <port>`
-2. Kill old proxy — CC dies
-3. Restart CC — it picks up the new proxy
+**No process is ever killed.** The old proxy dies on its own schedule.
 
-## What definitely doesn't work
+## What CC sees
 
-- Killing the proxy from within CC — instant session death
-- `export ANTHROPIC_BASE_URL=...` in `!` — runs in subshell, doesn't propagate
-- CC auto-recovery — it doesn't exist, CC retries the same port forever
+- During the 10-minute grace period: requests work normally (forwarded transparently)
+- After user restarts CC: CC connects directly to new proxy
+- If user doesn't restart within 10 minutes: old proxy exits, CC sees
+  ConnectionRefused, user must restart anyway
 
 **Related:** [[project-never-kill-proxy]]
