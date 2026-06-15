@@ -18,19 +18,19 @@ DeepClaude runs a local HTTP routing proxy that intercepts Claude Code's Anthrop
 
 ### Data-driven provider registry
 
-The proxy and launcher scripts read from `proxy/providers.json`. The launcher (`proxy/launcher.mjs`) generates `~/.deepclaude/current-routes.json` from it, which the proxy and `statusline.mjs` load at runtime. Config resolution, route construction, and context-limit lookups are centralized in `proxy/launcher.mjs` — a zero-dependency Node.js module shared by both `deepclaude.ps1` and `deepclaude.sh`. This eliminates duplicated provider, config, and context-limit definitions across languages and guarantees behavioral parity.
+The proxy and CLI read from `proxy/providers.json`. The launcher (`proxy/launcher.mjs`) generates `~/.deepclaude/current-routes.json` from it, which the proxy and `statusline.mjs` load at runtime. Config resolution, route construction, and context-limit lookups are centralized in `proxy/launcher.mjs` — a zero-dependency Node.js module shared by `deepclaude.ps1`, `deepclaude.sh`, and `scripts/cli.mjs`. This eliminates duplicated provider, config, and context-limit definitions across languages and guarantees behavioral parity.
 
 <!-- AUTO:providers-schema -->
 <!-- /AUTO:providers-schema -->
 
 ### Launcher scripts
 
-Two thin platform wrappers with identical behavior:
+**`scripts/cli.mjs`** is the single entry point (Node.js) — handles all flag parsing, config resolution, proxy launch, and CC spawn. All subcommands (`--status`, `--models`, `--cost`, `--doctor`, `--dry-run`, etc.) are dispatched from here.
 
-- **`deepclaude.ps1`** — PowerShell 7+ (Windows), parses CLI args, manages processes
-- **`deepclaude.sh`** — Bash 4+ (macOS/Linux), same role
+- **`deepclaude.ps1`** — 15-line PowerShell wrapper, just resolves Node.js and invokes `node scripts/cli.mjs @args`
+- **`deepclaude.sh`** — 10-line Bash wrapper, `exec node scripts/cli.mjs "$@"`
 
-All business logic — config resolution, routes JSON construction, env var computation, slot/thinking overrides, context window calculation — lives in a single **`proxy/launcher.mjs`** Node.js module shared by both wrappers. This eliminates the ~1800 lines of duplicated logic that existed previously and guarantees behavioral parity across platforms.
+Config resolution, routes JSON construction, env var computation, slot/thinking overrides, and context window calculation live in **`proxy/launcher.mjs`** — a zero-dependency Node.js module shared across all entry points. This eliminates the ~1800 lines of duplicated PS1/SH logic and guarantees behavioral parity across platforms.
 
 ### Test coverage
 

@@ -622,6 +622,221 @@ describe('hasPendingToolResult — edge cases', () => {
     const result = hasPendingToolResult(messages);
     expect(result.needsPopulation).toBe(false);
   });
+
+  test('detects "Did 0 searches" response as empty (CC failed search)', () => {
+    const messages = [
+      {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 't7', name: 'web_search', input: { query: 'x' } }],
+      },
+      {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 't7', content: 'Did 0 searches in 3s' }],
+      },
+    ];
+    const result = hasPendingToolResult(messages);
+    expect(result.needsPopulation).toBe(true);
+  });
+
+  test('detects "Error:" prefixed content as empty (CC failed fetch)', () => {
+    const messages = [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: 't8', name: 'web_fetch', input: { url: 'https://x.com' } },
+        ],
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 't8',
+            content: 'Error: ECONNREFUSED',
+          },
+        ],
+      },
+    ];
+    const result = hasPendingToolResult(messages);
+    expect(result.needsPopulation).toBe(true);
+  });
+
+  test('considers "Error: ..." with leading whitespace as empty', () => {
+    const messages = [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: 't9', name: 'web_fetch', input: { url: 'https://x.com' } },
+        ],
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 't9',
+            content: '  Error: Was there a typo in the url or port?',
+          },
+        ],
+      },
+    ];
+    const result = hasPendingToolResult(messages);
+    expect(result.needsPopulation).toBe(true);
+  });
+
+  test('detects "Transport error" as empty', () => {
+    const messages = [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: 't10', name: 'web_fetch', input: { url: 'https://x.com' } },
+        ],
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 't10',
+            content: 'Transport error (GET https://example.com)',
+          },
+        ],
+      },
+    ];
+    const result = hasPendingToolResult(messages);
+    expect(result.needsPopulation).toBe(true);
+  });
+
+  test('detects "fetch failed" as empty', () => {
+    const messages = [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: 't11', name: 'web_fetch', input: { url: 'https://x.com' } },
+        ],
+      },
+      {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 't11', content: 'fetch failed' }],
+      },
+    ];
+    const result = hasPendingToolResult(messages);
+    expect(result.needsPopulation).toBe(true);
+  });
+
+  test('detects "Timed out" as empty', () => {
+    const messages = [
+      {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 't12', name: 'web_search', input: { query: 'x' } }],
+      },
+      {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 't12', content: 'Timed out after 10s' }],
+      },
+    ];
+    const result = hasPendingToolResult(messages);
+    expect(result.needsPopulation).toBe(true);
+  });
+
+  test('detects "No results found" as empty', () => {
+    const messages = [
+      {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 't13', name: 'web_search', input: { query: 'x' } }],
+      },
+      {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 't13', content: 'No results found' }],
+      },
+    ];
+    const result = hasPendingToolResult(messages);
+    expect(result.needsPopulation).toBe(true);
+  });
+
+  test('does NOT flag legitimate results containing "error" mid-content', () => {
+    const messages = [
+      {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 't14', name: 'web_search', input: { query: 'x' } }],
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 't14',
+            content: 'The page discusses error handling in distributed systems...',
+          },
+        ],
+      },
+    ];
+    const result = hasPendingToolResult(messages);
+    expect(result.needsPopulation).toBe(false);
+  });
+
+  test('detects error object { is_error: true } as empty', () => {
+    const messages = [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: 't15', name: 'web_fetch', input: { url: 'https://x.com' } },
+        ],
+      },
+      {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 't15', content: { is_error: true } }],
+      },
+    ];
+    const result = hasPendingToolResult(messages);
+    expect(result.needsPopulation).toBe(true);
+  });
+
+  test('detects error object { error: "msg" } as empty', () => {
+    const messages = [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: 't16', name: 'web_fetch', input: { url: 'https://x.com' } },
+        ],
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 't16',
+            content: { error: 'connection refused' },
+          },
+        ],
+      },
+    ];
+    const result = hasPendingToolResult(messages);
+    expect(result.needsPopulation).toBe(true);
+  });
+
+  test('does NOT flag plain object without error keys as empty', () => {
+    const messages = [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: 't17', name: 'web_fetch', input: { url: 'https://x.com' } },
+        ],
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 't17',
+            content: { status: 200, body: '<html>...' },
+          },
+        ],
+      },
+    ];
+    const result = hasPendingToolResult(messages);
+    expect(result.needsPopulation).toBe(false);
+  });
 });
 
 // =========================================================================

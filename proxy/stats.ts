@@ -813,8 +813,33 @@ let cachedDailySpend = 0;
 const BUDGET_CHECK_THROTTLE_MS = 1000;
 const sessionStarted = new Date().toISOString();
 
-// Run once at startup: repair daily spend from cc-spend ground-truth data
+// Run once at startup: repair daily spend from cc-spend ground-truth data,
+// and clean up cc-spend files older than 3 days (already accounted for).
+function cleanupStaleSpendFiles(): void {
+  try {
+    const ccSpendDir = path.join(os.homedir(), '.deepclaude');
+    if (!fs.existsSync(ccSpendDir)) return;
+    const cutoffMs = Date.now() - 3 * 86400_000;
+    let cleaned = 0;
+    for (const f of fs.readdirSync(ccSpendDir)) {
+      if (!f.startsWith('cc-spend-') || !f.endsWith('.json')) continue;
+      try {
+        const filePath = path.join(ccSpendDir, f);
+        if (fs.statSync(filePath).mtimeMs < cutoffMs) {
+          fs.unlinkSync(filePath);
+          cleaned++;
+        }
+      } catch (_) {}
+    }
+    if (cleaned > 0) {
+      log.info(null, `Cleaned ${cleaned} stale cc-spend files (>3 days old)`);
+    }
+  } catch (_) {
+    /* non-fatal */
+  }
+}
 repairDailySpend();
+cleanupStaleSpendFiles();
 
 let pricingData: Record<string, { input: number; output: number }> = {};
 try {
