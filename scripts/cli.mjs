@@ -706,6 +706,24 @@ pause
   } catch {}
 }
 
+function showAvWarning() {
+  if (!IS_WIN) return;
+  const fixFile = join(DEEPCLAUDE_DIR, 'fix-av.cmd');
+  writeFixAv();
+  console.log(
+    `${C.Y}  ==============================================================================`,
+  );
+  console.log(`  WINDOWS DEFENDER MAY BLOCK THE PROXY.`);
+  console.log(`  If the proxy fails to start or gets deleted, open an ADMIN PowerShell and run:`);
+  console.log(`    ${C.W}${fixFile}${C.Y}`);
+  console.log(
+    `  (That file was just written — it survives AV deletion of the deepclaude directory.)`,
+  );
+  console.log(
+    `  ==============================================================================${C.X}`,
+  );
+}
+
 // ─── Launch ───────────────────────────────────────────────────────────
 
 async function startProxy(routesFile, overridesFile, thinkingOverridesFile, flags) {
@@ -789,8 +807,7 @@ async function launchCC(flags, configs) {
   }
   if (flags.whatif) flags.dryrun = true;
   if (flags.fixav) {
-    writeFixAv();
-    console.log(`\n  Run ${join(DEEPCLAUDE_DIR, 'fix-av.cmd')} as admin.\n`);
+    showAvWarning();
     return;
   }
 
@@ -940,7 +957,7 @@ async function launchCC(flags, configs) {
       routesFile,
       typeof routesJson === 'string' ? routesJson : JSON.stringify(routesJson),
     );
-    writeFixAv();
+    showAvWarning();
     const { port } = await startProxy(
       routesFile,
       overridesFile,
@@ -1060,7 +1077,7 @@ async function launchCC(flags, configs) {
       routesFile,
       typeof routesJson === 'string' ? routesJson : JSON.stringify(routesJson),
     );
-    writeFixAv();
+    showAvWarning();
     const { port } = await startProxy(
       routesFile,
       overridesFile,
@@ -1128,7 +1145,7 @@ async function launchCC(flags, configs) {
   const routesFile = join(DEEPCLAUDE_DIR, 'current-routes.json');
   const overridesFile = join(DEEPCLAUDE_DIR, 'slot-overrides.json');
   writeAtomic(routesFile, typeof routesJson === 'string' ? routesJson : JSON.stringify(routesJson));
-  writeFixAv();
+  showAvWarning();
 
   const { port, proc: proxyProc } = await startProxy(
     routesFile,

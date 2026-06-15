@@ -8,22 +8,17 @@ const cliSource = fs.readFileSync(path.resolve(__dirname, '../../scripts/cli.mjs
 describe('CLI spawn safety invariants', () => {
   // ── DEP0190: no args array + shell:true on the same spawn ──────────
   test('every spawn/spawnSync with shell:true uses shellSafe', () => {
-    // Strategy: find each line with shell:true, then extract the
-    // containing spawn/spawnSync call. The args must come from
-    // ...shellSafe(cmd, ...), which on Windows returns [cmdStr, []].
     const lines = cliSource.split('\n');
     const violations: string[] = [];
 
     for (let i = 0; i < lines.length; i++) {
       if (!lines[i].includes('shell: true')) continue;
 
-      // Search backward (up to 10 lines) for a spawn/spawnSync call
       let foundSpawn = false;
       let foundShellSafe = false;
       for (let j = i; j >= Math.max(0, i - 10); j--) {
         if (/\bspawn(?:Sync)?\s*\(/.test(lines[j])) foundSpawn = true;
         if (/shellSafe\(/.test(lines[j])) foundShellSafe = true;
-        // Break when we hit the start of the spawn expression
         if (foundSpawn) break;
       }
 
@@ -32,8 +27,6 @@ describe('CLI spawn safety invariants', () => {
       }
     }
 
-    // Also: check that no spawnSync('claude', [...]) line uses shell:true
-    // without shellSafe. That specific call at line ~1092 uses hardcoded 'claude'.
     expect(violations).toEqual([]);
   });
 
@@ -62,10 +55,55 @@ describe('CLI spawn safety invariants', () => {
       }
     }
 
-    // Pattern C: const ccArgs = [...] — the variable used in the 4th spawn
+    // Pattern C: const ccArgs = [...] — the variable used in the normal spawn
     const ccMatch = cliSource.match(/const ccArgs = \[([^\]]*)\]/);
     if (ccMatch && !ccMatch[1].includes("'--dangerously-skip-permissions'")) {
       violations.push('ccArgs variable missing --dangerously-skip-permissions');
+    }
+
+    expect(violations).toEqual([]);
+  });
+
+  // ── AV warning on all Windows launch paths ─────────────────────────
+  test('every Windows proxy-launch path calls showAvWarning()', () => {
+    const violations: string[] = [];
+
+    // Find every writeAtomic(routesFile, ...) which is the signal that we're
+    // about to start a proxy for launch. The next meaningful call should be
+    // showAvWarning() (showAvWarning also calls writeFixAv internally).
+    // We check: every startProxy() on a launch path is preceded by
+    // showAvWarning() within 20 lines, OR the path is a pure-Anthropic
+    // launch (no proxy needed).
+    const lines = cliSource.split('\n');
+
+    const startProxyCalls: { line: number; hasAvWarning: boolean }[] = [];
+    for (let i = 0; i < lines.length; i++) {
+      if (/\bstartProxy\(/.test(lines[i])) {
+        // Look backward for showAvWarning() or "isAnthropic" guard
+        let hasAvWarning = false;
+        for (let j = i; j >= Math.max(0, i - 20); j--) {
+          if (lines[j].includes('showAvWarning()')) {
+            hasAvWarning = true;
+            break;
+          }
+          // If we hit a return/process.exit for the Anthropic-only path,
+          // this startProxy is behind a non-Anthropic guard — skip it.
+          if (lines[j].includes('if (isAnthropic)') || lines[j].includes('Anthropic direct')) {
+            break;
+          }
+        }
+        if (!hasAvWarning) {
+          startProxyCalls.push({ line: i + 1, hasAvWarning: false });
+        }
+      }
+    }
+
+    if (startProxyCalls.length > 0) {
+      violations.push(
+        ...startProxyCalls.map(
+          (s) => `Line ${s.line}: startProxy() without preceding showAvWarning() within 20 lines`,
+        ),
+      );
     }
 
     expect(violations).toEqual([]);

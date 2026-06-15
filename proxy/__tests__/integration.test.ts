@@ -10,9 +10,10 @@ const npxCmd = process.platform === 'win32' ? 'npx.cmd' : 'npx';
 const IS_WIN = process.platform === 'win32';
 
 // Shell-safe spawn: avoid DEP0190 on Windows (args + shell:true)
-const winQuote = (s: string) => `"${s.replace(/"/g, '\\"')}"`;
+// Build a single command string for cmd /c — don't double-quote
+// each arg individually as that breaks cmd.exe's argument parsing.
 const shellSafe = (cmd: string, args: string[]): [string, string[]] =>
-  IS_WIN ? [`${winQuote(cmd)} ${args.map(winQuote).join(' ')}`, []] : [cmd, args];
+  IS_WIN ? [`${cmd} ${args.join(' ')}`, []] : [cmd, args];
 
 let proxyProcess: ChildProcess;
 let proxyPort: number;
