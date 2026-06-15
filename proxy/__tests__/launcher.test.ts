@@ -1085,433 +1085,6 @@ describe('resolve→routes→env-vars consistency', () => {
     expect(routeSlots.subagent).toBe(`subagent:ds:${cfgSlots.subagent.model}`);
   });
 });
-
-// ---------------------------------------------------------------------------
-// End-to-end: deepclaude.ps1 config resolution via --dry-run output
-// ---------------------------------------------------------------------------
-describe.skip('deepclaude.ps1 end-to-end (thin wrapper)', () => {
-  const DEEPCLAUDE_PS1 = join(__dirname, '..', '..', 'deepclaude.ps1');
-  const OVERRIDES_FILE = join(homedir(), '.deepclaude', 'slot-overrides.json');
-
-  beforeEach(() => {
-    try {
-      rmSync(OVERRIDES_FILE, { force: true });
-    } catch {}
-  });
-
-  function runDeepClaude(...args: string[]): { stdout: string; stderr: string; status: number } {
-    const r = spawnSync('pwsh', ['-NoLogo', '-File', DEEPCLAUDE_PS1, ...args], {
-      encoding: 'utf-8',
-      timeout: 30000,
-      env: { ...process.env },
-    });
-    return {
-      stdout: r.stdout?.trim() || '',
-      stderr: r.stderr?.trim() || '',
-      status: r.status || 0,
-    };
-  }
-
-  // --- deepclaude.ps1 --dry-run: the output is a routing table from proxy/start-proxy.ts.
-  //     It shows SLOT, PROVIDER (with display name), MODEL, FORMAT, KEY, FALLBACK columns.
-  //     We match on provider names and model IDs within the table.
-
-  test('-b ds+an routes haiku to Anthropic, opus to DeepSeek', () => {
-    const { stdout, stderr } = runDeepClaude('-b', 'ds+an', '--dry-run');
-    expect(stderr).not.toMatch(/Invalid model spec|Unknown provider/);
-    // Dry-run table shows provider display names in the PROVIDER column
-    expect(stdout).toMatch(/haiku\s+an \(Anthropic/);
-    expect(stdout).toMatch(/subagent\s+an \(Anthropic/);
-    expect(stdout).toMatch(/opus\s+ds \(DeepSeek/);
-    expect(stdout).toMatch(/sonnet\s+ds \(DeepSeek/);
-    expect(stdout).toMatch(/fable\s+ds \(DeepSeek/);
-    // Haiku model should be claude-haiku, NOT deepseek
-    expect(stdout).toMatch(/claude-haiku-4-5-20251001/);
-    // Opus model should be deepseek-v4-pro
-    expect(stdout).toMatch(/deepseek-v4-pro/);
-  });
-
-  test('-b ds routes all slots to DeepSeek', () => {
-    const { stdout, stderr } = runDeepClaude('-b', 'ds', '--dry-run');
-    expect(stderr).not.toMatch(/Invalid model spec|Unknown provider/);
-    expect(stdout).toMatch(/haiku\s+ds \(DeepSeek/);
-    expect(stdout).toMatch(/subagent\s+ds \(DeepSeek/);
-    expect(stdout).toMatch(/deepseek-v4-flash/);
-  });
-
-  test('-b ds+oc routes haiku/subagent to OpenCode', () => {
-    const { stdout, stderr } = runDeepClaude('-b', 'ds+oc', '--dry-run');
-    expect(stderr).not.toMatch(/Invalid model spec|Unknown provider/);
-    expect(stdout).toMatch(/opus\s+ds \(DeepSeek/);
-    expect(stdout).toMatch(/haiku\s+oc \(OpenCode/);
-    expect(stdout).toMatch(/subagent\s+oc \(OpenCode/);
-    expect(stdout).toMatch(/big-pickle/);
-  });
-
-  test('dc.ps1-style positional ds+an → -b ds+an routes haiku to Anthropic', () => {
-    const { stdout, stderr } = runDeepClaude('-b', 'ds+an', '--dry-run');
-    expect(stderr).not.toMatch(/Invalid model spec|Unknown provider/);
-    // Haiku should route to Anthropic, NOT DeepSeek
-    expect(stdout).toMatch(/haiku\s+an \(Anthropic/);
-    // Subagent should route to Anthropic
-    expect(stdout).toMatch(/subagent\s+an \(Anthropic/);
-    // Opus/sonnet/fable should route to DeepSeek
-    expect(stdout).toMatch(/opus\s+ds \(DeepSeek/);
-    expect(stdout).toMatch(/sonnet\s+ds \(DeepSeek/);
-    expect(stdout).toMatch(/fable\s+ds \(DeepSeek/);
-    // Verify Anthropic model ID appears (not deepseek)
-    expect(stdout).toMatch(/claude-haiku-4-5-20251001/);
-  });
-
-  test('positional specs build correct ad-hoc routing via launcher.mjs', () => {
-    // Test ad-hoc spec routing through launcher.mjs directly to avoid
-    // PowerShell argument-parsing edge cases with colons in model IDs.
-    const routes = runLauncherJson('build-routes', '--specs=ds:deepseek-v4-pro,oc:big-pickle');
-    // 2 specs: first 3 slots use spec0 (ds), last 2 use spec1 (oc)
-    expect(routes.slots.opus).toBe('opus:ds:deepseek-v4-pro');
-    expect(routes.slots.sonnet).toBe('sonnet:ds:deepseek-v4-pro');
-    expect(routes.slots.haiku).toBe('haiku:ds:deepseek-v4-pro');
-    expect(routes.slots.subagent).toBe('subagent:oc:big-pickle');
-    expect(routes.slots.fable).toBe('fable:oc:big-pickle');
-  });
-
-  test('--dry-run flag after -b CONFIG does NOT pollute AllSpecs (regression)', () => {
-    const { stdout, stderr } = runDeepClaude('-b', 'ds+an', '--dry-run');
-    expect(stderr).not.toMatch(/Invalid model spec|Unknown provider/);
-    // Verifies the config resolved, not fell through to ad-hoc
-    expect(stdout).toMatch(/haiku\s+an \(Anthropic/);
-    expect(stdout).toMatch(/subagent\s+an \(Anthropic/);
-  });
-
-  test('multiple flags after -b CONFIG: AllSpecs stays clean', () => {
-    const { stdout, stderr } = runDeepClaude('-b', 'ds+an', '--dry-run', '--log-all');
-    expect(stderr).not.toMatch(/Invalid model spec|Unknown provider/);
-    expect(stdout).toMatch(/haiku\s+an \(Anthropic/);
-  });
-
-  test('--dry-run -b ds+an (both flag positions) resolves correctly', () => {
-    // --dry-run as $Backend (first pass), -b goes to $ModelSpecs.
-    // The -b isn't processed as a PowerShell param from $ModelSpecs,
-    // so ds+an reaches the DryRun block as a file-name arg, which
-    // start-proxy.ts handles by falling back to current-routes.json.
-    // The -b ds+an --dry-run form is the canonical working syntax.
-    const { stdout, stderr } = runDeepClaude('--dry-run', '-b', 'ds+an');
-    // Doesn't crash
-    expect(stderr).not.toMatch(/Invalid model spec|Unknown provider/);
-    // At minimum, the routing table is printed
-    expect(stdout).toContain('SLOT');
-  });
-
-  test('canonical flag position: -b ds+an --dry-run', () => {
-    const { stdout, stderr } = runDeepClaude('-b', 'ds+an', '--dry-run');
-    expect(stderr).not.toMatch(/Invalid model spec|Unknown provider/);
-    expect(stdout).toMatch(/haiku\s+an \(Anthropic/);
-    expect(stdout).toMatch(/subagent\s+an \(Anthropic/);
-  });
-
-  test('--dry-run --dry-run ds+an: double-flag is resilient', () => {
-    // Second pass re-sees --dry-run but DryRun already true — should not crash.
-    // Also verifies that --dry-run does NOT eat `ds+an` as a DryRunFile,
-    // because ds+an is a known config name (regression: --dry-run consumed
-    // the next arg as a filename if it didn't start with - or contain :).
-    const { stdout, stderr } = runDeepClaude('--dry-run', '--dry-run', 'ds+an');
-    expect(stderr).not.toMatch(/Invalid model spec|Unknown provider/);
-    expect(stdout).toContain('SLOT');
-    // Must show ds+an routing, not default ds
-    expect(stdout).toMatch(/haiku\s+an \(Anthropic/);
-    expect(stdout).toMatch(/subagent\s+an \(Anthropic/);
-  });
-
-  test('--dry-run ds+an: flag-before-config shows ds+an routing', () => {
-    // Regression: --dry-run would consume ds+an as a DryRunFile and
-    // fall through to ds default because the check was only
-    // `-notmatch '^-|:'` — and ds+an contains no colon.
-    const { stdout, stderr } = runDeepClaude('--dry-run', 'ds+an');
-    expect(stderr).not.toMatch(/Invalid model spec|Unknown provider/);
-    expect(stdout).toMatch(/haiku\s+an \(Anthropic/);
-    expect(stdout).toMatch(/subagent\s+an \(Anthropic/);
-    expect(stdout).toMatch(/claude-haiku-4-5-20251001/);
-  });
-
-  test('--dry-run or: flag-before-config shows or routing', () => {
-    // Same as above but for the single-provider-named config (or)
-    const { stdout, stderr } = runDeepClaude('--dry-run', 'or');
-    expect(stderr).not.toMatch(/Invalid model spec|Unknown provider/);
-    expect(stdout).toMatch(/opus\s+or \(OpenRouter/);
-    expect(stdout).toMatch(/haiku\s+or \(OpenRouter/);
-  });
-
-  test('--probe ds+an does not eat config name as probe file', () => {
-    // Regression: $ProbeFile (a [string] param) has no [Parameter()]
-    // attribute, so PowerShell prefix-matches --probe to $ProbeFile
-    // and consumes the next arg (ds+an) as its value. This bypasses
-    // flag normalization entirely. Fix: recover the value into
-    // $Backend/$ModelSpecs before the flag pass.
-    const { stdout, stderr } = runDeepClaude('--probe', 'ds+an');
-    // Must resolve as ds+an config, not try to open ds+an as a file
-    expect(stderr).not.toMatch(/ENOENT.*ds\+an/i);
-    // Must produce probe output for Anthropic haiku (ds+an routes haiku→an)
-    expect(stdout).toContain('an');
-    expect(stdout).toContain('claude-haiku-4-5-20251001');
-  });
-
-  // --- Fail-fast: unknown config errors instead of silently falling back ---
-  test('-b nonexistent --dry-run fails with Unknown config (no silent fallback)', () => {
-    const { stdout, stderr, status } = runDeepClaude('-b', 'nonexistent', '--dry-run');
-    // Must exit non-zero — no silent fallback to "ds"
-    expect(status).not.toBe(0);
-    // Error message must identify the unknown config
-    expect(stderr).toMatch(/Unknown config/);
-    expect(stderr).toMatch(/nonexistent/);
-    // Must NOT show a successful routing table (which would mean it fell back)
-    expect(stdout).not.toMatch(/haiku\s+ds \(DeepSeek/);
-    expect(stdout).not.toMatch(/haiku\s+an \(Anthropic/);
-  });
-
-  test('positional nonexistent-config --dry-run fails (no silent fallback)', () => {
-    const { stdout, stderr, status } = runDeepClaude('nonexistent-config', '--dry-run');
-    // Must exit non-zero
-    expect(status).not.toBe(0);
-    expect(stderr).toMatch(/Unknown config/);
-    // Must NOT fall back silently to ds
-    expect(stdout).not.toMatch(/haiku\s+ds \(DeepSeek/);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// dc.ps1 argument dispatch (4 branches)
-// ---------------------------------------------------------------------------
-describe.skip('dc.ps1 argument dispatch', () => {
-  const DC_PS1 = join(__dirname, '..', '..', 'dc.ps1');
-  const OVERRIDES_FILE = join(homedir(), '.deepclaude', 'slot-overrides.json');
-
-  function runDc(...args: string[]): { stdout: string; stderr: string; status: number } {
-    const r = spawnSync('pwsh', ['-NoLogo', '-File', DC_PS1, ...args], {
-      encoding: 'utf-8',
-      timeout: 30000,
-      env: { ...process.env },
-    });
-    return {
-      stdout: r.stdout?.trim() || '',
-      stderr: r.stderr?.trim() || '',
-      status: r.status || 0,
-    };
-  }
-
-  // Clean up slot-overrides.json before each test. Stale overrides from a
-  // previous config (e.g. ds+an) would poison `dc.ps1`'s own dispatch and
-  // make ds-config tests falsely show Anthropic routing. Removing the file
-  // ensures each test starts from a clean config baseline.
-  beforeEach(() => {
-    try {
-      rmSync(OVERRIDES_FILE, { force: true });
-    } catch {}
-  });
-
-  test('no args → defaults to ds config', () => {
-    // dc.ps1 --dry-run: $args[0]='--dry-run' → matches '^-' → branch 4
-    // → deepclaude.ps1 -b ds --dry-run → ds routing table
-    const { stdout } = runDc('--dry-run');
-    expect(stdout).toMatch(/haiku\s+ds \(DeepSeek/);
-    expect(stdout).toMatch(/deepseek-v4-flash/);
-  });
-
-  // NOTE: branch 1 (dc with no args) starts a real proxy without --dry-run,
-  // which is too slow for CI (~30s timeout). Branches 2, 3, and 4 all accept
-  // --dry-run and are tested below.
-  //
-  // REGRESSION: branch 3 (dc ds+an → positional shortcut) was broken by a
-  // PowerShell $Args/$args name collision in dc.ps1's param block. The param
-  // named $Args collides with PowerShell's automatic $args variable, silently
-  // swallowing the first positional argument. Renamed to $Remaining to fix.
-  // Tests at line 1288 and 1303 verify the fix.
-
-  test('--dry-run as only arg resolves ds config through dc.ps1 (branch 4)', () => {
-    // dc.ps1 --dry-run: Remaining[0]='--dry-run' contains '-' → branch 4
-    // → deepclaude.ps1 -b ds --dry-run → dry-run table for ds
-    const { stdout, stderr } = runDc('--dry-run');
-    // Must not crash with invalid spec errors
-    expect(stderr).not.toMatch(/Invalid model spec|Unknown provider/);
-    // Must produce a valid routing table (SLOT header present)
-    expect(stdout).toContain('SLOT');
-    expect(stdout).toContain('PROVIDER');
-  });
-
-  test('positional ds+an routes haiku/subagent to Anthropic (branch 3)', () => {
-    // dc.ps1 ds+an --dry-run: Remaining[0]='ds+an' → branch 3 shortcut
-    // → deepclaude.ps1 -b ds+an --dry-run
-    const { stdout, stderr } = runDc('ds+an', '--dry-run');
-    expect(stderr).not.toMatch(/Invalid model spec|Unknown provider/);
-    // Haiku and subagent must route to Anthropic, NOT DeepSeek
-    expect(stdout).toMatch(/haiku\s+an \(Anthropic/);
-    expect(stdout).toMatch(/subagent\s+an \(Anthropic/);
-    expect(stdout).toMatch(/claude-haiku-4-5-20251001/);
-    // Opus/sonnet/fable must route to DeepSeek
-    expect(stdout).toMatch(/opus\s+ds \(DeepSeek/);
-    expect(stdout).toMatch(/sonnet\s+ds \(DeepSeek/);
-    expect(stdout).toMatch(/fable\s+ds \(DeepSeek/);
-  });
-
-  test('positional ds+oc routes haiku/subagent to OpenCode (branch 3)', () => {
-    // dc.ps1 ds+oc --dry-run: Remaining[0]='ds+oc' → branch 3 shortcut
-    const { stdout, stderr } = runDc('ds+oc', '--dry-run');
-    expect(stderr).not.toMatch(/Invalid model spec|Unknown provider/);
-    // Haiku and subagent must route to OpenCode
-    expect(stdout).toMatch(/haiku\s+oc \(OpenCode/);
-    expect(stdout).toMatch(/subagent\s+oc \(OpenCode/);
-    expect(stdout).toMatch(/big-pickle/);
-    // Opus/sonnet/fable must route to DeepSeek
-    expect(stdout).toMatch(/opus\s+ds \(DeepSeek/);
-    expect(stdout).toMatch(/sonnet\s+ds \(DeepSeek/);
-    expect(stdout).toMatch(/fable\s+ds \(DeepSeek/);
-  });
-
-  // -------------------------------------------------------------------------
-  // Regression guard: pwsh -File vs & invocation divergence
-  //
-  // BUG (2026-06-13): dc.ps1 had param([string[]]$Args). In pwsh -File
-  // mode, $Args and the automatic $args variable alias to the SAME object,
-  // so the first positional argument (e.g. ds+an) gets silently swallowed.
-  // The fix: NO param() block — bare $args works identically in both
-  // pwsh -File and & invocation paths.
-  //
-  // If someone re-adds a param() block to dc.ps1, these tests MUST fail.
-  // -------------------------------------------------------------------------
-
-  test('dc.ps1 has no param() block (guard against $args/$Args collision)', () => {
-    const src = readFileSync(DC_PS1, 'utf-8');
-    // Must not contain a param(…) declaration. If this fails, someone
-    // re-added a param block — and the param name must NOT be $Args or
-    // $Remaining, because both fragment differently across pwsh -File vs
-    // & invocation. See long comment in dc.ps1 header for the full story.
-    expect(src).not.toMatch(/^\s*param\s*\(/m);
-  });
-
-  test('positional ds+an with extra flag survives dispatch (flag passthrough)', () => {
-    // dc.ps1 ds+an --dry-run --skip-startup-check: both flags must reach
-    // deepclaude.ps1. If --skip-startup-check is lost (stranded in $args
-    // while a param block captured only ds+an), we'd see a full proxy
-    // launch instead of a dry-run table.
-    const { stdout, stderr } = runDc('ds+an', '--dry-run', '--skip-startup-check');
-    expect(stderr).not.toMatch(/Invalid model spec|Unknown provider/);
-    // Must produce dry-run table, NOT launch a proxy
-    expect(stdout).toContain('SLOT');
-    expect(stdout).toContain('PROVIDER');
-    // Haiku routes to Anthropic (the whole point of ds+an)
-    expect(stdout).toMatch(/haiku\s+an \(Anthropic/);
-    expect(stdout).toMatch(/subagent\s+an \(Anthropic/);
-    // The startup check warning banner must NOT appear (--skip-startup-check
-    // suppressed it in deepclaude.ps1, proving the flag survived dispatch)
-    expect(stdout).not.toMatch(
-      /WINDOWS DEFENDER|fix-av\.cmd|==============================================================================/,
-    );
-  });
-
-  test('branch 2 (-b flag) survives dc.ps1 dispatch via pwsh -File', () => {
-    // dc.ps1 -b ds+an --dry-run: first arg matches ^-b → branch 2
-    // → deepclaude.ps1 @args (all args forwarded verbatim)
-    const { stdout, stderr } = runDc('-b', 'ds+an', '--dry-run');
-    expect(stderr).not.toMatch(/Invalid model spec|Unknown provider/);
-    expect(stdout).toContain('SLOT');
-    expect(stdout).toMatch(/haiku\s+an \(Anthropic/);
-    expect(stdout).toMatch(/subagent\s+an \(Anthropic/);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Structural guard: no project .ps1 may use a bare [string[]]$Name param
-// block that risks $args collision. Any [string[]] param MUST be accompanied
-// by a [Parameter(...)] attribute. Without it, pwsh -File invocation strands
-// --flags in the automatic $args while & invocation binds them to the param —
-// splitting the argv differently across call sites. dc.ps1 was broken by this
-// exact pattern (the param was literally named $Args, aliasing the automatic
-// variable). See dc.ps1 header comment for full details.
-// ---------------------------------------------------------------------------
-describe.skip('.ps1 $args collision guard', () => {
-  const PROJECT_PS1 = [
-    join(__dirname, '..', '..', 'dc.ps1'),
-    join(__dirname, '..', '..', 'deepclaude.ps1'),
-    join(__dirname, '..', '..', 'fix-av.ps1'),
-  ];
-
-  test('no project .ps1 has a param() block without [Parameter()] attributes', () => {
-    for (const path of PROJECT_PS1) {
-      const src = readFileSync(path, 'utf-8');
-      // If the file has a param() block at all, verify every [string[]]
-      // param in it is preceded by [Parameter(...)] — not bare.
-      const hasParam = /^\s*param\s*\(/m.test(src);
-      if (!hasParam) continue; // dc.ps1 — correct, uses bare $args
-
-      // Find all [string[]]$Name declarations inside the param block.
-      // A bare [string[]]$Name (no [Parameter(...)] before it on the
-      // same or preceding line) is the dangerous pattern.
-      const lines = src.split('\n');
-      let inParam = false;
-      let parenDepth = 0;
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        if (/^\s*param\s*\(/.test(line)) {
-          inParam = true;
-          parenDepth = 1;
-          // The param(…) line itself may carry the violation on the
-          // same line (e.g. param([string[]]$Args)). Process parens
-          // and check for bare [string[]] before continuing.
-          const afterParam = line.replace(/^\s*param\s*\(/, '');
-          for (const ch of afterParam) {
-            if (ch === '(') parenDepth++;
-            if (ch === ')') {
-              parenDepth--;
-              if (parenDepth <= 0) {
-                inParam = false;
-                break;
-              }
-            }
-          }
-          if (/\[string\[\]\]\s*\$/.test(line)) {
-            const hasParameter =
-              /\[Parameter\s*\(/.test(line) || (i > 0 && /\[Parameter\s*\(/.test(lines[i - 1]));
-            if (!hasParameter) {
-              throw new Error(
-                `${path}:${i + 1}: bare [string[]] param without [Parameter()] attribute.\n` +
-                  `  This causes $args fragmentation between pwsh -File and & invocation.\n` +
-                  `  Add a [Parameter(ValueFromRemainingArguments)] attribute, or remove\n` +
-                  `  the param() block and use bare $args instead (like dc.ps1).`,
-              );
-            }
-          }
-          if (!inParam) continue; // single-line param(...)
-          continue;
-        }
-        if (!inParam) continue;
-        // Track paren depth
-        for (const ch of line) {
-          if (ch === '(') parenDepth++;
-          if (ch === ')') {
-            parenDepth--;
-            if (parenDepth <= 0) {
-              inParam = false;
-              break;
-            }
-          }
-        }
-        // Check for bare [string[]] — no [Parameter( on preceding or current line
-        if (/\[string\[\]\]\s*\$/.test(line)) {
-          const prevLine = i > 0 ? lines[i - 1] : '';
-          const hasParameter = /\[Parameter\s*\(/.test(line) || /\[Parameter\s*\(/.test(prevLine);
-          if (!hasParameter) {
-            throw new Error(
-              `${path}:${i + 1}: bare [string[]] param without [Parameter()] attribute.\n` +
-                `  This causes $args fragmentation between pwsh -File and & invocation.\n` +
-                `  Add a [Parameter(ValueFromRemainingArguments)] attribute, or remove\n` +
-                `  the param() block and use bare $args instead (like dc.ps1).`,
-            );
-          }
-        }
-      }
-    }
-  });
-});
-
 // ---------------------------------------------------------------------------
 // parseSpec edge cases (tested via error output from launcher.mjs)
 // ---------------------------------------------------------------------------
@@ -1624,113 +1197,6 @@ describe('validateProvider missing key', () => {
     // If status is 0, the key is configured — skip assertion
   });
 });
-
-// ---------------------------------------------------------------------------
-// Second-pass flag scanner: edge cases
-// ---------------------------------------------------------------------------
-describe.skip('deepclaude.ps1 second-pass flag scanner', () => {
-  const DEEPCLAUDE_PS1 = join(__dirname, '..', '..', 'deepclaude.ps1');
-
-  function runDC(...args: string[]): { stdout: string; stderr: string; status: number } {
-    const r = spawnSync('pwsh', ['-NoLogo', '-File', DEEPCLAUDE_PS1, ...args], {
-      encoding: 'utf-8',
-      timeout: 30000,
-      env: { ...process.env },
-    });
-    return {
-      stdout: r.stdout?.trim() || '',
-      stderr: r.stderr?.trim() || '',
-      status: r.status || 0,
-    };
-  }
-
-  test('--log-all flag after -b CONFIG is processed', () => {
-    const { stdout, stderr } = runDC('-b', 'ds+an', '--dry-run', '--log-all');
-    expect(stderr).not.toMatch(/Invalid model spec|Unknown provider/);
-    expect(stdout).toMatch(/haiku\s+an \(Anthropic/);
-  });
-
-  test('--skip-startup-check flag after -b CONFIG does not crash', () => {
-    const { stdout, stderr } = runDC('-b', 'ds', '--dry-run', '--skip-startup-check');
-    expect(stderr).not.toMatch(/Invalid model spec|Unknown provider/);
-    expect(stdout).toContain('SLOT');
-  });
-
-  test('--no-thinking flag after -b CONFIG does not crash', () => {
-    const { stdout, stderr } = runDC('-b', 'ds', '--dry-run', '--no-thinking');
-    expect(stderr).not.toMatch(/Invalid model spec|Unknown provider/);
-    expect(stdout).toContain('SLOT');
-  });
-
-  test('unknown flag in second pass still errors', () => {
-    const { stderr, stdout } = runDC('-b', 'ds', '--nonexistent-flag-xyz');
-    // Error may appear in stdout (Write-Host) or stderr
-    const combined = (stdout || '') + (stderr || '');
-    expect(combined).toMatch(/Unknown flag|Invalid model spec/);
-  });
-
-  test('--persist shows deprecation notice (per-session proxies)', () => {
-    // --persist is removed; each session gets its own isolated proxy.
-    const { stderr } = runDC('--persist', '--dry-run', 'ds');
-    // Should not error — old flags print a notice and continue.
-    expect(stderr).not.toMatch(/ERROR/);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// $AllSpecs filter: whitespace and edge cases
-// ---------------------------------------------------------------------------
-describe.skip('$AllSpecs filter edge cases', () => {
-  const DEEPCLAUDE_PS1 = join(__dirname, '..', '..', 'deepclaude.ps1');
-  const OVERRIDES_FILE = join(homedir(), '.deepclaude', 'slot-overrides.json');
-
-  beforeEach(() => {
-    try {
-      rmSync(OVERRIDES_FILE, { force: true });
-    } catch {}
-  });
-
-  function runDC(...args: string[]): { stdout: string; stderr: string; status: number } {
-    const r = spawnSync('pwsh', ['-NoLogo', '-File', DEEPCLAUDE_PS1, ...args], {
-      encoding: 'utf-8',
-      timeout: 30000,
-      env: { ...process.env },
-    });
-    return {
-      stdout: r.stdout?.trim() || '',
-      stderr: r.stderr?.trim() || '',
-      status: r.status || 0,
-    };
-  }
-
-  test('extra flags before config name in positional mode', () => {
-    // Flags consumed by first pass from $Backend, positional spec stays in $ModelSpecs
-    const { stdout, stderr } = runDC('--dry-run', 'ds+an');
-    expect(stderr).not.toMatch(/Invalid model spec/);
-    expect(stdout).toContain('SLOT');
-  });
-
-  test('mixed flags and specs do not break resolution', () => {
-    // deepclaude.ps1 sees: -b ds+an --dry-run --skip-startup-check
-    // First pass: Backend='ds+an', ModelSpecs=@('--dry-run', '--skip-startup-check')
-    // Second pass: strips --dry-run and --skip-startup-check from ModelSpecs
-    // AllSpecs = @('ds+an') after filtering → named config resolves
-    const { stdout, stderr } = runDC('-b', 'ds+an', '--dry-run', '--skip-startup-check');
-    expect(stderr).not.toMatch(/Invalid model spec|Unknown provider/);
-    expect(stdout).toMatch(/haiku\s+an \(Anthropic/);
-  });
-
-  test('$AllSpecs stays clean with trailing flag after positional specs', () => {
-    // This verifies the @() wrapper fix: single spec + flag → still array
-    const { stdout, stderr } = runDC('-b', 'ds+an', '--dry-run');
-    expect(stderr).not.toMatch(/Invalid model spec/);
-    // Verifies named config was resolved (not ad-hoc fallback)
-    expect(stdout).toMatch(/haiku\s+an \(Anthropic/);
-    expect(stdout).toMatch(/subagent\s+an \(Anthropic/);
-    expect(stdout).toMatch(/opus\s+ds \(DeepSeek/);
-  });
-});
-
 // ===========================================================================
 // REGRESSION TESTS — bugs that silently broke config resolution or routing
 // ===========================================================================
@@ -2087,97 +1553,6 @@ describe('REGRESSION: initOverrides cross-contamination prevention', () => {
     expect(result._configName).toBe('ds+an');
   });
 });
-
-// ===========================================================================
-// REGRESSION TESTS — bugs that silently broke config resolution or routing
-// ===========================================================================
-
-// --- Regression: $AllSpecs pipeline-to-scalar unrolling ---
-describe.skip('REGRESSION: pipeline unrolling breaks array indexing', () => {
-  test('dc.ps1 -b ds+an --dry-run routes haiku to Anthropic', () => {
-    const DEEPCLAUDE_PS1 = join(__dirname, '..', '..', 'deepclaude.ps1');
-    const r = spawnSync(
-      'pwsh',
-      ['-NoLogo', '-NoProfile', '-File', DEEPCLAUDE_PS1, '-b', 'ds+an', '--dry-run'],
-      {
-        encoding: 'utf-8',
-        timeout: 30000,
-      },
-    );
-    expect(r.stderr).not.toMatch(/Invalid model spec|Unknown provider/);
-    // Without @(): after WHERE filter, single element → scalar string
-    // $AllSpecs[0] would return 'd' (first char) instead of 'ds+an'
-    // → Resolve-Config 'd' → unknown config → error
-    expect(r.stdout).toMatch(/haiku\s+an \(Anthropic/);
-    expect(r.stdout).toMatch(/subagent\s+an \(Anthropic/);
-    expect(r.stdout).toMatch(/claude-haiku-4-5-20251001/);
-    // Opus must be DeepSeek, NOT Anthropic
-    expect(r.stdout).toMatch(/opus\s+ds \(DeepSeek/);
-    expect(r.stdout).toMatch(/sonnet\s+ds \(DeepSeek/);
-    expect(r.stdout).toMatch(/fable\s+ds \(DeepSeek/);
-  });
-
-  test('-b ds --dry-run resolves default config (no scalar unroll)', () => {
-    const DEEPCLAUDE_PS1 = join(__dirname, '..', '..', 'deepclaude.ps1');
-    const r = spawnSync(
-      'pwsh',
-      ['-NoLogo', '-NoProfile', '-File', DEEPCLAUDE_PS1, '-b', 'ds', '--dry-run'],
-      {
-        encoding: 'utf-8',
-        timeout: 30000,
-      },
-    );
-    expect(r.stderr).not.toMatch(/Invalid model spec|Unknown provider/);
-    expect(r.stdout).toMatch(/haiku\s+ds \(DeepSeek/);
-    expect(r.stdout).toMatch(/deepseek-v4-flash/);
-  });
-});
-
-// --- Regression: initOverrides direct keys visible to proxy ---
-// --- Regression: second-pass flag scanner picks up flags from $ModelSpecs ---
-describe.skip('REGRESSION: second-pass flag scanner', () => {
-  const DEEPCLAUDE_PS1 = join(__dirname, '..', '..', 'deepclaude.ps1');
-
-  function runDC(...args: string[]): { stdout: string; stderr: string; status: number } {
-    const r = spawnSync('pwsh', ['-NoLogo', '-NoProfile', '-File', DEEPCLAUDE_PS1, ...args], {
-      encoding: 'utf-8',
-      timeout: 30000,
-    });
-    return {
-      stdout: r.stdout?.trim() || '',
-      stderr: r.stderr?.trim() || '',
-      status: r.status || 0,
-    };
-  }
-
-  test('--dry-run after -b CONFIG produces routing table (not Launching...)', () => {
-    // Without second-pass scanner: $DryRun=$false, script falls through
-    // to launch path, starts proxy, and tries to pass --dry-run to claude
-    const { stdout } = runDC('-b', 'ds+an', '--dry-run');
-    // Dry-run table (SLOT header), not launch output (no "Launching")
-    expect(stdout).toContain('SLOT');
-    expect(stdout).not.toContain('Launching Claude Code');
-  });
-
-  test('--log-all after -b CONFIG sets env var without crashing', () => {
-    const { stderr } = runDC('-b', 'ds', '--dry-run', '--log-all');
-    expect(stderr).not.toMatch(/Invalid model spec/);
-    expect(stderr).not.toMatch(/Unknown flag/);
-  });
-
-  test('--skip-startup-check after -b CONFIG is handled', () => {
-    const { stderr } = runDC('-b', 'ds', '--dry-run', '--skip-startup-check');
-    expect(stderr).not.toMatch(/Invalid model spec/);
-    expect(stderr).not.toMatch(/Unknown flag/);
-  });
-
-  test('--no-thinking after -b CONFIG is handled', () => {
-    const { stderr } = runDC('-b', 'ds', '--dry-run', '--no-thinking');
-    expect(stderr).not.toMatch(/Invalid model spec/);
-    expect(stderr).not.toMatch(/Unknown flag/);
-  });
-});
-
 // --- Regression: every named config with valid keys resolves without error ---
 describe('REGRESSION: all named configs resolve (with keys)', () => {
   test('every config in config-list resolves and builds routes', () => {
@@ -2752,62 +2127,6 @@ describe('writeAtomic (via CLI)', () => {
     expect(existsSync(tmpFile + '.lock')).toBe(false);
   });
 });
-
-// --- deepclaude.ps1 second-pass scanner: all flag types ---
-describe.skip('deepclaude.ps1 second-pass: every flag after -b CONFIG', () => {
-  const DEEPCLAUDE_PS1 = join(__dirname, '..', '..', 'deepclaude.ps1');
-  function runDC(...args: string[]): { stdout: string; stderr: string; status: number } {
-    const r = spawnSync('pwsh', ['-NoLogo', '-NoProfile', '-File', DEEPCLAUDE_PS1, ...args], {
-      encoding: 'utf-8',
-      timeout: 30000,
-    });
-    return {
-      stdout: r.stdout?.trim() || '',
-      stderr: r.stderr?.trim() || '',
-      status: r.status || 0,
-    };
-  }
-
-  test('--persist flag after -b CONFIG', () => {
-    // --persist starts persistent proxy, so we can't --dry-run with it
-    // Just verify it doesn't crash on flag recognition
-    const { stderr } = runDC('-b', 'ds', '--dry-run');
-    expect(stderr).not.toMatch(/Unknown flag/);
-  });
-
-  test('--help flag after -b CONFIG (exits with help text)', () => {
-    const { stdout } = runDC('-b', 'ds', '--help');
-    expect(stdout).toContain('Usage:');
-  });
-
-  test('--version flag after -b CONFIG', () => {
-    const { stdout } = runDC('-b', 'ds', '--version');
-    expect(stdout).toContain('deepclaude');
-  });
-
-  test('--status flag after -b CONFIG', () => {
-    const { stdout } = runDC('-b', 'ds', '--status');
-    expect(stdout).toContain('Backend Status');
-  });
-
-  test('--cost flag after -b CONFIG', () => {
-    const { stdout } = runDC('-b', 'ds', '--cost');
-    expect(stdout).toContain('Model Pricing');
-  });
-
-  test('--models flag after -b CONFIG', () => {
-    const { stdout } = runDC('-b', 'ds', '--models');
-    expect(stdout).toContain('Available Models');
-  });
-
-  test('--lint flag after -b CONFIG', () => {
-    const { stderr } = runDC('-b', 'ds', '--lint');
-    // Linting may pass or fail (PSScriptAnalyzer may not be installed)
-    // but should NOT be "Unknown flag"
-    expect(stderr).not.toMatch(/Unknown flag/);
-  });
-});
-
 // --- Launcher.mjs main guard ---
 describe('launcher.mjs import without side effects', () => {
   test('importing launcher.mjs does not run main()', () => {
@@ -2831,57 +2150,116 @@ describe('launcher.mjs import without side effects', () => {
     expect(r.stdout).not.toContain('Usage:');
   });
 });
+// ─── scripts/cli.mjs end-to-end tests ─────────────────────────────────
+// Test config resolution, dry-run routing, and flag handling through the
+// real CLI (node scripts/cli.mjs). Catches undefined references, missing
+// imports, and argument parsing bugs.
 
-// --- deepclaude.ps1: verify init-overrides updates are applied ---
-describe.skip('deepclaude.ps1: init-overrides called on launch', () => {
-  const SLOT_FILE = join(homedir(), '.deepclaude', 'slot-overrides.json');
-  const DEEPCLAUDE_PS1 = join(__dirname, '..', '..', 'deepclaude.ps1');
-  let _saved: string | null = null;
+describe('scripts/cli.mjs end-to-end', () => {
+  const CLI_SCRIPT = join(__dirname, '..', '..', 'scripts', 'cli.mjs');
 
-  beforeAll(() => {
-    if (existsSync(SLOT_FILE)) _saved = readFileSync(SLOT_FILE, 'utf-8');
-  });
-  afterAll(() => {
-    if (_saved !== null) writeFileSync(SLOT_FILE, _saved, 'utf-8');
-    else
-      try {
-        rmSync(SLOT_FILE, { force: true });
-      } catch {}
-  });
-  beforeEach(() => {
-    try {
-      rmSync(SLOT_FILE, { force: true });
-    } catch {}
-  });
+  function runCli(...args: string[]): { stdout: string; stderr: string; status: number } {
+    const r = spawnSync('node', [CLI_SCRIPT, ...args], {
+      encoding: 'utf-8',
+      timeout: 30000,
+      env: { ...process.env, DEEPCLAUDE_DEFAULT_BACKEND: 'ds' },
+    });
+    return {
+      stdout: r.stdout?.trim() || '',
+      stderr: r.stderr?.trim() || '',
+      status: r.status || 0,
+    };
+  }
 
-  test('--dry-run does NOT mutate slot-overrides.json', () => {
-    // Dry-run should write to dryrun-routes.json, not slot-overrides
-    const r = spawnSync(
-      'pwsh',
-      ['-NoLogo', '-NoProfile', '-File', DEEPCLAUDE_PS1, '-b', 'ds+an', '--dry-run'],
-      {
-        encoding: 'utf-8',
-        timeout: 30000,
-      },
-    );
-    expect(r.status).toBe(0);
-    // slot-overrides.json should NOT have been created (dry-run skips init-overrides)
-    // Actually, the DryRun block doesn't call init-overrides — verify
-    if (existsSync(SLOT_FILE)) {
-      // If the file exists from a previous run, beforeEach rmSync didn't clean it.
-      // This is expected if another test process wrote it concurrently.
-    }
+  // --- --dry-run routing tables ---
+
+  test('--dry-run -b ds shows all-DeepSeek routing', () => {
+    const { stdout, stderr } = runCli('--dry-run', '-b', 'ds');
+    expect(stderr).not.toMatch(/Error|Invalid model spec|Unknown provider/i);
+    // All slots route to ds
+    expect(stdout).toMatch(/haiku\s+ds\s+\(DeepSeek/);
+    expect(stdout).toMatch(/subagent\s+ds\s+\(DeepSeek/);
+    expect(stdout).toMatch(/opus\s+ds\s+\(DeepSeek/);
+    expect(stdout).toMatch(/deepseek-v4-flash/);
   });
 
-  test('launch path (without --dry-run) calls init-overrides and sets direct keys', () => {
-    // Force the launch path but stop before starting claude
-    // We can't easily do this without starting a proxy, so test the init-overrides
-    // action directly — this is what the launch path calls
-    const result = runLauncherJson('init-overrides', '--name=ds+an');
-    for (const slot of ['opus', 'sonnet', 'haiku', 'subagent', 'fable']) {
-      expect(result[slot]).toBeDefined();
-      expect(typeof result[slot]).toBe('string');
-    }
+  test('--dry-run -b ds+an routes haiku/subagent to Anthropic', () => {
+    const { stdout, stderr } = runCli('--dry-run', '-b', 'ds+an');
+    expect(stderr).not.toMatch(/Error|Invalid model spec|Unknown provider/i);
+    expect(stdout).toMatch(/haiku\s+an\s+\(Anthropic/);
+    expect(stdout).toMatch(/subagent\s+an\s+\(Anthropic/);
+    expect(stdout).toMatch(/opus\s+ds\s+\(DeepSeek/);
+    expect(stdout).toMatch(/claude-haiku-4-5-20251001/);
+  });
+
+  test('--dry-run -b ds+oc routes haiku/subagent to OpenCode', () => {
+    const { stdout, stderr } = runCli('--dry-run', '-b', 'ds+oc');
+    expect(stderr).not.toMatch(/Error|Invalid model spec|Unknown provider/i);
+    expect(stdout).toMatch(/haiku\s+oc\s+\(OpenCode/);
+    expect(stdout).toMatch(/subagent\s+oc\s+\(OpenCode/);
+    expect(stdout).toMatch(/big-pickle/);
+  });
+
+  // --- Unknown config → fail, no silent fallback ---
+
+  test('-b nonexistent --dry-run fails with Unknown config (no silent fallback)', () => {
+    const { stdout, stderr, status } = runCli('--dry-run', '-b', 'nonexistent');
+    expect(status).not.toBe(0);
+    expect(stderr).toMatch(/Unknown config|nonexistent/);
+    expect(stdout).not.toMatch(/haiku\s+ds\s+\(DeepSeek/);
+    expect(stdout).not.toMatch(/haiku\s+an\s+\(Anthropic/);
+  });
+
+  test('positional nonexistent-config --dry-run fails (no silent fallback)', () => {
+    const { stderr, status } = runCli('--dry-run', 'nonexistent-config');
+    expect(status).not.toBe(0);
+    expect(stderr).toMatch(/Unknown config|nonexistent/);
+  });
+
+  // --- Flag passthrough ---
+
+  test('flags after -b CONFIG do not break resolution', () => {
+    const { stdout, stderr } = runCli('--dry-run', '-b', 'ds+an', '--no-thinking');
+    expect(stderr).not.toMatch(/Error|Invalid model spec|Unknown provider/i);
+    expect(stdout).toMatch(/haiku\s+an\s+\(Anthropic/);
+    expect(stdout).toMatch(/subagent\s+an\s+\(Anthropic/);
+  });
+
+  // --- --dry-run flag ordering ---
+
+  test('--dry-run before config name (-b) resolves correctly', () => {
+    const { stdout, stderr } = runCli('--dry-run', '-b', 'ds+an');
+    expect(stderr).not.toMatch(/Error|Invalid model spec|Unknown provider/i);
+    expect(stdout).toMatch(/haiku\s+an\s+\(Anthropic/);
+    expect(stdout).toMatch(/subagent\s+an\s+\(Anthropic/);
+  });
+
+  test('config name before --dry-run (-b) resolves correctly', () => {
+    const { stdout, stderr } = runCli('-b', 'ds+an', '--dry-run');
+    expect(stderr).not.toMatch(/Error|Invalid model spec|Unknown provider/i);
+    expect(stdout).toMatch(/haiku\s+an\s+\(Anthropic/);
+  });
+
+  // --- Ad-hoc specs via --dry-run ---
+
+  test('--dry-run with single adhoc spec replicates across all slots', () => {
+    const { stdout, stderr } = runCli('--dry-run', 'ds:deepseek-v4-pro');
+    expect(stderr).not.toMatch(/Error|Invalid model spec|Unknown provider/i);
+    expect(stdout).toMatch(/opus\s+ds\s+\(DeepSeek/);
+    expect(stdout).toMatch(/fable\s+ds\s+\(DeepSeek/);
+  });
+
+  // --- Smoke: all subcommands that don't need a proxy ---
+
+  test('--health succeeds (no proxy running = graceful no-op)', () => {
+    const { status } = runCli('--health');
+    expect(status).toBe(0);
+  });
+
+  test('--version succeeds and prints semver', () => {
+    const { stdout, stderr, status } = runCli('--version');
+    expect(status).toBe(0);
+    expect(stdout + stderr).toMatch(/v?\d+\.\d+\.\d+/);
   });
 });
 

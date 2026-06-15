@@ -26,6 +26,12 @@ const TSX = join(ROOT, 'node_modules', '.bin', IS_WIN ? 'tsx.cmd' : 'tsx');
 // Claude Code installs as 'claude.cmd' on Windows, 'claude' on Unix.
 const CLAUDE = IS_WIN ? 'claude.cmd' : 'claude';
 
+// ─── Shell-safe spawn helpers (avoid DEP0190 on Windows) ─────────────
+// On Windows, .cmd files require shell:true, but passing args with
+// shell:true triggers Node.js DEP0190. Join into a single command string.
+// NOTE: no per-arg quoting — embedded double quotes break cmd.exe /s parsing.
+const shellSafe = (cmd, args) => (IS_WIN ? [`${cmd} ${args.join(' ')}`, []] : [cmd, args]);
+
 // ─── Colors ──────────────────────────────────────────────────────────
 const C = {
   R: '\x1b[31m',
@@ -528,8 +534,7 @@ async function cmdDoctor(flags, providers, configs) {
       );
       // Start test proxy
       const proxyProc = spawn(
-        NPX,
-        [
+        ...shellSafe(NPX, [
           'tsx',
           PROXY_SCRIPT,
           '--routes',
@@ -538,7 +543,7 @@ async function cmdDoctor(flags, providers, configs) {
           overridesFile,
           '--providers',
           PROVIDERS_PATH,
-        ],
+        ]),
         {
           cwd: ROOT,
           stdio: ['ignore', 'pipe', 'pipe'],
@@ -717,7 +722,7 @@ async function startProxy(routesFile, overridesFile, thinkingOverridesFile, flag
   if (existsSync(thinkingOverridesFile)) args.push('--thinking-overrides', thinkingOverridesFile);
   if (flags.logAll || process.env.DEEPCLAUDE_LOG_ALL_REQUESTS === 'true') args.push('--log-all');
 
-  const proc = spawn(NPX, args, {
+  const proc = spawn(...shellSafe(NPX, args), {
     cwd: ROOT,
     stdio: ['ignore', 'pipe', 'pipe'],
     env: {
@@ -1033,14 +1038,13 @@ async function launchCC(flags, configs) {
   if (flags.remote) {
     if (isAnthropic) {
       const r = spawnSync(
-        CLAUDE,
-        [
+        ...shellSafe(CLAUDE, [
           '--effort',
           flags.effort,
           '--dangerously-skip-permissions',
           'remote-control',
           ...flags.specs,
-        ],
+        ]),
         { stdio: 'inherit', ...(IS_WIN ? { shell: true } : {}) },
       );
       process.exit(r.status || 0);
@@ -1099,11 +1103,19 @@ async function launchCC(flags, configs) {
   // Normal (non-remote) launch
   if (isAnthropic) {
     // Anthropic direct — just launch CC
-    const r = spawnSync(CLAUDE, ['--effort', flags.effort, ...flags.specs], {
-      stdio: 'inherit',
-      env: { ...process.env },
-      ...(IS_WIN ? { shell: true } : {}),
-    });
+    const r = spawnSync(
+      ...shellSafe(CLAUDE, [
+        '--effort',
+        flags.effort,
+        '--dangerously-skip-permissions',
+        ...flags.specs,
+      ]),
+      {
+        stdio: 'inherit',
+        env: { ...process.env },
+        ...(IS_WIN ? { shell: true } : {}),
+      },
+    );
     process.exit(r.status || 0);
   }
 
@@ -1143,8 +1155,8 @@ async function launchCC(flags, configs) {
   for (const uk of envVars._unset || []) delete process.env[uk];
 
   // Launch CC
-  const ccArgs = ['--effort', flags.effort, ...flags.specs];
-  const ccProc = spawn(CLAUDE, ccArgs, {
+  const ccArgs = ['--effort', flags.effort, '--dangerously-skip-permissions', ...flags.specs];
+  const ccProc = spawn(...shellSafe(CLAUDE, ccArgs), {
     stdio: 'inherit',
     env: { ...process.env },
     ...(IS_WIN ? { shell: true } : {}),
