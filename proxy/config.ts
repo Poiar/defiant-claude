@@ -134,6 +134,87 @@ export function tryReadJson(path: string): Record<string, unknown> | null {
     return null;
   }
 }
+
+/**
+ * Validate-then-load: parses a JSON file, checks basic structural invariants,
+ * and only returns a value if both succeed.  Used by hot-reload so a broken
+ * edit (bad syntax, wrong types) never replaces running state — the session
+ * survives with the last-known-good config.
+ */
+
+type JsonSchema = Record<string, 'string' | 'number' | 'boolean' | 'object' | 'array'>;
+
+const ROUTES_SCHEMA: JsonSchema = {
+  routes: 'object',
+  providers: 'object',
+  defaultProvider: 'string',
+};
+
+const OVERRIDES_SCHEMA: JsonSchema = {}; // any flat key→string record is fine
+
+const PROVIDERS_SCHEMA: JsonSchema = {
+  providers: 'object',
+  aliases: 'object',
+  contextLimits: 'object',
+  configs: 'object',
+  pricing: 'object',
+  thinking: 'object',
+};
+
+function safeReadJson(filePath: string, schema: JsonSchema): Record<string, unknown> | null {
+  let data: Record<string, unknown>;
+  try {
+    data = readJson(filePath);
+  } catch (e) {
+    log.warn(
+      null,
+      'hot-reload skipped: ' +
+        path.basename(filePath) +
+        ' is not valid JSON — ' +
+        ((e as Error).message || ''),
+    );
+    return null;
+  }
+
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+    log.warn(null, 'hot-reload skipped: ' + path.basename(filePath) + ' must be a JSON object');
+    return null;
+  }
+
+  for (const [key, expectedType] of Object.entries(schema)) {
+    const value = data[key];
+    if (value === undefined) continue; // optional field
+    if (expectedType === 'array') {
+      if (!Array.isArray(value)) {
+        log.warn(
+          null,
+          'hot-reload skipped: ' +
+            path.basename(filePath) +
+            ' field "' +
+            key +
+            '" must be an array',
+        );
+        return null;
+      }
+    } else if (typeof value !== expectedType) {
+      log.warn(
+        null,
+        'hot-reload skipped: ' +
+          path.basename(filePath) +
+          ' field "' +
+          key +
+          '" must be ' +
+          expectedType +
+          ' (got ' +
+          typeof value +
+          ')',
+      );
+      return null;
+    }
+  }
+
+  return data;
+}
 // --- SSRF validation helper ---
 
 function validateProviderUrls(routing: RoutingConfig): void {
@@ -390,8 +471,12 @@ export async function checkReload(state: ConfigState, parsed: ParsedArgs): Promi
     try {
       const stat = fs.statSync(state.providersFile);
       if (stat.mtimeMs >= state.providersMtime) {
-        const providersData = readJson(state.providersFile) as ProvidersData;
-        if (state.routing) {
+        const providersData = safeReadJson(state.providersFile, PROVIDERS_SCHEMA);
+        if (!providersData) {
+          // Validation failed — log already emitted by safeReadJson.
+          // Update mtime so we don't retry the broken file on every request.
+          state.providersMtime = stat.mtimeMs;
+        } else if (state.routing) {
           const metaChanged = applyProviderMetadata(state.routing, providersData);
           if (metaChanged) {
             changed = true;
@@ -436,34 +521,40 @@ export async function checkReload(state: ConfigState, parsed: ParsedArgs): Promi
     try {
       const stat = fs.statSync(parsed.routesFile);
       if (stat.mtimeMs >= state.routesMtime) {
-        state.routing = readJson(parsed.routesFile) as RoutingConfig;
-        state.routesMtime = stat.mtimeMs;
-        changed = true;
-        validateProviderUrls(state.routing);
+        // Use safeReadJson so a syntax error doesn't replace the running config.
+        const routesData = safeReadJson(parsed.routesFile, ROUTES_SCHEMA);
+        if (routesData) {
+          state.routing = routesData as unknown as RoutingConfig;
+          state.routesMtime = stat.mtimeMs;
+          changed = true;
+          validateProviderUrls(state.routing);
 
-        // Re-patch provider metadata from providers.json (loaded routes
-        // may have stale provider entries). Do this BEFORE reconciling
-        // so the correct provider set is used.
-        if (state.providersFile) {
-          try {
-            const providersData = readJson(state.providersFile) as ProvidersData;
-            applyProviderMetadata(state.routing, providersData);
-          } catch (_) {
-            /* non-fatal */
+          // Re-patch provider metadata from providers.json (loaded routes
+          // may have stale provider entries). Do this BEFORE reconciling
+          // so the correct provider set is used.
+          if (state.providersFile) {
+            try {
+              const providersData = safeReadJson(state.providersFile, PROVIDERS_SCHEMA);
+              if (providersData) {
+                applyProviderMetadata(state.routing, providersData as unknown as ProvidersData);
+              }
+            } catch (_) {
+              /* non-fatal */
+            }
           }
-        }
 
-        // Reconcile circuit breakers: remove entries for providers
-        // that no longer exist in the reloaded config.
-        const providerKeys = new Set(Object.keys(state.routing.providers || {}));
-        reconcileCircuitBreakers(providerKeys);
-        reconcileProviderStats(providerKeys);
-        reloadPricing();
-        resetAliasCache();
-        // Register provider info for circuit breaker auto-probe recovery.
-        // This propagates new/updated providers from hot-reload to the
-        // stats module so the auto-probe scheduler can monitor them.
-        await syncProviderInfo(state.routing);
+          // Reconcile circuit breakers: remove entries for providers
+          // that no longer exist in the reloaded config.
+          const providerKeys = new Set(Object.keys(state.routing.providers || {}));
+          reconcileCircuitBreakers(providerKeys);
+          reconcileProviderStats(providerKeys);
+          reloadPricing();
+          resetAliasCache();
+          // Register provider info for circuit breaker auto-probe recovery.
+          // This propagates new/updated providers from hot-reload to the
+          // stats module so the auto-probe scheduler can monitor them.
+          await syncProviderInfo(state.routing);
+        }
       }
     } catch (e) {
       log.error(null, 'Failed to reload routes: ' + (e as Error).message);
@@ -473,9 +564,12 @@ export async function checkReload(state: ConfigState, parsed: ParsedArgs): Promi
     try {
       const stat = fs.statSync(parsed.overridesFile);
       if (stat.mtimeMs >= state.overridesMtime) {
-        state.slotOverrides = readJson(parsed.overridesFile) as Record<string, string>;
-        state.overridesMtime = stat.mtimeMs;
-        changed = true;
+        const overridesData = safeReadJson(parsed.overridesFile, OVERRIDES_SCHEMA);
+        if (overridesData) {
+          state.slotOverrides = overridesData as Record<string, string>;
+          state.overridesMtime = stat.mtimeMs;
+          changed = true;
+        }
       }
     } catch (e) {
       log.error(null, 'Failed to reload ' + parsed.overridesFile + ': ' + (e as Error).message);

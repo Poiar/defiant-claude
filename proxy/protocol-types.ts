@@ -618,6 +618,32 @@ export const PROVIDER_CONSTRAINTS: Record<string, ProviderConstraints> = {
     stripFields: ['top_k', 'metadata'],
   },
 
+  // --- OpenAI (direct) ---
+  oa: {
+    key: 'oa',
+    format: 'openai',
+    nativeServerTools: false,
+    nativeServerToolUse: false,
+    requiresModelRewrite: true,
+    forbidsToolChoiceWithThinking: false,
+    requiresThinkingEcho: false,
+    thinkingFormat: null,
+    stripFields: ['top_k', 'metadata'],
+  },
+
+  // --- xAI / Grok ---
+  xa: {
+    key: 'xa',
+    format: 'openai',
+    nativeServerTools: false,
+    nativeServerToolUse: false,
+    requiresModelRewrite: true,
+    forbidsToolChoiceWithThinking: false,
+    requiresThinkingEcho: false,
+    thinkingFormat: null,
+    stripFields: ['top_k', 'metadata'],
+  },
+
   // --- Google Gemini ---
   gm: {
     key: 'gm',
@@ -652,7 +678,25 @@ export function getConstraints(key: string): ProviderConstraints {
   };
 }
 
-/** Whether this provider key corresponds to the Anthropic API. */
+/**
+ * When true, the provider speaks native Anthropic with full server-tool support
+ * — no tool conversion, no protocol translation, no server_tool_use injection
+ * needed. The proxy forwards Anthropic-format requests and responses byte-for-byte
+ * (with only additive mutations: thinking-block caching, spend tracking).
+ *
+ * Currently only true for Anthropic direct ("an"). Every other provider requires
+ * some level of translation or field injection.
+ *
+ * Used consistently across start-proxy.ts (preprocessing gate), forward.ts
+ * (response handling), and server-tools.ts (tool conversion decisions) so the
+ * "passthrough" concept is a single checkable predicate, not scattered inline
+ * comparisons.
+ */
+export function isPassthroughProvider(constraints: ProviderConstraints): boolean {
+  return constraints.nativeServerTools && constraints.nativeServerToolUse;
+}
+
+/** @deprecated Use isPassthroughProvider instead. */
 export function isAnthropicProvider(constraints: ProviderConstraints): boolean {
   return constraints.nativeServerTools;
 }

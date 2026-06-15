@@ -1252,39 +1252,49 @@ describe('webFetch', () => {
   });
 
   test('rejects private IPv4 DNS results', async () => {
-    mockDnsLookup.mockResolvedValue([{ address: '127.0.0.1', family: 4 }]);
+    // Private IPs are filtered from validation.addresses; fallback DNS also
+    // returns nothing, so no valid addresses remain.
+    mockValidateUrl.mockResolvedValue({ valid: true, addresses: ['127.0.0.1'] });
+    mockDnsLookup.mockResolvedValue([]);
     const result = await webFetch('https://localhost-secret.example.com');
-    expect(result).toContain('internal/private networks is blocked');
+    expect(result).toContain('Could not resolve hostname to any valid address');
   });
 
   test('rejects link-local IPv4 DNS results', async () => {
-    mockDnsLookup.mockResolvedValue([{ address: '169.254.1.1', family: 4 }]);
+    mockValidateUrl.mockResolvedValue({ valid: true, addresses: ['169.254.1.1'] });
+    mockDnsLookup.mockResolvedValue([]);
     const result = await webFetch('https://link-local.example.com');
-    expect(result).toContain('internal/private networks is blocked');
+    expect(result).toContain('Could not resolve hostname to any valid address');
   });
 
   test('rejects IPv6 loopback', async () => {
-    mockDnsLookup.mockResolvedValue([{ address: '::1', family: 6 }]);
+    mockValidateUrl.mockResolvedValue({ valid: true, addresses: ['::1'] });
+    mockDnsLookup.mockResolvedValue([]);
     const result = await webFetch('https://ipv6-localhost.example.com');
-    expect(result).toContain('internal/private networks is blocked');
+    expect(result).toContain('Could not resolve hostname to any valid address');
   });
 
   test('rejects IPv6 ULA (fc00::/7)', async () => {
-    mockDnsLookup.mockResolvedValue([{ address: 'fc00::1', family: 6 }]);
+    mockValidateUrl.mockResolvedValue({ valid: true, addresses: ['fc00::1'] });
+    mockDnsLookup.mockResolvedValue([]);
     const result = await webFetch('https://ula.example.com');
-    expect(result).toContain('internal/private networks is blocked');
+    expect(result).toContain('Could not resolve hostname to any valid address');
   });
 
   test('rejects DNS resolution failures', async () => {
+    // validateUrl returns valid but without addresses, so the fallback
+    // DNS lookup runs and fails.
+    mockValidateUrl.mockResolvedValue({ valid: true });
     mockDnsLookup.mockRejectedValue(new Error('ENOTFOUND'));
     const result = await webFetch('https://nonexistent-domain-99999.invalid');
     expect(result).toContain('Could not resolve hostname');
   });
 
   test('rejects empty DNS results', async () => {
+    mockValidateUrl.mockResolvedValue({ valid: true });
     mockDnsLookup.mockResolvedValue([]);
     const result = await webFetch('https://no-address.example.com');
-    expect(result).toContain('Could not resolve hostname to any address');
+    expect(result).toContain('Could not resolve hostname to any valid address');
   });
 
   test('fetches HTTPS content successfully', async () => {

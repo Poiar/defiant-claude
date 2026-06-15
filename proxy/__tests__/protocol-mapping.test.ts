@@ -523,7 +523,7 @@ describe('Scenario 4: Full end-to-end pipeline', () => {
     expect(openaiBody.max_tokens).toBe(1024);
   });
 
-  test('confirm all 16 providers have consistent constraints vs providers.json', () => {
+  test('confirm all 19 providers have consistent constraints vs providers.json', () => {
     // Every provider that exists in constraints must have valid thinkingFormat
     for (const [key, c] of Object.entries(PROVIDER_CONSTRAINTS)) {
       // thinkingFormat must be one of the three valid values

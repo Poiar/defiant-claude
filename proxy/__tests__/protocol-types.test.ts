@@ -4,6 +4,7 @@ import {
   PROVIDER_CONSTRAINTS,
   getConstraints,
   isAnthropicProvider,
+  isPassthroughProvider,
   serializeSSEEvent,
   parseSSEEventData,
   parseSSEEventRaw,
@@ -17,14 +18,14 @@ import type {
 } from '../protocol-types';
 
 // =========================================================================
-// ProviderConstraints — all 16 providers validate
+// ProviderConstraints — all 19 providers validate
 // =========================================================================
 
 describe('ProviderConstraints', () => {
   const providers = Object.entries(PROVIDER_CONSTRAINTS);
 
-  test('all 17 providers are configured', () => {
-    expect(Object.keys(PROVIDER_CONSTRAINTS).length).toBe(17);
+  test('all 19 providers are configured', () => {
+    expect(Object.keys(PROVIDER_CONSTRAINTS).length).toBe(19);
   });
 
   test.each(providers)('%s has required fields', (_key, c: ProviderConstraints) => {
@@ -68,6 +69,32 @@ describe('ProviderConstraints', () => {
     expect(or.nativeServerTools).toBe(false);
     expect(or.stripFields).toContain('top_k');
     expect(or.stripFields).toContain('metadata');
+  });
+
+  test('oa (OpenAI direct) has correct values', () => {
+    const oa = PROVIDER_CONSTRAINTS.oa;
+    expect(oa.format).toBe('openai');
+    expect(oa.nativeServerTools).toBe(false);
+    expect(oa.nativeServerToolUse).toBe(false);
+    expect(oa.requiresModelRewrite).toBe(true);
+    expect(oa.forbidsToolChoiceWithThinking).toBe(false);
+    expect(oa.requiresThinkingEcho).toBe(false);
+    expect(oa.thinkingFormat).toBeNull();
+    expect(oa.stripFields).toContain('top_k');
+    expect(oa.stripFields).toContain('metadata');
+  });
+
+  test('xa (xAI / Grok) has correct values', () => {
+    const xa = PROVIDER_CONSTRAINTS.xa;
+    expect(xa.format).toBe('openai');
+    expect(xa.nativeServerTools).toBe(false);
+    expect(xa.nativeServerToolUse).toBe(false);
+    expect(xa.requiresModelRewrite).toBe(true);
+    expect(xa.forbidsToolChoiceWithThinking).toBe(false);
+    expect(xa.requiresThinkingEcho).toBe(false);
+    expect(xa.thinkingFormat).toBeNull();
+    expect(xa.stripFields).toContain('top_k');
+    expect(xa.stripFields).toContain('metadata');
   });
 
   test('all non-Anthropic providers have nativeServerTools: false', () => {
@@ -139,6 +166,43 @@ describe('isAnthropicProvider', () => {
     expect(isAnthropicProvider(PROVIDER_CONSTRAINTS.ds)).toBe(false);
     expect(isAnthropicProvider(PROVIDER_CONSTRAINTS.or)).toBe(false);
     expect(isAnthropicProvider(PROVIDER_CONSTRAINTS.oc)).toBe(false);
+  });
+});
+
+// =========================================================================
+// isPassthroughProvider
+// =========================================================================
+
+describe('isPassthroughProvider', () => {
+  test('returns true only for Anthropic direct (an)', () => {
+    expect(isPassthroughProvider(PROVIDER_CONSTRAINTS.an)).toBe(true);
+  });
+
+  test('returns false for DeepSeek (nativeServerTools=false)', () => {
+    expect(isPassthroughProvider(PROVIDER_CONSTRAINTS.ds)).toBe(false);
+  });
+
+  test('returns false for OpenRouter', () => {
+    expect(isPassthroughProvider(PROVIDER_CONSTRAINTS.or)).toBe(false);
+  });
+
+  test('returns false for Fireworks (format=anthropic but nativeServerToolUse=false)', () => {
+    // Fireworks speaks Anthropic format but doesn't return server_tool_use natively —
+    // the proxy must inject it. isPassthroughProvider requires BOTH nativeServerTools
+    // AND nativeServerToolUse.
+    expect(isPassthroughProvider(PROVIDER_CONSTRAINTS.fw)).toBe(false);
+  });
+
+  test('returns false for every provider except an', () => {
+    for (const [key, c] of Object.entries(PROVIDER_CONSTRAINTS)) {
+      if (key === 'an') continue;
+      expect(isPassthroughProvider(c)).toBe(false);
+    }
+  });
+
+  test('returns false for unknown provider keys (default constraints)', () => {
+    const unknown = getConstraints('some-new-provider');
+    expect(isPassthroughProvider(unknown)).toBe(false);
   });
 });
 

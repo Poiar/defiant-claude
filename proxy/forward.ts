@@ -583,6 +583,17 @@ export function tryForward(
                 // This mirrors what the non-streaming path does with the
                 // already-parsed response body.
                 if (!isOpenAI && parsed && parsed.messages) {
+                  // Parse the SSE payload once for content-block reconstruction.
+                  // parsedPayload was a ReferenceError before the fix — JSON.parse
+                  // is required to turn the raw SSE data into a usable object.
+                  let parsedPayload: Record<string, unknown> | null = null;
+                  try {
+                    parsedPayload = JSON.parse(payload) as Record<string, unknown>;
+                  } catch {
+                    continue; // non-JSON payload — skip block reconstruction
+                  }
+                  // Accumulate content blocks from SSE content_block_* events for
+                  // thinking-block extraction at stream end.
                   try {
                     if (
                       parsedPayload.type === 'content_block_start' &&
@@ -596,12 +607,17 @@ export function tryForward(
                         blockAccumulator.signature = (cb.signature as string) || '';
                       } else if (cb.type === 'text') {
                         blockAccumulator.text = (cb.text as string) || '';
-                      } else if (cb.type === 'tool_use') {
+                      } else if (cb.type === 'tool_use' || cb.type === 'server_tool_use') {
                         blockAccumulator.id = cb.id;
                         blockAccumulator.name = cb.name;
                         blockAccumulator.input = cb.input || {};
                       } else {
-                        // Unknown block type — keep minimal tracking
+                        // Unrecognized content block type — log so operators
+                        // know when Anthropic adds a new block type.
+                        log.warn(
+                          reqId,
+                          'Unrecognized content block type in SSE stream: ' + (cb.type as string),
+                        );
                       }
                     } else if (
                       parsedPayload.type === 'content_block_delta' &&
@@ -631,7 +647,7 @@ export function tryForward(
                       pushAccumulatedBlock();
                     }
                   } catch (_) {
-                    /* non-fatal */
+                    /* non-fatal — reconstruction shouldn't break the stream */
                   }
                 }
               }

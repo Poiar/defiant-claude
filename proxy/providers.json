@@ -144,6 +144,25 @@
       "fallback": ["ds"],
       "streamUsageReporting": "openai_stream_options"
     },
+    "oa": {
+      "displayName": "OpenAI (direct)",
+      "endpoint": "https://api.openai.com/v1",
+      "keyEnv": "OPENAI_API_KEY",
+      "authHeader": "bearer",
+      "wireFormat": "openai",
+      "setupUrl": "https://platform.openai.com/api-keys",
+      "streamUsageReporting": "openai_stream_options"
+    },
+    "xa": {
+      "displayName": "xAI / Grok",
+      "endpoint": "https://api.x.ai/v1",
+      "keyEnv": "XAI_API_KEY",
+      "authHeader": "bearer",
+      "wireFormat": "openai",
+      "setupUrl": "https://console.x.ai",
+      "fallback": ["ds"],
+      "streamUsageReporting": "openai_stream_options"
+    },
     "gm": {
       "displayName": "Google Gemini",
       "endpoint": "https://generativelanguage.googleapis.com",
@@ -179,7 +198,11 @@
     "mistral": "mistral/mistral-large",
     "minimax": "minimax/minimax-m1",
     "glm": "zai/glm-4.5",
-    "doubao": "byteplus/doubao-1.5-pro"
+    "doubao": "byteplus/doubao-1.5-pro",
+    "gpt5": "gpt-5",
+    "gpt5-mini": "gpt-5-mini",
+    "grok": "grok-4",
+    "grok-code": "grok-code-fast"
   },
   "_comment": "contextLimits = max tokens the provider accepts. compactionWindow = CLAUDE_CODE_AUTO_COMPACT_WINDOW (compact threshold). Use ~90-95% of context for models with free unlimited disk cache (DeepSeek) to preserve cache hits — compaction rewrites history, invalidating the prefix and causing expensive cache misses.",
   "contextLimits": {
@@ -205,6 +228,13 @@
     "byteplus/doubao-1.5-pro": 131072,
     "siliconflow/deepseek-v4-pro": 1048576,
     "novita/deepseek-v4-pro": 1048576,
+    "gpt-5": 131072,
+    "gpt-5-mini": 131072,
+    "o4": 200000,
+    "o4-mini": 200000,
+    "grok-4": 131072,
+    "grok-3": 131072,
+    "grok-code-fast": 131072,
     "gemini-2.5-flash": 1048576,
     "gemini-2.5-pro": 2097152,
     "gemini-3.0-flash": 1048576,
@@ -340,6 +370,22 @@
       "sub": "nv:novita/deepseek-v4-pro",
       "fable": "nv:novita/deepseek-v4-pro"
     },
+    "oa": {
+      "name": "OpenAI (direct)",
+      "opus": "oa:gpt-5",
+      "sonnet": "oa:gpt-5",
+      "haiku": "oa:gpt-5-mini",
+      "sub": "oa:gpt-5-mini",
+      "fable": "oa:gpt-5"
+    },
+    "xa": {
+      "name": "xAI / Grok",
+      "opus": "xa:grok-4",
+      "sonnet": "xa:grok-4",
+      "haiku": "xa:grok-code-fast",
+      "sub": "xa:grok-code-fast",
+      "fable": "xa:grok-4"
+    },
     "ds+oc": {
       "name": "DeepSeek + OpenCode subs",
       "opus": "ds:deepseek-v4-pro",
@@ -446,6 +492,34 @@
     "byteplus/doubao-1.5-pro": {
       "input": 0.8,
       "output": 2.0
+    },
+    "gpt-5": {
+      "input": 2.5,
+      "output": 10.0
+    },
+    "gpt-5-mini": {
+      "input": 0.5,
+      "output": 2.0
+    },
+    "o4": {
+      "input": 10.0,
+      "output": 40.0
+    },
+    "o4-mini": {
+      "input": 1.1,
+      "output": 4.4
+    },
+    "grok-4": {
+      "input": 5.0,
+      "output": 15.0
+    },
+    "grok-3": {
+      "input": 3.0,
+      "output": 9.0
+    },
+    "grok-code-fast": {
+      "input": 1.5,
+      "output": 4.5
     },
     "siliconflow/deepseek-v4-pro": {
       "input": 0.435,

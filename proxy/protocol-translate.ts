@@ -669,12 +669,9 @@ export function createStreamTransformer(model: string): Transform {
 // start-proxy.ts (pre-execute → return results immediately), so the
 // interceptor no longer needs to inject server_tool_use counts.
 
-export function createAnthropicStreamInterceptor(
-  _preExecutedSearches: number = 0,
-  originalModel?: string | null,
-): Transform {
+export function createAnthropicStreamInterceptor(originalModel?: string | null): Transform {
   let buf = '';
-  let wsCount = _preExecutedSearches; // web_search count
+  let wsCount = 0; // web_search count
   let wfCount = 0; // web_fetch count
   // Hold back the message_delta event so we can inject server_tool_use
   // into its usage field after we've counted all tool_use blocks.

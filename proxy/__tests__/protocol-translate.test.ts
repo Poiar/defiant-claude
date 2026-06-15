@@ -1453,25 +1453,17 @@ describe('createAnthropicStreamInterceptor server_tool_use', () => {
     expect(deltaIdx).toBeGreaterThan(lastBlockStopIdx);
   });
 
-  test('preExecutedSearches seed is honored', async () => {
+  test('_preExecutedSearches parameter removed — interceptor counts from zero', async () => {
+    // The _preExecutedSearches parameter was removed because pre-executed
+    // searches are reported in populateToolResults (request-side), while
+    // the interceptor counts tool_use invocations in the response stream.
+    // These are disjoint — seeding was always 0 in production.
     const input = makeAnthroSSE({ tools: [{ name: 'web_search' }] });
-    const { events } = await new Promise<{
-      events: Array<{ event: string; data: Record<string, unknown> }>;
-    }>((resolve, reject) => {
-      const transformer = createAnthropicStreamInterceptor(5);
-      let output = '';
-      transformer.on('data', (chunk: string) => {
-        output += chunk.toString();
-      });
-      transformer.on('end', () => resolve({ events: parseSSE(output) }));
-      transformer.on('error', reject);
-      transformer.write(input);
-      transformer.end();
-    });
+    const { events } = await collectAnthroStream(input);
 
     const deltaEvent = events.find((e) => e.event === 'message_delta');
     const usage = (deltaEvent!.data as any).usage;
-    expect(usage.server_tool_use.web_search_requests).toBe(6); // 5 seed + 1 from stream
+    expect(usage.server_tool_use.web_search_requests).toBe(1); // only from stream
   });
 
   test('preserves upstream server_tool_use when already present (does not overwrite)', async () => {
@@ -1512,7 +1504,7 @@ describe('createAnthropicStreamInterceptor server_tool_use', () => {
     const { events } = await new Promise<{
       events: Array<{ event: string; data: Record<string, unknown> }>;
     }>((resolve, reject) => {
-      const transformer = createAnthropicStreamInterceptor(0, 'haiku:claude-haiku-4-5-20251001');
+      const transformer = createAnthropicStreamInterceptor('haiku:claude-haiku-4-5-20251001');
       let output = '';
       transformer.on('data', (chunk: string) => {
         output += chunk.toString();

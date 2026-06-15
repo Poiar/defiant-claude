@@ -1273,7 +1273,7 @@ if (probeIdx >= 2) {
                     : null) ||
                   model ||
                   null;
-                streamTransformer = createAnthropicStreamInterceptor(0, ccModel);
+                streamTransformer = createAnthropicStreamInterceptor(ccModel);
               }
             } catch (e) {
               log.error(reqId, 'thinking injection error: ' + truncateForLog((e as Error).message));
