@@ -837,6 +837,51 @@ describe('hasPendingToolResult — edge cases', () => {
     const result = hasPendingToolResult(messages);
     expect(result.needsPopulation).toBe(false);
   });
+
+  test('matches native Anthropic tool name web_search_20260209', () => {
+    const messages = [
+      {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 't18', name: 'web_search_20260209', input: { query: 'x' } }],
+      },
+      {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 't18', content: '' }],
+      },
+    ];
+    const result = hasPendingToolResult(messages);
+    expect(result.needsPopulation).toBe(true);
+  });
+
+  test('matches native Anthropic tool name web_fetch_20260209', () => {
+    const messages = [
+      {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 't19', name: 'web_fetch_20260209', input: { url: 'https://x.com' } }],
+      },
+      {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 't19', content: 'Error: ECONNREFUSED' }],
+      },
+    ];
+    const result = hasPendingToolResult(messages);
+    expect(result.needsPopulation).toBe(true);
+  });
+
+  test('matches url_fetch_ native tool name', () => {
+    const messages = [
+      {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 't20', name: 'url_fetch_20241022', input: { url: 'https://x.com' } }],
+      },
+      {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 't20', content: '' }],
+      },
+    ];
+    const result = hasPendingToolResult(messages);
+    expect(result.needsPopulation).toBe(true);
+  });
 });
 
 // =========================================================================
