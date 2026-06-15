@@ -22,7 +22,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEEPCLAUDE_DIR="${HOME}/.deepclaude"
-PROXY_STATE_FILE="${DEEPCLAUDE_DIR}/proxy.json"
 CURRENT_ROUTES_FILE="${DEEPCLAUDE_DIR}/current-routes.json"
 SLOT_OVERRIDES_FILE="${DEEPCLAUDE_DIR}/slot-overrides.json"
 SUBMODEL_FILE="${DEEPCLAUDE_DIR}/subagent-model.json"
@@ -159,40 +158,17 @@ launcher_mjs() {
     node "$LAUNCHER_MJS" "$@"
 }
 
-# --- Persistent proxy state management ---
-get_proxy_state() {
-    if [[ ! -f "$PROXY_STATE_FILE" ]]; then return 1; fi
-    local pid port
-    pid=$(jq -r '.pid' "$PROXY_STATE_FILE" 2>/dev/null) || return 1
-    port=$(jq -r '.port' "$PROXY_STATE_FILE" 2>/dev/null) || return 1
-    # Check if process is alive
-    if ! kill -0 "$pid" 2>/dev/null; then
-        rm -f "$PROXY_STATE_FILE"
-        return 1
-    fi
-    # Check if port is listening
-    if ! command -v nc &>/dev/null || ! nc -z 127.0.0.1 "$port" 2>/dev/null; then
-        if ! (command -v bash && echo >"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then
-            rm -f "$PROXY_STATE_FILE"
-            return 1
-        fi
-    fi
-    echo "$pid" "$port"
-    return 0
-}
+# Proxy state functions removed — each session runs its own isolated proxy.
+# Per-session proxy ports are discovered via ANTHROPIC_BASE_URL env var.
 
-save_proxy_state() {
-    local pid="$1" port="$2" routes_file="$3"
-    mkdir -p -m 700 "$DEEPCLAUDE_DIR"
-    local state
-    state=$(jq -n --arg pid "$pid" --arg port "$port" --arg routes "$routes_file" \
-        --arg started "$(date -Iseconds)" \
-        '{pid: ($pid | tonumber), port: ($port | tonumber), routesFile: $routes, startedAt: $started}')
-    write_atomic "$PROXY_STATE_FILE" "$state"
-}
-
-clear_proxy_state() {
-    rm -f "$PROXY_STATE_FILE"
+# Simple helper: check if a proxy is running by reading proxy.port file
+get_proxy_port() {
+    local port_file="${DEEPCLAUDE_DIR}/proxy.port"
+    if [[ -f "$port_file" ]]; then
+        cat "$port_file"
+        return 0
+    fi
+    return 1
 }
 
 # --- Slot overrides ---
@@ -377,7 +353,7 @@ stop_proxy_info() {
     if [[ -n "${watchdog_pid:-}" ]] && kill -0 "$watchdog_pid" 2>/dev/null; then
         kill "$watchdog_pid" 2>/dev/null || true
     fi
-    clear_proxy_state
+    rm -f "${DEEPCLAUDE_DIR}/proxy.port"
 }
 
 # --- Set CC environment variables ---
@@ -462,22 +438,11 @@ show_stats() {
     echo "  deepclaude - Proxy Stats"
     echo "  ==========================="
 
-    if [[ ! -f "$PROXY_STATE_FILE" ]]; then
+    if ! port=$(get_proxy_port); then
         echo ""
         echo "  No proxy running. Start a proxy first with any backend."
         echo ""
         exit 0
-    fi
-
-    local port pid
-    port=$(jq -r '.port' "$PROXY_STATE_FILE" 2>/dev/null) || { echo "  Failed to read proxy state."; exit 1; }
-    pid=$(jq -r '.pid' "$PROXY_STATE_FILE" 2>/dev/null) || { echo "  Failed to read proxy PID."; exit 1; }
-
-    if ! kill -0 "$pid" 2>/dev/null; then
-        echo "  Proxy process (PID $pid) is no longer running."
-        echo "  Removing stale state file..."
-        rm -f "$PROXY_STATE_FILE"
-        exit 1
     fi
 
     local health
@@ -681,10 +646,7 @@ show_help() {
     echo "  --fix-av               Windows Defender exclusion reminder"
     echo "  --install-statusline   Install status bar showing model, effort, context (requires restart)"
     echo "  --set-slot SLOT MODEL  Override a slot: opus/sonnet/haiku/subagent/fable"
-    echo "  --persist       Keep proxy running after CC exits"
     echo "  --remote              Browser-based remote control (starts proxy automatically)"
-    echo "  --switch CONFIG  Switch active config of a running persistent proxy"
-    echo "  --stop-proxy    Kill the persistent proxy"
     echo "  --probe [FILE]  Test each configured provider with a minimal prompt"
     echo "  --dry-run [FILE] Show resolved routing table without starting proxy"
     echo "  --dashboard     Start proxy and print health dashboard URL"
@@ -694,12 +656,6 @@ show_help() {
     echo "  --version       Show version and script location"
     echo "  -h, --help      This help"
     echo ""
-    echo "Session switching workflow:"
-    echo "  1. deepclaude -b ds --persist     Start proxy + session, keep proxy alive"
-    echo "  2. deepclaude --switch or         Switch proxy backend to OpenRouter"
-    echo "  3. /model or:new-model            Switch opus within running session"
-    echo "  4. deepclaude --set-slot haiku or:model  Override a single slot"
-    echo "  5. deepclaude --stop-proxy        Kill the persistent proxy"
     echo ""
     echo "Note: --fix-av is Windows-only. --lint runs shellcheck on this script (bash only)."
     echo ""
@@ -770,9 +726,9 @@ show_models() {
     done
 
     # Show slot overrides if proxy is running
-    if get_proxy_state &>/dev/null; then
+    if port=$(get_proxy_port 2>/dev/null); then
         echo ""
-        echo "  Persistent proxy: RUNNING"
+        echo "  Proxy: RUNNING on port $port"
 
         if [[ -f "$SLOT_OVERRIDES_FILE" ]]; then
             local override_keys
@@ -1076,7 +1032,7 @@ handle_set_slot() {
 
     write_atomic "$SLOT_OVERRIDES_FILE" "$(echo "$overrides" | jq -c '.')"
 
-    if get_proxy_state &>/dev/null; then
+    if port=$(get_proxy_port 2>/dev/null); then
         echo "  Proxy is running -- change takes effect immediately."
     else
         echo "  No proxy running. Override saved for next launch."
@@ -1123,7 +1079,7 @@ handle_subagent_model() {
     echo ""
     echo "  Set dedicated subagent model: $model"
 
-    if get_proxy_state &>/dev/null; then
+    if port=$(get_proxy_port 2>/dev/null); then
         echo "  Proxy is running -- change takes effect immediately."
     else
         echo "  No proxy running. Subagent model saved for next launch."
@@ -1131,68 +1087,9 @@ handle_subagent_model() {
     echo ""
 }
 
-handle_switch() {
-    local target="$1"
-
-    mkdir -p -m 700 "$DEEPCLAUDE_DIR"
-
-    local config_name slot_data
-    if [[ -n "${CONFIG_NAME[$target]:-}" ]]; then
-        config_name=$(resolve_config "$target" | head -1)
-        slot_data=$(resolve_config "$target" | tail -n +2)
-    else
-        # Treat as ad-hoc specs
-        local specs=($target)
-        config_name="Ad-hoc"
-        slot_data=$(build_adhoc_config "${specs[@]}" | tail -n +2)  # skip name line
-    fi
-
-    local routes_json
-    if [[ -n "${CONFIG_NAME[$target]:-}" ]]; then
-        routes_json=$(launcher_mjs build-routes --name="$target")
-    else
-        routes_json=$(launcher_mjs build-routes --specs="$target")
-    fi
-
-    write_atomic "$CURRENT_ROUTES_FILE" "$routes_json"
-
-    local proxy_state proxy_pid proxy_port
-    if proxy_state=$(get_proxy_state); then
-        read -r proxy_pid proxy_port <<< "$proxy_state"
-        echo ""
-        echo "  Proxy routes updated to: $config_name"
-        echo "  Proxy on port $proxy_port (persistent)"
-    else
-        echo ""
-        echo "  Starting persistent proxy for $config_name..."
-        local port proxy_pid
-        read -r port proxy_pid <<< "$(start_proxy "$CURRENT_ROUTES_FILE")"
-        save_proxy_state "$proxy_pid" "$port" "$CURRENT_ROUTES_FILE"
-        echo "  Proxy on port $port"
-    fi
-
-    # Initialize slot overrides via unified engine
-    if [[ -n "${CONFIG_NAME[$target]:-}" ]]; then
-        launcher_mjs init-overrides --name="$target" > /dev/null
-    else
-        launcher_mjs init-overrides --specs="$target" > /dev/null
-    fi
-
-    echo "  Slot mappings:"
-    while IFS=' ' read -r slot prov model; do
-        printf "    %-10s %s:%s  ->  %s\n" "$slot" "$prov" "$model" "${PROVIDER_NAME[$prov]}"
-    done <<< "$slot_data"
-
-    echo ""
-    echo "  Use /model providerKey:modelId in Claude Code to switch individual models."
-    echo "  Use 'deepclaude --stop-proxy' to stop the proxy when done."
-    echo ""
-}
-
 # --- Main ---
 ACTION="launch"
 BACKEND=""
-PERSIST=false
 REMOTE=false
 EFFORT="max"
 declare -a SPECS=()
@@ -1218,8 +1115,9 @@ while [[ $# -gt 0 ]]; do
                 *) echo "ERROR: Invalid effort level '$EFFORT'. Valid values: low, medium, high, max" >&2; exit 1 ;;
             esac
             shift 2 ;;
-        --persist)
-            PERSIST=true; shift ;;
+        --persist|--switch|--stop-proxy)
+            echo "NOTE: $1 is removed. Each session now runs its own isolated proxy." >&2
+            shift ;;
         --status)
             ACTION="status"; shift ;;
         --stats)
@@ -1258,8 +1156,6 @@ while [[ $# -gt 0 ]]; do
             echo "Added to $settings"
             exit 0
             ;;
-        --stop-proxy)
-            ACTION="stop-proxy"; shift ;;
         --dashboard)
             DASHBOARD=true; shift ;;
         --open)
@@ -1292,10 +1188,6 @@ while [[ $# -gt 0 ]]; do
             SUBAGENT_MODEL="${2:-}"
             ACTION="subagent-model"
             if [[ -n "${2:-}" && "$2" != -* ]]; then shift 2; else shift; fi
-            ;;
-        --switch)
-            ACTION="switch"
-            SWITCH_TARGET="$2"; shift 2
             ;;
         --lint)
             echo ""; echo "  Linting deepclaude.sh with shellcheck..."; echo ""
@@ -1358,10 +1250,8 @@ cleanup_proxy() {
     if [[ -n "${watchdog_pid:-}" ]]; then
         kill "$watchdog_pid" 2>/dev/null || true
     fi
-    if ! $PERSIST; then
-        if [[ -n "${proxy_pid:-}" ]]; then
-            stop_proxy_info "$proxy_pid"
-        fi
+    if [[ -n "${proxy_pid:-}" ]]; then
+        stop_proxy_info "$proxy_pid"
     fi
     clear_anthropic_env
 }
@@ -1371,7 +1261,7 @@ case "$ACTION" in
         local log_path="${DEEPCLAUDE_DIR}/proxy.log"
         if [[ ! -f "$log_path" ]]; then
             echo "No proxy log found at $log_path"
-            echo "Start the proxy first with: deepclaude --persist"
+            echo "Start the proxy first with: deepclaude"
             exit 1
         fi
         echo "Tailing $log_path (Ctrl+C to stop)..."
@@ -1444,18 +1334,8 @@ case "$ACTION" in
         echo ""
         "${SCRIPT_DIR}/node_modules/.bin/tsx" "${SCRIPT_DIR}/proxy/config-lint.ts"
         exit $? ;;
-    stop-proxy)
-        if proxy_state=$(get_proxy_state); then
-            read -r pid port <<< "$proxy_state"
-            stop_proxy_info "$pid"
-            echo "  Proxy stopped."
-        else
-            echo "  No persistent proxy is running."
-        fi
-        ;;
     set-slot)   handle_set_slot "$SLOT_NAME" "$SLOT_MODEL" ;;
     subagent-model) handle_subagent_model "$SUBAGENT_MODEL" ;;
-    switch)     handle_switch "$SWITCH_TARGET" ;;
     remote)
         if [[ "$BACKEND" == "anthropic" ]]; then
             clear_anthropic_env
@@ -1499,17 +1379,9 @@ case "$ACTION" in
 
         proxy_port="" proxy_pid=""
         mkdir -p -m 700 "$DEEPCLAUDE_DIR"
-
-        if proxy_state=$(get_proxy_state); then
-            read -r proxy_pid proxy_port <<< "$proxy_state"
-            echo "  Reusing persistent proxy on port $proxy_port"
-            write_atomic "$CURRENT_ROUTES_FILE" "$routes_json"
-        else
-            write_atomic "$CURRENT_ROUTES_FILE" "$routes_json"
-            read -r proxy_port proxy_pid <<< "$(start_proxy "$CURRENT_ROUTES_FILE")"
-            save_proxy_state "$proxy_pid" "$proxy_port" "$CURRENT_ROUTES_FILE"
-            echo "  Proxy on :$proxy_port (persistent)"
-        fi
+        write_atomic "$CURRENT_ROUTES_FILE" "$routes_json"
+        read -r proxy_port proxy_pid <<< "$(start_proxy "$CURRENT_ROUTES_FILE")"
+        echo "  Proxy on :$proxy_port"
 
         watchdog_pid=""
         if [[ "${DEEPCLAUDE_WATCHDOG:-}" == "true" ]] && [[ -n "$proxy_pid" ]]; then
@@ -1529,7 +1401,6 @@ case "$ACTION" in
                     read -r restart_port restart_pid <<< "$(start_proxy "$CURRENT_ROUTES_FILE")" || true
                     if [[ -n "$restart_pid" ]] && [[ -n "$restart_port" ]]; then
                         proxy_pid="$restart_pid"
-                        save_proxy_state "$restart_pid" "$restart_port" "$CURRENT_ROUTES_FILE"
                     fi
                 done
                 if [[ $restart_count -ge $max_restarts ]]; then
@@ -1584,9 +1455,7 @@ case "$ACTION" in
         if [[ $claude_exit -ne 0 ]]; then
             test_context_length_error "$(tail -5 ~/.claude/debug.log 2>/dev/null || true)"
         fi
-        if ! $PERSIST; then
-            stop_proxy_info "$proxy_pid"
-        fi
+        stop_proxy_info "$proxy_pid"
         clear_anthropic_env
         exit $claude_exit
         ;;
@@ -1611,20 +1480,9 @@ case "$ACTION" in
         mkdir -p -m 700 "$DEEPCLAUDE_DIR"
         proxy_port="" proxy_pid=""
 
-        if proxy_state=$(get_proxy_state); then
-            read -r proxy_pid proxy_port <<< "$proxy_state"
-            echo "  Reusing persistent proxy on :$proxy_port"
-            write_atomic "$CURRENT_ROUTES_FILE" "$routes_json"
-        else
-            write_atomic "$CURRENT_ROUTES_FILE" "$routes_json"
-            read -r proxy_port proxy_pid <<< "$(start_proxy "$CURRENT_ROUTES_FILE")"
-            if $PERSIST; then
-                save_proxy_state "$proxy_pid" "$proxy_port" "$CURRENT_ROUTES_FILE"
-                echo "  Proxy on :$proxy_port (persistent)"
-            else
-                echo "  Proxy on :$proxy_port"
-            fi
-        fi
+        write_atomic "$CURRENT_ROUTES_FILE" "$routes_json"
+        read -r proxy_port proxy_pid <<< "$(start_proxy "$CURRENT_ROUTES_FILE")"
+        echo "  Proxy on :$proxy_port"
 
         watchdog_pid=""
         if [[ "${DEEPCLAUDE_WATCHDOG:-}" == "true" ]] && [[ -n "$proxy_pid" ]]; then
@@ -1644,7 +1502,6 @@ case "$ACTION" in
                     read -r restart_port restart_pid <<< "$(start_proxy "$CURRENT_ROUTES_FILE")" || true
                     if [[ -n "$restart_pid" ]] && [[ -n "$restart_port" ]]; then
                         proxy_pid="$restart_pid"
-                        save_proxy_state "$restart_pid" "$restart_port" "$CURRENT_ROUTES_FILE"
                     fi
                 done
                 if [[ $restart_count -ge $max_restarts ]]; then
@@ -1758,20 +1615,9 @@ case "$ACTION" in
         mkdir -p -m 700 "$DEEPCLAUDE_DIR"
         proxy_port="" proxy_pid=""
 
-        if proxy_state=$(get_proxy_state); then
-            read -r proxy_pid proxy_port <<< "$proxy_state"
-            echo "  Reusing persistent proxy on :$proxy_port"
-            write_atomic "$CURRENT_ROUTES_FILE" "$routes_json"
-        else
-            write_atomic "$CURRENT_ROUTES_FILE" "$routes_json"
-            read -r proxy_port proxy_pid <<< "$(start_proxy "$CURRENT_ROUTES_FILE")"
-            if $PERSIST; then
-                save_proxy_state "$proxy_pid" "$proxy_port" "$CURRENT_ROUTES_FILE"
-                echo "  Proxy on :$proxy_port (persistent)"
-            else
-                echo "  Proxy on :$proxy_port"
-            fi
-        fi
+        write_atomic "$CURRENT_ROUTES_FILE" "$routes_json"
+        read -r proxy_port proxy_pid <<< "$(start_proxy "$CURRENT_ROUTES_FILE")"
+        echo "  Proxy on :$proxy_port"
 
         watchdog_pid=""
         if [[ "${DEEPCLAUDE_WATCHDOG:-}" == "true" ]] && [[ -n "$proxy_pid" ]]; then
@@ -1791,7 +1637,6 @@ case "$ACTION" in
                     read -r restart_port restart_pid <<< "$(start_proxy "$CURRENT_ROUTES_FILE")" || true
                     if [[ -n "$restart_pid" ]] && [[ -n "$restart_port" ]]; then
                         proxy_pid="$restart_pid"
-                        save_proxy_state "$restart_pid" "$restart_port" "$CURRENT_ROUTES_FILE"
                     fi
                 done
                 if [[ $restart_count -ge $max_restarts ]]; then

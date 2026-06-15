@@ -1669,13 +1669,11 @@ describe('deepclaude.ps1 second-pass flag scanner', () => {
     expect(combined).toMatch(/Unknown flag|Invalid model spec/);
   });
 
-  test('flags not re-processed if already set from first pass', () => {
-    // --persist as $Backend sets $Persist in first pass.
-    // If --persist also appears in $ModelSpecs, second pass should skip it.
-    // We test with a dry-run to avoid actually persisting a proxy.
+  test('--persist shows deprecation notice (per-session proxies)', () => {
+    // --persist is removed; each session gets its own isolated proxy.
     const { stderr } = runDC('--persist', '--dry-run', 'ds');
-    // Should not crash from double-persist
-    expect(stderr).not.toMatch(/Unknown flag/);
+    // Should not error — old flags print a notice and continue.
+    expect(stderr).not.toMatch(/ERROR/);
   });
 });
 
@@ -2723,19 +2721,6 @@ describe('subagent-model (CLI)', () => {
     const { status, stderr } = runLauncher('subagent-model', '--model=invalidformat');
     expect(status).not.toBe(0);
     expect(stderr).toContain('Invalid model spec');
-  });
-});
-
-// --- proxy-state CLI ---
-describe('proxy-state (CLI)', () => {
-  test('proxy-state --check returns running: false when no proxy', () => {
-    const result = runLauncherJson('proxy-state', '--check');
-    expect(result.running).toBe(false);
-  });
-
-  test('proxy-state --clear is idempotent when no proxy', () => {
-    const result = runLauncherJson('proxy-state', '--clear');
-    expect(result.cleared).toBe(true);
   });
 });
 

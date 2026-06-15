@@ -476,14 +476,14 @@ describe('statusline DeepSeek milestone tags', () => {
 });
 
 describe('statusline proxy port', () => {
-  test('shows proxy port when proxy.json exists with port', () => {
-    writeFileSync(join(tmpDir, 'proxy.json'), JSON.stringify({ pid: 12345, port: 49999 }));
+  test('shows proxy port from ANTHROPIC_BASE_URL', () => {
     writeFileSync(join(tmpDir, 'spend.json'), JSON.stringify({}));
 
     const result = runStatusline({
       stdin: makeCcJson(),
       env: {
         ...process.env,
+        ANTHROPIC_BASE_URL: 'http://127.0.0.1:49999',
         DEEPCLAUDE_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
@@ -495,14 +495,14 @@ describe('statusline proxy port', () => {
     expect(plain).toContain('49999');
   });
 
-  test('shows proxy port from proxy.pid when proxy.json is absent', () => {
-    writeFileSync(join(tmpDir, 'proxy.pid'), '54321:50123');
+  test('shows proxy port from DEEPCLAUDE_PROXY_PORT fallback', () => {
     writeFileSync(join(tmpDir, 'spend.json'), JSON.stringify({}));
 
     const result = runStatusline({
       stdin: makeCcJson(),
       env: {
         ...process.env,
+        DEEPCLAUDE_PROXY_PORT: '50123',
         DEEPCLAUDE_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
@@ -516,13 +516,13 @@ describe('statusline proxy port', () => {
 
   test('shows proxy port even when spend data has no active session', () => {
     // spend.json exists but has no CLAUDE_CODE_SESSION_ID — port should still show.
-    writeFileSync(join(tmpDir, 'proxy.json'), JSON.stringify({ pid: 12345, port: 51000 }));
     writeFileSync(join(tmpDir, 'spend.json'), JSON.stringify({ daily: {} }));
 
     const result = runStatusline({
       stdin: makeCcJson(),
       env: {
         ...process.env,
+        ANTHROPIC_BASE_URL: 'http://127.0.0.1:51000',
         DEEPCLAUDE_DIR: tmpDir,
         CLAUDE_CODE_SESSION_ID: '',
         GIT_BRANCH: 'main',
@@ -564,7 +564,6 @@ describe('statusline output format', () => {
         },
       },
     };
-    writeFileSync(join(tmpDir, 'proxy.json'), JSON.stringify({ pid: 12345, port: 50000 }));
     writeFileSync(join(tmpDir, 'spend.json'), JSON.stringify(spendJson));
     writeFileSync(
       join(tmpDir, 'slot-overrides.json'),
@@ -583,6 +582,7 @@ describe('statusline output format', () => {
       stdin: ccJson,
       env: {
         ...process.env,
+        ANTHROPIC_BASE_URL: 'http://127.0.0.1:50000',
         DEEPCLAUDE_DIR: tmpDir,
         CLAUDE_CODE_SESSION_ID: 'test-fmt',
         GIT_BRANCH: 'main',
@@ -600,7 +600,6 @@ describe('statusline output format', () => {
   test('no doubled spaces when spend group has only session (today is 0)', () => {
     const d2 = new Date();
     const todayKey = `${d2.getFullYear()}-${String(d2.getMonth() + 1).padStart(2, '0')}-${String(d2.getDate()).padStart(2, '0')}`;
-    writeFileSync(join(tmpDir, 'proxy.json'), JSON.stringify({ pid: 12345, port: 50000 }));
     writeFileSync(
       join(tmpDir, 'spend.json'),
       JSON.stringify({ daily: { [todayKey]: { total: 0 } } }),
@@ -624,13 +623,13 @@ describe('statusline output format', () => {
   });
 
   test('no doubled spaces when only proxy port (no spend data at all)', () => {
-    writeFileSync(join(tmpDir, 'proxy.json'), JSON.stringify({ pid: 12345, port: 50000 }));
     // No spend.json — spend group should have only the port.
 
     const result = runStatusline({
       stdin: makeCcJson(),
       env: {
         ...process.env,
+        ANTHROPIC_BASE_URL: 'http://127.0.0.1:50000',
         DEEPCLAUDE_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
@@ -1212,14 +1211,21 @@ describe('statusline stdin edge cases', () => {
 });
 
 describe('statusline proxy config edge cases', () => {
-  test('proxy.pid without colon is ignored', () => {
-    writeFileSync(join(tmpDir, 'proxy.pid'), '12345');
+  test('missing ANTHROPIC_BASE_URL shows no proxy port', () => {
     writeFileSync(join(tmpDir, 'spend.json'), JSON.stringify({}));
 
+    const {
+      ANTHROPIC_BASE_URL: _u1,
+      ANTHROPIC_DEFAULT_OPUS_MODEL: _u2,
+      CLAUDE_CODE_SUBAGENT_MODEL: _u3,
+      ANTHROPIC_AUTH_TOKEN: _u4,
+      ANTHROPIC_MODEL: _u5,
+      ...cleanEnv
+    } = process.env;
     const result = runStatusline({
       stdin: makeCcJson(),
       env: {
-        ...process.env,
+        ...cleanEnv,
         DEEPCLAUDE_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
@@ -1231,14 +1237,14 @@ describe('statusline proxy config edge cases', () => {
     expect(plain).not.toMatch(/\b\d{5}\b/); // no port number
   });
 
-  test('proxy.pid with non-numeric PID and port is ignored', () => {
-    writeFileSync(join(tmpDir, 'proxy.pid'), 'abc:xyz');
+  test('ANTHROPIC_BASE_URL without port is ignored', () => {
     writeFileSync(join(tmpDir, 'spend.json'), JSON.stringify({}));
 
     const result = runStatusline({
       stdin: makeCcJson(),
       env: {
         ...process.env,
+        ANTHROPIC_BASE_URL: 'http://127.0.0.1',
         DEEPCLAUDE_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
@@ -1250,14 +1256,14 @@ describe('statusline proxy config edge cases', () => {
     expect(plain).not.toMatch(/\b\d{5}\b/);
   });
 
-  test('proxy.json with port 0 does not trigger health check or show port', () => {
-    writeFileSync(join(tmpDir, 'proxy.json'), JSON.stringify({ pid: 12345, port: 0 }));
+  test('ANTHROPIC_BASE_URL with port 0 does not trigger health check or show port', () => {
     writeFileSync(join(tmpDir, 'spend.json'), JSON.stringify({}));
 
     const result = runStatusline({
       stdin: makeCcJson(),
       env: {
         ...process.env,
+        ANTHROPIC_BASE_URL: 'http://127.0.0.1:0',
         DEEPCLAUDE_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
@@ -1270,14 +1276,14 @@ describe('statusline proxy config edge cases', () => {
     expect(plain).not.toMatch(/\s\d{5}\b/);
   });
 
-  test('proxy.pid with trailing whitespace still parses correctly', () => {
-    writeFileSync(join(tmpDir, 'proxy.pid'), '  54321:50999  \n');
+  test('ANTHROPIC_BASE_URL with valid port shows correctly', () => {
     writeFileSync(join(tmpDir, 'spend.json'), JSON.stringify({}));
 
     const result = runStatusline({
       stdin: makeCcJson(),
       env: {
         ...process.env,
+        ANTHROPIC_BASE_URL: 'http://127.0.0.1:50999',
         DEEPCLAUDE_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',

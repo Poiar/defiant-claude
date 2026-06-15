@@ -377,7 +377,6 @@ function genEnvVarTable(): string {
     DEEPCLAUDE_SUBAGENT_STREAM_DEADLINE_MS: `Hard wall-clock cap on subagent streaming duration in ms (default: \`90000\`)`,
     DEEPCLAUDE_BUDGET_WARNING: `Fraction of daily budget at which to emit warnings (default: unset)`,
     DEEPCLAUDE_DASHBOARD_KEY: `Shared secret for \`/dashboard\` and \`/health/stream\` endpoints (unset = no auth)`,
-    DEEPCLAUDE_NO_PID_LOCK: `Skip PID file locking at startup (\`1\` to skip; used by integration tests)`,
   };
   const lines: string[] = [];
   lines.push('| Variable | Purpose |');
@@ -392,8 +391,7 @@ function genEnvVarTable(): string {
 
 function genStateFiles(): string {
   const files = [
-    ['`proxy.json`', 'PID, port, routes file'],
-    ['`proxy.pid`', 'PID lock file (prevents dual-instance state corruption)'],
+    ['`proxy.port`', 'port number of most recently started proxy (diagnostics)'],
     ['`current-routes.json`', 'active routing table (reloaded on every request)'],
     ['`slot-overrides.json`', 'per-slot model overrides'],
     ['`thinking-overrides.json`', 'thinking mode overrides (--no-thinking / --thinking-budget)'],
