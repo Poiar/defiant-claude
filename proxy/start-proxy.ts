@@ -39,6 +39,7 @@ import { tryForward, addFallbackHeaders, sseHeaders, type ForwardResult } from '
 import { sendProbe } from './probe';
 import type { ProbeSlot } from './probe';
 import { populateToolResults, preprocessServerTools } from './server-tools';
+import { buildHotSwapHeaders } from './hot-swap-headers';
 import { getConstraints, validateResponseConformance } from './protocol-types';
 import {
   isProviderHealthy,
@@ -2117,20 +2118,11 @@ if (probeIdx >= 2) {
                     // port rather than the old proxy's port. Without this the
                     // new proxy binds to the old key and rejects the restarted
                     // CC session.
-                    const newProxyKey = 'deepclaude-' + targetPort;
                     server.removeAllListeners('request');
                     server.on(
                       'request',
                       (clientReq: http.IncomingMessage, clientRes: http.ServerResponse) => {
-                        const fwdHeaders: Record<string, string | string[] | undefined> = {
-                          ...clientReq.headers,
-                          host: '127.0.0.1:' + targetPort,
-                          'x-api-key': newProxyKey,
-                        };
-                        // If the client used Bearer auth instead, rewrite that too
-                        if (fwdHeaders['authorization']) {
-                          delete fwdHeaders['authorization'];
-                        }
+                        const fwdHeaders = buildHotSwapHeaders(clientReq.headers, targetPort);
                         const opts: http.RequestOptions = {
                           hostname: '127.0.0.1',
                           port: targetPort,
