@@ -39,6 +39,20 @@ function healthCheck(port, timeoutMs = 2000) {
 }
 
 async function main() {
+  // 0. Guard: refuse to restart from within a CC session managed by this proxy.
+  //    The ANTHROPIC_BASE_URL points to this proxy — killing it kills the session.
+  const ccProxyPort = process.env.ANTHROPIC_BASE_URL?.match(/:(\d+)/)?.[1];
+  if (ccProxyPort) {
+    const proxyPort = existsSync(PORT_FILE) ? readFileSync(PORT_FILE, 'utf-8').trim() : null;
+    if (proxyPort && ccProxyPort === proxyPort) {
+      fail(
+        'REFUSING to restart the proxy from within a Claude Code session that uses it.\n' +
+          'This would kill your current session.\n' +
+          'Run this from another terminal, or restart with: dc',
+      );
+    }
+  }
+
   // 1. Read current port
   if (!existsSync(PORT_FILE)) fail('No proxy.port found — is a proxy running?');
   const currentPort = parseInt(readFileSync(PORT_FILE, 'utf-8').trim(), 10);
