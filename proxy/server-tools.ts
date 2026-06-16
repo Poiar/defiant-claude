@@ -601,8 +601,8 @@ export async function webSearchStructured(query: string): Promise<SearchResult[]
   const cached = structuredSearchCache.get(query);
   if (cached) return cached;
 
-  // Env-controlled engine selection. Default: all three. Set to "ddg" for tests, "ddg,brave" etc.
-  const engines = (process.env.DEEPCLAUDE_SEARCH_ENGINES || 'ddg,searxng,brave')
+  // Env-controlled engine selection. Default: ddg + searxng.
+  const engines = (process.env.DEEPCLAUDE_SEARCH_ENGINES || 'ddg,searxng')
     .toLowerCase()
     .split(',')
     .map((s) => s.trim());
@@ -613,7 +613,6 @@ export async function webSearchStructured(query: string): Promise<SearchResult[]
 
   if (engines.includes('ddg')) tasks.push(searchDDG(query));
   if (engines.includes('searxng')) tasks.push(searchSearXNG(query));
-  if (engines.includes('brave')) tasks.push(searchBrave(query));
 
   const settled = await Promise.allSettled(tasks);
   const engineResults: SearchResult[][] = settled.map((s) =>
@@ -763,76 +762,6 @@ async function searchSearXNG(query: string): Promise<SearchResult[]> {
 }
 
 /** Brave Search API — requires DEEPCLAUDE_BRAVE_API_KEY env var, 2000 free calls/month. */
-async function searchBrave(query: string): Promise<SearchResult[]> {
-  if (process.env.DEEPCLAUDE_SEARCH_NO_NETWORK) return [];
-  const apiKey = process.env.DEEPCLAUDE_BRAVE_API_KEY;
-  if (!apiKey) return [];
-
-  try {
-    return await new Promise<SearchResult[]>((resolve) => {
-      const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}`;
-      https
-        .get(
-          url,
-          {
-            headers: {
-              Accept: 'application/json',
-              'Accept-Encoding': 'gzip',
-              'X-Subscription-Token': apiKey,
-              'User-Agent': 'deepclaude-proxy/1.0',
-            },
-            timeout: 8000,
-          },
-          (res) => {
-            const chunks: Buffer[] = [];
-            let size = 0;
-            res.on('data', (chunk: Buffer) => {
-              size += chunk.length;
-              if (size > 500_000) {
-                res.destroy();
-                resolve([]);
-                return;
-              }
-              chunks.push(chunk);
-            });
-            res.on('end', () => {
-              try {
-                const raw = Buffer.concat(chunks);
-                // Handle gzip if needed
-                let text: string;
-                if (raw[0] === 0x1f && raw[1] === 0x8b) {
-                  text = require('zlib').gunzipSync(raw).toString();
-                } else {
-                  text = raw.toString();
-                }
-                const parsed = JSON.parse(text);
-                const web = (parsed.web?.results || parsed.results || []) as Array<
-                  Record<string, unknown>
-                >;
-                resolve(
-                  web
-                    .filter((r) => r.url && r.title)
-                    .slice(0, 20)
-                    .map((r) => ({
-                      title: String(r.title || '').slice(0, 200),
-                      url: String(r.url || ''),
-                      snippet: String(r.description || r.snippet || '').slice(0, 500),
-                    })),
-                );
-              } catch {
-                resolve([]);
-              }
-            });
-          },
-        )
-        .on('error', () => resolve([]))
-        .on('timeout', () => resolve([]));
-    });
-  } catch {
-    return [];
-  }
-}
-
 // -- Result merging -----------------------------------------------------------
 
 /** Merge results from multiple engines, deduplicate by URL, preserve diversity. */

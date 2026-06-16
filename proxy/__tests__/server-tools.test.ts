@@ -1421,7 +1421,7 @@ describe('webSearchStructured', () => {
 });
 
 // =========================================================================
-// SearXNG + Brave backend parsing (via webSearchStructured with mocked HTTP)
+// SearXNG backend parsing (via webSearchStructured with mocked HTTP)
 // =========================================================================
 
 describe('search engine backends', () => {
@@ -1434,7 +1434,6 @@ describe('search engine backends', () => {
 
   afterEach(() => {
     delete process.env.DEEPCLAUDE_SEARCH_ENGINES;
-    delete process.env.DEEPCLAUDE_BRAVE_API_KEY;
     delete process.env.DEEPCLAUDE_SEARCH_NO_NETWORK;
   });
 
@@ -1512,70 +1511,6 @@ describe('search engine backends', () => {
     });
 
     const results = await webSearchStructured('test malformed');
-    expect(results.length).toBe(0);
-  });
-
-  test('Brave: parses API response correctly', async () => {
-    process.env.DEEPCLAUDE_SEARCH_ENGINES = 'brave';
-    process.env.DEEPCLAUDE_BRAVE_API_KEY = 'test-key-123';
-    process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
-
-    mockHttpsGet.mockImplementation((_url: string, _opts: any, cb: any) => {
-      const res = makeMockResponse({ contentType: 'application/json' });
-      setTimeout(() => {
-        cb(res);
-        fireDataEnd(
-          res,
-          JSON.stringify({
-            web: {
-              results: [
-                {
-                  url: 'https://brave-result.com',
-                  title: 'Brave Result',
-                  description: 'From Brave Search',
-                },
-                { url: 'https://brave2.com', title: 'Brave 2', description: 'Second result' },
-              ],
-            },
-          }),
-        );
-      }, 0);
-      const req = { on: jest.fn().mockReturnThis(), destroy: jest.fn() };
-      return req as any;
-    });
-
-    const results = await webSearchStructured('test brave');
-    expect(results.length).toBe(2);
-    expect(results[0].title).toBe('Brave Result');
-    expect(results[0].url).toBe('https://brave-result.com');
-    expect(results[0].snippet).toBe('From Brave Search');
-  });
-
-  test('Brave: silently skipped when API key not set', async () => {
-    process.env.DEEPCLAUDE_SEARCH_ENGINES = 'brave';
-    // No DEEPCLAUDE_BRAVE_API_KEY set
-    process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
-
-    const results = await webSearchStructured('test no key');
-    expect(results.length).toBe(0);
-  });
-
-  test('Brave: returns empty on malformed JSON', async () => {
-    process.env.DEEPCLAUDE_SEARCH_ENGINES = 'brave';
-    process.env.DEEPCLAUDE_BRAVE_API_KEY = 'test-key';
-    process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
-
-    mockHttpsGet.mockImplementation((_url: string, _opts: any, cb: any) => {
-      const res = makeMockResponse({ contentType: 'application/json' });
-      setTimeout(() => {
-        cb(res);
-        fireDataEnd(res, 'garbage {{{');
-      }, 0);
-      const req = { on: jest.fn().mockReturnThis(), destroy: jest.fn() };
-      return req as any;
-    });
-
-    const results = await webSearchStructured('test brave error');
     expect(results.length).toBe(0);
   });
 
@@ -1671,10 +1606,10 @@ describe('mergeAndDedup', () => {
   });
 
   test('handles all empty engines', () => {
-    expect(mergeAndDedup([], [], []).length).toBe(0);
+    expect(mergeAndDedup([], []).length).toBe(0);
   });
 
-  test('deduplicates across all three engines', () => {
+  test('deduplicates across two engines', () => {
     const ddg = [
       { title: 'A1', url: 'https://shared.com/1', snippet: '' },
       { title: 'A2', url: 'https://unique-ddg.com', snippet: '' },
@@ -1683,23 +1618,18 @@ describe('mergeAndDedup', () => {
       { title: 'B1', url: 'https://shared.com/1', snippet: '' }, // dup
       { title: 'B2', url: 'https://unique-searx.com', snippet: '' },
     ];
-    const brave = [
-      { title: 'C1', url: 'https://shared.com/1', snippet: '' }, // dup
-      { title: 'C2', url: 'https://unique-brave.com', snippet: '' },
-    ];
-    const merged = mergeAndDedup(ddg, searx, brave);
-    expect(merged.length).toBe(4);
+    const merged = mergeAndDedup(ddg, searx);
+    expect(merged.length).toBe(3);
     const titles = merged.map((r) => r.title);
     expect(titles).toContain('A1');
     expect(titles).toContain('A2');
     expect(titles).toContain('B2');
-    expect(titles).toContain('C2');
   });
 
   test('keeps first engine result on duplicate (DDG priority)', () => {
     const ddg = [{ title: 'DDG Title', url: 'https://same.com', snippet: 'ddg snippet' }];
-    const brave = [{ title: 'Brave Title', url: 'https://same.com', snippet: 'brave snippet' }];
-    const merged = mergeAndDedup(ddg, brave);
+    const searx = [{ title: 'SearX Title', url: 'https://same.com', snippet: 'searx snippet' }];
+    const merged = mergeAndDedup(ddg, searx);
     expect(merged.length).toBe(1);
     expect(merged[0].title).toBe('DDG Title');
     expect(merged[0].snippet).toBe('ddg snippet');
