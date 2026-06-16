@@ -769,64 +769,37 @@ async function searchBrave(query: string): Promise<SearchResult[]> {
   if (!apiKey) return [];
 
   try {
-    return await new Promise<SearchResult[]>((resolve) => {
-      const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}`;
-      https
-        .get(
-          url,
-          {
-            headers: {
-              Accept: 'application/json',
-              'Accept-Encoding': 'gzip',
-              'X-Subscription-Token': apiKey,
-              'User-Agent': 'deepclaude-proxy/1.0',
-            },
-            timeout: 8000,
-          },
-          (res) => {
-            const chunks: Buffer[] = [];
-            let size = 0;
-            res.on('data', (chunk: Buffer) => {
-              size += chunk.length;
-              if (size > 500_000) {
-                res.destroy();
-                resolve([]);
-                return;
-              }
-              chunks.push(chunk);
-            });
-            res.on('end', () => {
-              try {
-                const raw = Buffer.concat(chunks);
-                let text: string;
-                if (raw[0] === 0x1f && raw[1] === 0x8b) {
-                  text = require('zlib').gunzipSync(raw).toString();
-                } else {
-                  text = raw.toString();
-                }
-                const parsed = JSON.parse(text);
-                const web = (parsed.web?.results || parsed.results || []) as Array<
-                  Record<string, unknown>
-                >;
-                resolve(
-                  web
-                    .filter((r) => r.url && r.title)
-                    .slice(0, 20)
-                    .map((r) => ({
-                      title: String(r.title || '').slice(0, 200),
-                      url: String(r.url || ''),
-                      snippet: String(r.description || r.snippet || '').slice(0, 500),
-                    })),
-                );
-              } catch {
-                resolve([]);
-              }
-            });
-          },
-        )
-        .on('error', () => resolve([]))
-        .on('timeout', () => resolve([]));
-    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+
+    const res = await fetch(
+      `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}`,
+      {
+        headers: {
+          Accept: 'application/json',
+          'X-Subscription-Token': apiKey,
+          'User-Agent': 'deepclaude-proxy/1.0',
+        },
+        signal: controller.signal,
+      },
+    );
+
+    clearTimeout(timer);
+    if (!res.ok) return [];
+
+    const text = await res.text();
+    if (text.length > 500_000) return [];
+
+    const parsed = JSON.parse(text);
+    const web = (parsed.web?.results || parsed.results || []) as Array<Record<string, unknown>>;
+    return web
+      .filter((r) => r.url && r.title)
+      .slice(0, 20)
+      .map((r) => ({
+        title: String(r.title || '').slice(0, 200),
+        url: String(r.url || ''),
+        snippet: String(r.description || r.snippet || '').slice(0, 500),
+      }));
   } catch {
     return [];
   }
