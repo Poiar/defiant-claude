@@ -1271,4 +1271,127 @@ describe('web search pre-execution', () => {
     expect(typeof body.model).toBe('string');
     expect(body.model!.toString()).toMatch(/^claude-sonnet/);
   });
+
+  test('multi-search: handles multiple queries in a single request', async () => {
+    const ccBody = {
+      model: 'haiku:deepseek-v4-flash',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Perform a web search for the query: iPhone 18 Pro' },
+            { type: 'text', text: 'Perform a web search for the query: Samsung Galaxy S26' },
+            { type: 'text', text: 'Perform a web search for the query: Google Pixel 10' },
+          ],
+        },
+      ],
+      system: [{ type: 'text', text: 'web search assistant' }],
+      tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+      max_tokens: 500,
+      stream: false,
+    };
+
+    const res = await request('POST', '/v1/messages', {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(ccBody),
+    });
+
+    expect(res.status).toBe(200);
+    const body = res.body as Record<string, unknown>;
+
+    // Should have 3 content blocks (one per query)
+    const content = body.content as Array<Record<string, unknown>>;
+    expect(content.length).toBe(3);
+
+    // Each block should be a valid web_search_tool_result
+    for (let i = 0; i < 3; i++) {
+      expect(content[i].type).toBe('web_search_tool_result');
+      expect(typeof content[i].tool_use_id).toBe('string');
+      expect(content[i].tool_use_id as string).toContain('_' + i);
+      expect(content[i].caller).toBeDefined();
+      expect((content[i].caller as Record<string, unknown>).type).toBe('direct');
+      const results = content[i].content as Array<Record<string, unknown>>;
+      expect(Array.isArray(results)).toBe(true);
+      expect(results.length).toBeGreaterThan(0);
+      expect(results[0].type).toBe('web_search_result');
+      expect(typeof results[0].url).toBe('string');
+      expect(typeof results[0].title).toBe('string');
+      expect(typeof results[0].encrypted_content).toBe('string');
+    }
+
+    // server_tool_use should show 3 searches
+    const usage = body.usage as Record<string, unknown>;
+    const stu = usage.server_tool_use as Record<string, number>;
+    expect(stu.web_search_requests).toBe(3);
+  });
+
+  test('multi-search: streaming SSE has multiple content_block_start events', async () => {
+    const ccBody = {
+      model: 'haiku:deepseek-v4-flash',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Perform a web search for the query: weather Paris' },
+            { type: 'text', text: 'Perform a web search for the query: weather London' },
+          ],
+        },
+      ],
+      system: [{ type: 'text', text: 'web search assistant' }],
+      tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+      max_tokens: 500,
+      stream: true,
+    };
+
+    const result = await request('POST', '/v1/messages', {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(ccBody),
+    });
+
+    expect(result.status).toBe(200);
+    const sseText = result.body as string;
+
+    // Two content_block_start events (index 0 and 1)
+    expect(sseText.match(/"content_block_start"/g)?.length).toBeGreaterThanOrEqual(2);
+    // Two content_block_stop events
+    expect(sseText.match(/"content_block_stop"/g)?.length).toBeGreaterThanOrEqual(2);
+    // web_search_requests should be 2
+    expect(sseText).toContain('"web_search_requests":2');
+    // Each block has its own tool_use_id with index
+    expect(sseText).toContain('toolu_SEARCH_');
+    expect(sseText).toContain('_0');
+    expect(sseText).toContain('_1');
+  });
+
+  test('multi-search: falls through when query count exceeds max', async () => {
+    const ccBody = {
+      model: 'haiku:deepseek-v4-flash',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Perform a web search for the query: q1' },
+            { type: 'text', text: 'Perform a web search for the query: q2' },
+            { type: 'text', text: 'Perform a web search for the query: q3' },
+            { type: 'text', text: 'Perform a web search for the query: q4' },
+            { type: 'text', text: 'Perform a web search for the query: q5' },
+            { type: 'text', text: 'Perform a web search for the query: q6' },
+          ],
+        },
+      ],
+      system: [{ type: 'text', text: 'web search assistant' }],
+      tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+      max_tokens: 200,
+      stream: false,
+    };
+
+    const res = await request('POST', '/v1/messages', {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(ccBody),
+    });
+
+    // 6 queries > 5 max — should fall through (no pre-execution)
+    // Routes file has no providers, so we get 502 or other error
+    expect(res.status).not.toBe(200);
+  });
 });

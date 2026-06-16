@@ -1017,25 +1017,36 @@ export function hasPendingToolResult(messages: Message[]): PendingToolResult {
 // Extract a web search query from a request if it follows CC's web search pattern.
 // Returns the query string or null.
 export function extractSearchQuery(messages: Message[]): string | null {
-  if (!messages || !Array.isArray(messages)) return null;
-  // Scan backward for the last user message asking for a web search
-  for (let i = messages.length - 1; i >= 0; i--) {
+  const all = extractSearchQueries(messages);
+  // Return the LAST query (most recent) to match backward-scan behavior
+  return all.length > 0 ? all[all.length - 1] : null;
+}
+
+// Extract ALL web search queries from a request. Returns an array of queries
+// (empty if none found). Supports multi-search where CC or the model requests
+// multiple searches in a single API call.
+export function extractSearchQueries(messages: Message[]): string[] {
+  if (!messages || !Array.isArray(messages)) return [];
+  const queries: string[] = [];
+  const RE = /Perform a web search for the query:\s*(.+)/i;
+  // Scan forward for chronological order across messages
+  for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
     if (msg.role !== 'user') continue;
     const content = msg.content;
     if (typeof content === 'string') {
-      const m = content.match(/Perform a web search for the query:\s*(.+)/i);
-      if (m) return m[1].trim();
+      const m = content.match(RE);
+      if (m) queries.push(m[1].trim());
     } else if (Array.isArray(content)) {
       for (const block of content) {
         if (block.type === 'text' && typeof block.text === 'string') {
-          const m = block.text.match(/Perform a web search for the query:\s*(.+)/i);
-          if (m) return m[1].trim();
+          const m = block.text.match(RE);
+          if (m) queries.push(m[1].trim());
         }
       }
     }
   }
-  return null;
+  return queries;
 }
 
 export async function populateToolResults(messages: Message[]): Promise<boolean> {
