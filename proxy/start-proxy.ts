@@ -78,6 +78,7 @@ import { buildFriendlyResponse, buildFriendlyStreamEvents } from './friendly-err
 import { describe as describeTransportError } from './transport-errors';
 import { createRateLimiter } from './rate-limiter';
 import { sanitizeHeaders, stripEffortBetaHeader } from './header-sanitizer';
+import { applyThinkingConfig, matchThinkingModel } from './thinking-config';
 import { sessionKey, getMomentum, record as recordMomentum } from './momentum';
 import { validateUrl } from './ssrf';
 import { finalizeMetrics } from './stream-metrics';
@@ -95,23 +96,6 @@ function getGitHash(): string {
     _gitHash = 'unknown';
   }
   return _gitHash;
-}
-
-// Match an upstream model name (e.g. "deepseek/deepseek-v4-pro") against
-// the thinking config keys (e.g. "deepseek-v4-pro") from providers.json.
-// Tries exact match first, then falls back to the last path segment.
-function matchThinkingModel(
-  upstreamModel: string,
-  config: Record<string, { type: string; budget_tokens: number }>,
-): { type: string; budget_tokens: number } | null {
-  const exact = config[upstreamModel];
-  if (exact) return exact;
-  const lastSegment = upstreamModel.split('/').pop();
-  if (lastSegment && lastSegment !== upstreamModel) {
-    const segment = config[lastSegment];
-    if (segment) return segment;
-  }
-  return null;
 }
 
 // Retry config for transient upstream transport errors.
@@ -1200,43 +1184,17 @@ if (probeIdx >= 2) {
             state.thinkingOverridesFile,
           );
           if (upstreamModel && target.format === 'anthropic') {
-            const thinkingCfg = matchThinkingModel(upstreamModel, effectiveThinking);
-            if (thinkingCfg && constraints.thinkingFormat === 'anthropic') {
-              try {
-                const p = JSON.parse(forwardedBody.toString());
-                let bodyModified = false;
-                // Strip tool_choice for providers that reject it with thinking,
-                // UNLESS the request has web search tools (tool_choice is needed
-                // to force the tool invocation — preprocessServerTools preserved it).
-                if (hasWebTools && constraints.forbidsToolChoiceWithThinking) {
-                  // Web search needs tool_choice to force tool invocation,
-                  // but DeepSeek rejects thinking + tool_choice together.
-                  // Strip thinking (CC sends it from the user's effort level)
-                  // so tool_choice survives.
-                  if (p.thinking) {
-                    delete p.thinking;
-                    bodyModified = true;
-                  }
-                } else if (
-                  constraints.forbidsToolChoiceWithThinking &&
-                  p.tool_choice !== undefined
-                ) {
-                  delete p.tool_choice;
-                  bodyModified = true;
-                }
-                if (!p.thinking && !hasWebTools) {
-                  p.thinking = { type: thinkingCfg.type, budget_tokens: thinkingCfg.budget_tokens };
-                  bodyModified = true;
-                }
-                if (bodyModified) {
-                  forwardedBody = Buffer.from(JSON.stringify(p));
-                }
-              } catch (e) {
-                log.error(
-                  reqId,
-                  'thinking config injection error: ' + truncateForLog((e as Error).message),
-                );
+            try {
+              const p = JSON.parse(forwardedBody.toString());
+              const thinkingCfg = matchThinkingModel(upstreamModel, effectiveThinking);
+              if (applyThinkingConfig(p, hasWebTools, constraints, thinkingCfg)) {
+                forwardedBody = Buffer.from(JSON.stringify(p));
               }
+            } catch (e) {
+              log.error(
+                reqId,
+                'thinking config injection error: ' + truncateForLog((e as Error).message),
+              );
             }
           }
 
