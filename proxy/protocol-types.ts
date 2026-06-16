@@ -90,12 +90,21 @@ export type AnthropicContentBlock =
   | {
       type: 'web_search_tool_result';
       tool_use_id?: string;
+      caller?: { type: 'direct' };
       content?: string | AnthropicContentBlock[];
     }
   | {
       type: 'web_fetch_tool_result';
       tool_use_id?: string;
+      caller?: { type: 'direct' };
       content?: string | AnthropicContentBlock[];
+    }
+  | {
+      type: 'web_search_result';
+      url: string;
+      title: string;
+      encrypted_content: string;
+      page_age: string | null;
     }
   | { type: 'search_result'; source: string; title: string; content: AnthropicContentBlock[] }
   | { type: 'compaction'; content?: string; encrypted_content?: string }
@@ -943,6 +952,7 @@ const KNOWN_CONTENT_BLOCK_TYPES = new Set([
   'server_tool_use',
   'web_search_tool_result',
   'web_fetch_tool_result',
+  'web_search_result',
   'search_result',
   'compaction',
   'mid_conv_system',

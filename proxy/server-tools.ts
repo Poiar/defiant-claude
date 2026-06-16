@@ -64,7 +64,16 @@ export function setCachedSearch(query: string, result: string): void {
 // Exported for test reset
 export function _resetSearchCache(): void {
   searchCache.clear();
+  structuredSearchCache.clear();
 }
+
+// Structured cache for webSearchStructured — separate from string cache
+// so both code paths can coexist without cross-format deserialization.
+const structuredSearchCache = new LruCache<SearchResult[]>({
+  maxEntries: 100,
+  ttlMs: SEARCH_CACHE_TTL_MS,
+});
+
 export function _resetDdgCookies(): void {
   ddgCookieJar = '';
 }
@@ -315,7 +324,7 @@ export function preprocessServerTools(
 //
 // HTML parsing is shared via parseDdgLiteHtml().
 
-interface SearchResult {
+export interface SearchResult {
   title: string;
   url: string;
   snippet: string;
@@ -587,35 +596,49 @@ export function ddgLiteSearchGet(query: string): Promise<SearchResult[]> {
   });
 }
 
-export async function webSearch(query: string): Promise<string> {
-  // Check cache first
-  const cached = getCachedSearch(query);
-  if (cached !== null) return cached;
+export async function webSearchStructured(query: string): Promise<SearchResult[]> {
+  // Check structured cache (LruCache.get returns T|undefined)
+  const cached = structuredSearchCache.get(query);
+  if (cached) return cached;
 
   await acquireFetchSlot();
   try {
     // Tier 1: DDG Lite POST (rotating browser UA + cookies)
     let liteResults = await ddgLiteSearch(query);
-    // Tier 2: DDG Lite GET (legacy — kept for reference; DDG currently
-    // returns empty forms for GET, but the URL is trivially portable to
-    // a future Playwright or headful browser approach.)
+    // Tier 2: DDG Lite GET (legacy)
     if (liteResults.length === 0) {
       liteResults = await ddgLiteSearchGet(query);
     }
-    if (liteResults.length > 0) {
-      const lines: string[] = [];
-      for (let i = 0; i < liteResults.length; i++) {
-        const r = liteResults[i];
-        lines.push(`${i + 1}. ${r.title}`);
-        lines.push(`   ${r.url}`);
-        if (r.snippet) lines.push(`   ${r.snippet}`);
-        lines.push('');
-      }
-      const result = lines.join('\n').trim() || `No results found for query: "${query}"`;
-      setCachedSearch(query, result);
-      return result;
-    }
+    structuredSearchCache.set(query, liteResults);
+    return liteResults;
+  } finally {
+    releaseFetchSlot();
+  }
+}
 
+export async function webSearch(query: string): Promise<string> {
+  // Check string cache first
+  const cached = getCachedSearch(query);
+  if (cached !== null) return cached;
+
+  // Try structured search (Tiers 1-2) first
+  const liteResults = await webSearchStructured(query);
+  if (liteResults.length > 0) {
+    const lines: string[] = [];
+    for (let i = 0; i < liteResults.length; i++) {
+      const r = liteResults[i];
+      lines.push(`${i + 1}. ${r.title}`);
+      lines.push(`   ${r.url}`);
+      if (r.snippet) lines.push(`   ${r.snippet}`);
+      lines.push('');
+    }
+    const result = lines.join('\n').trim() || `No results found for query: "${query}"`;
+    setCachedSearch(query, result);
+    return result;
+  }
+
+  await acquireFetchSlot();
+  try {
     // Tier 4: DDG JSON API (instant answers for simple factual queries)
     const result = await new Promise<string>((resolve) => {
       const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&no_redirect=1`;
@@ -661,7 +684,6 @@ export async function webSearch(query: string): Promise<string> {
           resolve(`Web search timed out for query: "${query}"`);
         });
     });
-    // Cache the result
     setCachedSearch(query, result);
     return result;
   } finally {

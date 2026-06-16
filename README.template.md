@@ -41,6 +41,32 @@ Config resolution, routes JSON construction, env var computation, slot/thinking 
 
 Husky v9 + lint-staged: syntax check on staged files, TypeScript compilation guard.
 
+### Web Search
+
+DeepClaude intercepts web search requests BEFORE they reach any model provider. Claude Code's WebSearch harness sends `web_search_20250305` tool requests — the proxy runs DuckDuckGo locally and returns results inline, bypassing the model entirely.
+
+```
+CC sends: {tools: [{type: "web_search_20250305"}], messages: [{text: "Perform a web search for the query: ..."}]}
+    ↓
+Proxy intercepts (before routing) → extracts query → searches DDG
+    ↓
+Returns Anthropic-native web_search_tool_result with:
+  - Proper content blocks CC counts for "Did N searches"
+  - server_tool_use.web_search_requests in usage
+  - claude-* trusted model name
+```
+
+**Why this matters**: Non-Anthropic providers (DeepSeek, OpenAI) don't execute web searches server-side. They'd only return `tool_use` blocks — CC would show "Did 0 searches." Pre-execution makes web search work identically across all 18 providers.
+
+**Five-layer defense against regressions**:
+1. Type system (`protocol-types.ts`) — `web_search_tool_result`, `caller`, `web_search_result` types
+2. Response validator (`pre-exec-validate.ts`) — checks ALL required fields before sending (both stream + non-stream)
+3. Integration tests — exact format assertions against real proxy
+4. Unit tests — 25 validation test cases
+5. Search-debug skill (`/search-debug`) — live diagnostics
+
+See [[web-search-tool-result-format]] and [[web-search-guardrails]] for the exact protocol format.
+
 ## Quick start
 
 ```

@@ -12,6 +12,7 @@ import {
   ddgLiteSearch,
   ddgLiteSearchGet,
   webSearch,
+  webSearchStructured,
   webFetch,
   populateToolResults,
   acquireFetchSlot,
@@ -1251,6 +1252,97 @@ describe('webSearch', () => {
     });
     const result = await webSearch('completely-nonexistent-xyz-999');
     expect(result).toContain('No results found');
+  });
+});
+
+// =========================================================================
+// webSearchStructured — returns SearchResult[] for pre-execution
+// =========================================================================
+
+describe('webSearchStructured', () => {
+  beforeEach(() => {
+    _resetSearchCache();
+    _resetFetchSlots();
+    mockHttpsRequest.mockReset();
+    mockHttpsGet.mockReset();
+  });
+
+  test('returns SearchResult[] from DDG Lite POST (Tier 1)', async () => {
+    setupMockRequestHtml(SAMPLE_HTML);
+    const results = await webSearchStructured('test');
+    expect(Array.isArray(results)).toBe(true);
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].title).toBe('Example Title');
+    expect(results[0].url).toBe('https://example.com');
+    expect(results[0].snippet).toContain('sample');
+  });
+
+  test('deduplicates identical queries via structured cache', async () => {
+    setupMockRequestHtml(SAMPLE_HTML);
+    const r1 = await webSearchStructured('cached-structured');
+    const r2 = await webSearchStructured('cached-structured');
+    // Same array reference from cache
+    expect(r1).toBe(r2);
+  });
+
+  test('falls back to legacy GET when POST returns empty', async () => {
+    // POST returns empty
+    mockHttpsRequest.mockImplementation((_url: string, _opts: any, cb: any) => {
+      const res = makeMockResponse();
+      res.headers = {};
+      setTimeout(() => {
+        cb(res);
+        if (res.listeners['end']) {
+          res.listeners['end'].forEach((fn: any) => fn());
+        }
+      }, 0);
+      const req = {
+        on: jest.fn().mockReturnThis(),
+        write: jest.fn(),
+        end: jest.fn(),
+        destroy: jest.fn(),
+      };
+      return req as any;
+    });
+    // GET returns results via legacy method
+    setupMockGetLegacy(SAMPLE_HTML);
+    const results = await webSearchStructured('fallback-test');
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].title).toBe('Example Title');
+  });
+
+  test('returns empty array when no results found', async () => {
+    // POST returns empty
+    mockHttpsRequest.mockImplementation((_url: string, _opts: any, cb: any) => {
+      const res = makeMockResponse();
+      res.headers = {};
+      setTimeout(() => {
+        cb(res);
+        if (res.listeners['end']) {
+          res.listeners['end'].forEach((fn: any) => fn());
+        }
+      }, 0);
+      const req = {
+        on: jest.fn().mockReturnThis(),
+        write: jest.fn(),
+        end: jest.fn(),
+        destroy: jest.fn(),
+      };
+      return req as any;
+    });
+    // GET also returns empty
+    mockHttpsGet.mockImplementation((_url: string, _opts: any, cb: any) => {
+      const res = makeMockResponse();
+      setTimeout(() => {
+        cb(res);
+        fireDataEnd(res, '');
+      }, 0);
+      const req = { on: jest.fn().mockReturnThis(), destroy: jest.fn() };
+      return req as any;
+    });
+    const results = await webSearchStructured('nonexistent');
+    expect(Array.isArray(results)).toBe(true);
+    expect(results.length).toBe(0);
   });
 });
 

@@ -950,17 +950,28 @@ describe('web search pre-execution', () => {
     const stu = usage.server_tool_use as Record<string, number>;
     expect(stu.web_search_requests).toBeGreaterThanOrEqual(1);
 
-    // Content must contain text block with search results
+    // Content must be web_search_tool_result block (CC counts these for "Did N")
     const content = body.content as Array<Record<string, unknown>>;
     expect(Array.isArray(content)).toBe(true);
     expect(content.length).toBeGreaterThan(0);
-    const textBlock = content[0] as Record<string, unknown>;
-    expect(textBlock.type).toBe('text');
-    expect(typeof textBlock.text).toBe('string');
-    expect(textBlock.text!.toString().length).toBeGreaterThan(100);
+    const searchBlock = content[0] as Record<string, unknown>;
+    expect(searchBlock.type).toBe('web_search_tool_result');
+    expect(typeof searchBlock.tool_use_id).toBe('string');
+    expect(searchBlock.caller).toBeDefined();
+    expect((searchBlock.caller as Record<string, unknown>).type).toBe('direct');
+
+    // Must have web_search_result sub-blocks with url, title, encrypted_content
+    const results = searchBlock.content as Array<Record<string, unknown>>;
+    expect(Array.isArray(results)).toBe(true);
+    expect(results.length).toBeGreaterThan(0);
+    const firstResult = results[0];
+    expect(firstResult.type).toBe('web_search_result');
+    expect(typeof firstResult.url).toBe('string');
+    expect(typeof firstResult.title).toBe('string');
+    expect(typeof firstResult.encrypted_content).toBe('string');
   });
 
-  test('returns streaming SSE response for stream:true', async () => {
+  test('returns streaming SSE response for stream:true with web_search_tool_result', async () => {
     const ccBody = {
       model: 'haiku:deepseek-v4-flash',
       messages: [
@@ -992,8 +1003,14 @@ describe('web search pre-execution', () => {
       body: JSON.stringify(ccBody),
     });
 
-    // Streaming SSE should return 200 with server_tool_use
+    // Streaming SSE should return 200 with web_search_tool_result in content_block_start
     expect(result.status).toBe(200);
+    const sseText = result.body as string;
+    // Should contain web_search_tool_result in content_block_start
+    expect(sseText).toContain('web_search_tool_result');
+    // Should contain server_tool_use in message_delta
+    expect(sseText).toContain('server_tool_use');
+    expect(sseText).toContain('web_search_requests');
   });
 
   test('falls through to normal routing when no query extractable', async () => {
@@ -1082,5 +1099,176 @@ describe('web search pre-execution', () => {
     // for the query:" in the user message triggers extractSearchQuery.
     // Should be intercepted and return 200 with DDG results.
     expect(res.status).toBe(200);
+  });
+
+  test('response has complete web_search_tool_result with all required fields', async () => {
+    const ccBody = {
+      model: 'haiku:deepseek-v4-flash',
+      messages: [
+        {
+          role: 'user',
+          content: [{ type: 'text', text: 'Perform a web search for the query: test query' }],
+        },
+      ],
+      system: [{ type: 'text', text: 'web search assistant' }],
+      tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+      max_tokens: 200,
+      stream: false,
+    };
+
+    const res = await request('POST', '/v1/messages', {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(ccBody),
+    });
+
+    expect(res.status).toBe(200);
+    const body = res.body as Record<string, unknown>;
+
+    // Content block must be web_search_tool_result (NOT text)
+    const content = body.content as Array<Record<string, unknown>>;
+    expect(content[0].type).toBe('web_search_tool_result');
+
+    // Required fields on web_search_tool_result
+    expect(typeof content[0].tool_use_id).toBe('string');
+    expect((content[0].tool_use_id as string).length).toBeGreaterThan(0);
+    expect(content[0].caller).toBeDefined();
+    expect((content[0].caller as Record<string, unknown>).type).toBe('direct');
+
+    // Must have content array with web_search_result sub-blocks
+    const results = content[0].content as Array<Record<string, unknown>>;
+    expect(Array.isArray(results)).toBe(true);
+    expect(results.length).toBeGreaterThan(0);
+
+    // Each result has required fields
+    for (const r of results) {
+      expect(r.type).toBe('web_search_result');
+      expect(typeof r.url).toBe('string');
+      expect(typeof r.title).toBe('string');
+      expect(typeof r.encrypted_content).toBe('string');
+      // page_age should be string or null
+      expect(r.page_age === null || typeof r.page_age === 'string').toBe(true);
+    }
+
+    // Usage with server_tool_use
+    const usage = body.usage as Record<string, unknown>;
+    const stu = usage.server_tool_use as Record<string, number>;
+    expect(stu.web_search_requests).toBeGreaterThanOrEqual(1);
+  });
+
+  test('streaming SSE response contains web_search_tool_result and server_tool_use', async () => {
+    const ccBody = {
+      model: 'haiku:deepseek-v4-flash',
+      messages: [
+        {
+          role: 'user',
+          content: [{ type: 'text', text: 'Perform a web search for the query: streaming test' }],
+        },
+      ],
+      system: [{ type: 'text', text: 'web search assistant' }],
+      tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+      max_tokens: 200,
+      stream: true,
+    };
+
+    const result = await request('POST', '/v1/messages', {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(ccBody),
+    });
+
+    expect(result.status).toBe(200);
+    const sseText = result.body as string;
+
+    // Must contain the correct content block type in content_block_start
+    expect(sseText).toContain('web_search_tool_result');
+
+    // Must contain tool_use_id and caller in the SSE payload
+    expect(sseText).toContain('tool_use_id');
+    expect(sseText).toContain('"caller"');
+
+    // Must have web_search_result sub-blocks
+    expect(sseText).toContain('web_search_result');
+
+    // Must inject server_tool_use in message_delta
+    expect(sseText).toContain('server_tool_use');
+    expect(sseText).toContain('web_search_requests');
+  });
+
+  test('handles queries with special characters', async () => {
+    const ccBody = {
+      model: 'haiku:deepseek-v4-flash',
+      messages: [
+        {
+          role: 'user',
+          content: [{ type: 'text', text: 'Perform a web search for the query: C++ vs Rust 2026' }],
+        },
+      ],
+      system: [{ type: 'text', text: 'web search assistant' }],
+      tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+      max_tokens: 200,
+      stream: false,
+    };
+
+    const res = await request('POST', '/v1/messages', {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(ccBody),
+    });
+
+    expect(res.status).toBe(200);
+    const body = res.body as Record<string, unknown>;
+    const content = body.content as Array<Record<string, unknown>>;
+    expect(content[0].type).toBe('web_search_tool_result');
+  });
+
+  test('model field uses trusted claude- name from any slot prefix', async () => {
+    // Test that haiku:deepseek-v4-flash gets mapped to claude-haiku-4-5-20251001
+    const ccBody = {
+      model: 'haiku:deepseek-v4-flash',
+      messages: [
+        {
+          role: 'user',
+          content: [{ type: 'text', text: 'Perform a web search for the query: model trust test' }],
+        },
+      ],
+      system: [{ type: 'text', text: 'web search assistant' }],
+      tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+      max_tokens: 200,
+      stream: false,
+    };
+
+    const res = await request('POST', '/v1/messages', {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(ccBody),
+    });
+
+    expect(res.status).toBe(200);
+    const body = res.body as Record<string, unknown>;
+    expect(typeof body.model).toBe('string');
+    expect(body.model!.toString()).toMatch(/^claude-haiku/);
+  });
+
+  test('sonnet slot maps to claude-sonnet trusted model', async () => {
+    const ccBody = {
+      model: 'sonnet:deepseek-v4-pro',
+      messages: [
+        {
+          role: 'user',
+          content: [{ type: 'text', text: 'Perform a web search for the query: sonnet slot test' }],
+        },
+      ],
+      system: [{ type: 'text', text: 'web search assistant' }],
+      tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+      max_tokens: 200,
+      stream: false,
+    };
+
+    const res = await request('POST', '/v1/messages', {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(ccBody),
+    });
+
+    expect(res.status).toBe(200);
+    const body = res.body as Record<string, unknown>;
+    expect(typeof body.model).toBe('string');
+    expect(body.model!.toString()).toMatch(/^claude-sonnet/);
   });
 });
