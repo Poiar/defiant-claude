@@ -1420,6 +1420,292 @@ describe('webSearchStructured', () => {
 });
 
 // =========================================================================
+// SearXNG + Brave backend parsing (via webSearchStructured with mocked HTTP)
+// =========================================================================
+
+describe('search engine backends', () => {
+  beforeEach(() => {
+    _resetSearchCache();
+    _resetFetchSlots();
+    mockHttpsRequest.mockReset();
+    mockHttpsGet.mockReset();
+  });
+
+  afterEach(() => {
+    delete process.env.DEEPCLAUDE_SEARCH_ENGINES;
+    delete process.env.DEEPCLAUDE_BRAVE_API_KEY;
+    delete process.env.DEEPCLAUDE_SEARCH_NO_NETWORK;
+  });
+
+  test('SearXNG: parses JSON results correctly', async () => {
+    process.env.DEEPCLAUDE_SEARCH_ENGINES = 'searxng';
+    process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
+
+    mockHttpsGet.mockImplementation((_url: string, _opts: any, cb: any) => {
+      const res = makeMockResponse();
+      setTimeout(() => {
+        cb(res);
+        fireDataEnd(
+          res,
+          JSON.stringify({
+            results: [
+              { url: 'https://searx-result.com', title: 'SearX Result', content: 'From SearXNG' },
+              { url: 'https://another.com', title: 'Another', content: '' },
+            ],
+          }),
+        );
+      }, 0);
+      const req = { on: jest.fn().mockReturnThis(), destroy: jest.fn() };
+      return req as any;
+    });
+
+    const results = await webSearchStructured('test searx');
+    expect(results.length).toBe(2);
+    expect(results[0].title).toBe('SearX Result');
+    expect(results[0].url).toBe('https://searx-result.com');
+    expect(results[0].snippet).toBe('From SearXNG');
+    expect(results[1].title).toBe('Another');
+  });
+
+  test('SearXNG: filters results without url or title', async () => {
+    process.env.DEEPCLAUDE_SEARCH_ENGINES = 'searxng';
+    process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
+
+    mockHttpsGet.mockImplementation((_url: string, _opts: any, cb: any) => {
+      const res = makeMockResponse();
+      setTimeout(() => {
+        cb(res);
+        fireDataEnd(
+          res,
+          JSON.stringify({
+            results: [
+              { url: '', title: 'No URL' },
+              { url: 'https://ok.com', title: '' },
+              { url: 'https://valid.com', title: 'Valid' },
+            ],
+          }),
+        );
+      }, 0);
+      const req = { on: jest.fn().mockReturnThis(), destroy: jest.fn() };
+      return req as any;
+    });
+
+    const results = await webSearchStructured('test filter');
+    // Only the third result should survive (has both url and title)
+    expect(results.length).toBe(1);
+    expect(results[0].url).toBe('https://valid.com');
+  });
+
+  test('SearXNG: returns empty on malformed JSON', async () => {
+    process.env.DEEPCLAUDE_SEARCH_ENGINES = 'searxng';
+    process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
+
+    mockHttpsGet.mockImplementation((_url: string, _opts: any, cb: any) => {
+      const res = makeMockResponse();
+      setTimeout(() => {
+        cb(res);
+        fireDataEnd(res, 'not valid json {{{');
+      }, 0);
+      const req = { on: jest.fn().mockReturnThis(), destroy: jest.fn() };
+      return req as any;
+    });
+
+    const results = await webSearchStructured('test malformed');
+    expect(results.length).toBe(0);
+  });
+
+  test('Brave: parses API response correctly', async () => {
+    process.env.DEEPCLAUDE_SEARCH_ENGINES = 'brave';
+    process.env.DEEPCLAUDE_BRAVE_API_KEY = 'test-key-123';
+    process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
+
+    mockHttpsGet.mockImplementation((_url: string, _opts: any, cb: any) => {
+      const res = makeMockResponse();
+      setTimeout(() => {
+        cb(res);
+        fireDataEnd(
+          res,
+          JSON.stringify({
+            web: {
+              results: [
+                {
+                  url: 'https://brave-result.com',
+                  title: 'Brave Result',
+                  description: 'From Brave Search',
+                },
+                { url: 'https://brave2.com', title: 'Brave 2', description: 'Second result' },
+              ],
+            },
+          }),
+        );
+      }, 0);
+      const req = { on: jest.fn().mockReturnThis(), destroy: jest.fn() };
+      return req as any;
+    });
+
+    const results = await webSearchStructured('test brave');
+    expect(results.length).toBe(2);
+    expect(results[0].title).toBe('Brave Result');
+    expect(results[0].url).toBe('https://brave-result.com');
+    expect(results[0].snippet).toBe('From Brave Search');
+  });
+
+  test('Brave: silently skipped when API key not set', async () => {
+    process.env.DEEPCLAUDE_SEARCH_ENGINES = 'brave';
+    // No DEEPCLAUDE_BRAVE_API_KEY set
+    process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
+
+    const results = await webSearchStructured('test no key');
+    expect(results.length).toBe(0);
+  });
+
+  test('Brave: returns empty on malformed JSON', async () => {
+    process.env.DEEPCLAUDE_SEARCH_ENGINES = 'brave';
+    process.env.DEEPCLAUDE_BRAVE_API_KEY = 'test-key';
+    process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
+
+    mockHttpsGet.mockImplementation((_url: string, _opts: any, cb: any) => {
+      const res = makeMockResponse();
+      setTimeout(() => {
+        cb(res);
+        fireDataEnd(res, 'garbage {{{');
+      }, 0);
+      const req = { on: jest.fn().mockReturnThis(), destroy: jest.fn() };
+      return req as any;
+    });
+
+    const results = await webSearchStructured('test brave error');
+    expect(results.length).toBe(0);
+  });
+
+  test('Multi-engine: merges DDG + SearXNG results', async () => {
+    process.env.DEEPCLAUDE_SEARCH_ENGINES = 'ddg,searxng';
+    process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
+
+    // DDG returns via mockHttpsRequest (POST)
+    setupMockRequestHtml(SAMPLE_HTML);
+
+    // SearXNG returns via mockHttpsGet
+    mockHttpsGet.mockImplementation((_url: string, _opts: any, cb: any) => {
+      const res = makeMockResponse();
+      setTimeout(() => {
+        cb(res);
+        fireDataEnd(
+          res,
+          JSON.stringify({
+            results: [{ url: 'https://searx-new.com', title: 'SearX New', content: 'New result' }],
+          }),
+        );
+      }, 0);
+      const req = { on: jest.fn().mockReturnThis(), destroy: jest.fn() };
+      return req as any;
+    });
+
+    const results = await webSearchStructured('test merge');
+    // DDG gives 2 results + SearXNG gives 1 = 3 total (interleaved)
+    expect(results.length).toBe(3);
+  });
+});
+
+// =========================================================================
+// mergeAndDedup — result merging and URL deduplication
+// =========================================================================
+
+describe('mergeAndDedup', () => {
+  let mergeAndDedup: any;
+  beforeAll(() => {
+    mergeAndDedup = require('../server-tools').mergeAndDedup;
+  });
+
+  test('merges results from multiple engines', () => {
+    const ddg = [{ title: 'DDG Result', url: 'https://a.com/ddg', snippet: 'from ddg' }];
+    const searx = [{ title: 'SearX Result', url: 'https://b.com/searx', snippet: 'from searx' }];
+    const merged = mergeAndDedup(ddg, searx);
+    expect(merged.length).toBe(2);
+  });
+
+  test('deduplicates by normalized URL', () => {
+    const ddg = [{ title: 'DDG', url: 'https://example.com/page', snippet: 'a' }];
+    const searx = [{ title: 'SearX', url: 'https://example.com/page', snippet: 'b' }];
+    const merged = mergeAndDedup(ddg, searx);
+    // DDG wins (first engine), SearX duplicate removed
+    expect(merged.length).toBe(1);
+    expect(merged[0].title).toBe('DDG');
+  });
+
+  test('deduplicates www. prefix variants', () => {
+    const ddg = [{ title: 'A', url: 'https://www.example.com', snippet: 'a' }];
+    const searx = [{ title: 'B', url: 'https://example.com', snippet: 'b' }];
+    const merged = mergeAndDedup(ddg, searx);
+    expect(merged.length).toBe(1);
+  });
+
+  test('deduplicates trailing slash variants', () => {
+    const ddg = [{ title: 'A', url: 'https://example.com/page/', snippet: 'a' }];
+    const searx = [{ title: 'B', url: 'https://example.com/page', snippet: 'b' }];
+    const merged = mergeAndDedup(ddg, searx);
+    expect(merged.length).toBe(1);
+  });
+
+  test('interleaves results from engines for source diversity', () => {
+    const ddg = [
+      { title: 'DDG 1', url: 'https://a.com/1', snippet: '' },
+      { title: 'DDG 2', url: 'https://a.com/2', snippet: '' },
+    ];
+    const searx = [
+      { title: 'SX 1', url: 'https://b.com/1', snippet: '' },
+      { title: 'SX 2', url: 'https://b.com/2', snippet: '' },
+    ];
+    const merged = mergeAndDedup(ddg, searx);
+    // Round-robin: DDG 1, SX 1, DDG 2, SX 2
+    expect(merged.map((r) => r.title)).toEqual(['DDG 1', 'SX 1', 'DDG 2', 'SX 2']);
+  });
+
+  test('handles empty engines gracefully', () => {
+    const ddg: Array<{ title: string; url: string; snippet: string }> = [];
+    const searx = [{ title: 'SX', url: 'https://b.com', snippet: '' }];
+    const merged = mergeAndDedup(ddg, searx);
+    expect(merged.length).toBe(1);
+    expect(merged[0].title).toBe('SX');
+  });
+
+  test('handles all empty engines', () => {
+    expect(mergeAndDedup([], [], []).length).toBe(0);
+  });
+
+  test('deduplicates across all three engines', () => {
+    const ddg = [
+      { title: 'A1', url: 'https://shared.com/1', snippet: '' },
+      { title: 'A2', url: 'https://unique-ddg.com', snippet: '' },
+    ];
+    const searx = [
+      { title: 'B1', url: 'https://shared.com/1', snippet: '' }, // dup
+      { title: 'B2', url: 'https://unique-searx.com', snippet: '' },
+    ];
+    const brave = [
+      { title: 'C1', url: 'https://shared.com/1', snippet: '' }, // dup
+      { title: 'C2', url: 'https://unique-brave.com', snippet: '' },
+    ];
+    const merged = mergeAndDedup(ddg, searx, brave);
+    expect(merged.length).toBe(4);
+    const titles = merged.map((r) => r.title);
+    expect(titles).toContain('A1');
+    expect(titles).toContain('A2');
+    expect(titles).toContain('B2');
+    expect(titles).toContain('C2');
+  });
+
+  test('keeps first engine result on duplicate (DDG priority)', () => {
+    const ddg = [{ title: 'DDG Title', url: 'https://same.com', snippet: 'ddg snippet' }];
+    const brave = [{ title: 'Brave Title', url: 'https://same.com', snippet: 'brave snippet' }];
+    const merged = mergeAndDedup(ddg, brave);
+    expect(merged.length).toBe(1);
+    expect(merged[0].title).toBe('DDG Title');
+    expect(merged[0].snippet).toBe('ddg snippet');
+  });
+});
+
+// =========================================================================
 // acquireFetchSlot / releaseFetchSlot — concurrency limiter
 // =========================================================================
 

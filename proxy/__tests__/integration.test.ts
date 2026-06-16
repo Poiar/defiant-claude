@@ -87,7 +87,12 @@ beforeAll(async () => {
     {
       cwd: path.resolve(__dirname, '../..'),
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, DEEPCLAUDE_NO_PID_LOCK: '1' },
+      env: {
+        ...process.env,
+        DEEPCLAUDE_NO_PID_LOCK: '1',
+        DEEPCLAUDE_SEARCH_ENGINES: 'ddg',
+        DEEPCLAUDE_SEARCH_NO_NETWORK: '1',
+      },
       ...(IS_WIN ? { shell: true } : {}),
     },
   );
