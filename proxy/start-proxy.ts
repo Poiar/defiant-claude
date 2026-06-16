@@ -2006,6 +2006,22 @@ if (probeIdx >= 2) {
         log.warn(null, 'Startup checks skipped (no providers configured)');
       }
 
+      // --- Single-tenant enforcement ---
+      // The proxy is per-session: each CC window gets its own proxy instance.
+      // Only one active TCP connection is allowed at a time — reject extras
+      // so a single proxy can't be accidentally shared across CC sessions.
+      let activeConnection = false;
+      server.on('connection', (sock) => {
+        if (activeConnection) {
+          sock.destroy();
+          return;
+        }
+        activeConnection = true;
+        sock.on('close', () => {
+          activeConnection = false;
+        });
+      });
+
       // --- Lifecycle ---
       server.listen(parsed.port || 0, '127.0.0.1', () => {
         const port = (server.address() as { port: number }).port;
