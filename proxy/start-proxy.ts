@@ -361,13 +361,18 @@ if (probeIdx >= 2) {
     ? parseInt(process.env.DEEPCLAUDE_DRAIN_GRACE_MS, 10)
     : 30_000;
 
-  // --- Single-tenant enforcement ---
-  // The proxy is per-session: each CC window gets its own proxy instance.
-  // We track the session key from the first real model-bearing request and
-  // reject any model calls from a different session. Health/dashboard/
-  // metrics endpoints are exempt so statusline and probes don't get killed.
-  let boundSessionKey: string | null = null;
-  function rejectOtherSession(req: http.IncomingMessage, res: http.ServerResponse): boolean {
+  // --- Session tracking ---
+  // The proxy is per-process: each `dc` invocation gets its own proxy instance.
+  // We track the first x-api-key as the "main" session key for health/dashboard
+  // visibility, but we do NOT reject other keys — subagents, teams, and
+  // exploration spawned by CC may send requests with different keys, and
+  // those should flow through the same proxy.
+  //
+  // If you want a completely separate session, start a new `dc` — it will
+  // get its own proxy on its own port.
+  let mainSessionKey: string | null = null;
+  const subSessionKeys = new Set<string>();
+  function trackSession(req: http.IncomingMessage, _res: http.ServerResponse): void {
     const url = (req.url || '').split('?')[0];
     // Exempt infrastructure endpoints
     if (
@@ -378,33 +383,32 @@ if (probeIdx >= 2) {
       url === '/dashboard' ||
       url.startsWith('/dashboard/')
     ) {
-      return false;
+      return;
     }
     const authKey =
       (req.headers['x-api-key'] as string) ||
       (req.headers['authorization'] as string)?.replace(/^Bearer\s+/i, '') ||
       '';
-    if (!authKey) return false; // passthrough (OAuth tokens, no model calls)
+    if (!authKey) return; // passthrough (OAuth tokens, no model calls)
 
-    if (!boundSessionKey) {
-      boundSessionKey = authKey;
-      return false;
+    if (!mainSessionKey) {
+      mainSessionKey = authKey;
+      log.info(null, 'Main session bound: ' + authKey.slice(0, 20) + '...');
+      return;
     }
-    if (authKey !== boundSessionKey) {
-      res.writeHead(409, { 'content-type': 'application/json' });
-      res.end(
-        JSON.stringify({
-          type: 'error',
-          error: {
-            type: 'api_error',
-            message:
-              'This proxy is bound to another Claude Code session. Start a new session with `dc`.',
-          },
-        }),
+    if (authKey !== mainSessionKey && !subSessionKeys.has(authKey)) {
+      subSessionKeys.add(authKey);
+      log.info(
+        null,
+        'Sub-session connected: ' +
+          authKey.slice(0, 20) +
+          '... (main: ' +
+          mainSessionKey.slice(0, 15) +
+          '..., ' +
+          subSessionKeys.size +
+          ' sub-sessions)',
       );
-      return true;
     }
-    return false;
   }
 
   const server = http.createServer((req: http.IncomingMessage, res: http.ServerResponse) => {
@@ -549,7 +553,7 @@ if (probeIdx >= 2) {
     // --- Single-tenant enforcement ---
     // Reject model calls from a different CC session (different x-api-key).
     // Health/dashboard/metrics endpoints are exempt to allow statusline probes.
-    if (rejectOtherSession(req, res)) return;
+    trackSession(req, res);
 
     // --- Rate limit check ---
     const clientIp = req.socket.remoteAddress || '127.0.0.1';

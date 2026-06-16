@@ -258,7 +258,7 @@ describe('Proxy integration tests', () => {
   });
 
   test('health endpoint works (multiple concurrent connections allowed)', async () => {
-    // Health/dashboard/metrics endpoints are exempt from single-tenant
+    // Health/dashboard/metrics endpoints are exempt from session tracking
     // enforcement so statusline and probes don't get blocked. Both
     // concurrent requests over separate connections should succeed.
     const results = await Promise.all([request('GET', '/health'), request('GET', '/health')]);
@@ -282,29 +282,28 @@ describe('Proxy integration tests', () => {
     }
   });
 
-  test('session-based single-tenant enforcement', async () => {
-    // First model call with key-A binds the session.
+  test('session tracking: main + sub-sessions both allowed', async () => {
+    // First model call with key-A becomes the main session.
     const res1 = await request('POST', '/v1/messages', {
       headers: { 'Content-Type': 'application/json', 'x-api-key': 'session-alpha' },
       body: JSON.stringify({ model: 'test', max_tokens: 1, messages: [] }),
     });
-    // First call binds the session (may 502 if no upstream, but not 409)
+    // First call binds the main session (may 502 if no upstream, but not 409)
     expect(res1.status).not.toBe(409);
 
-    // Second call with same key-A → allowed (same session)
+    // Second call with same key-A → allowed (main session)
     const res2 = await request('POST', '/v1/messages', {
       headers: { 'Content-Type': 'application/json', 'x-api-key': 'session-alpha' },
       body: JSON.stringify({ model: 'test', max_tokens: 1, messages: [] }),
     });
     expect(res2.status).not.toBe(409);
 
-    // Third call with key-B → rejected (different session)
+    // Third call with key-B → allowed as sub-session (subagent/team/explore)
     const res3 = await request('POST', '/v1/messages', {
       headers: { 'Content-Type': 'application/json', 'x-api-key': 'session-beta' },
       body: JSON.stringify({ model: 'test', max_tokens: 1, messages: [] }),
     });
-    expect(res3.status).toBe(409);
-    expect((res3.body as Record<string, unknown>).error).toBeDefined();
+    expect(res3.status).not.toBe(409);
 
     // Health endpoint always exempt
     const healthRes = await request('GET', '/health');
