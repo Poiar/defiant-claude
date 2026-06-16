@@ -376,6 +376,52 @@ if (probeIdx >= 2) {
     ? parseInt(process.env.DEEPCLAUDE_DRAIN_GRACE_MS, 10)
     : 30_000;
 
+  // --- Single-tenant enforcement ---
+  // The proxy is per-session: each CC window gets its own proxy instance.
+  // We track the session key from the first real model-bearing request and
+  // reject any model calls from a different session. Health/dashboard/
+  // metrics endpoints are exempt so statusline and probes don't get killed.
+  let boundSessionKey: string | null = null;
+  function rejectOtherSession(req: http.IncomingMessage, res: http.ServerResponse): boolean {
+    const url = (req.url || '').split('?')[0];
+    // Exempt infrastructure endpoints
+    if (
+      req.method === 'GET' ||
+      url === '/health' ||
+      url === '/health/stream' ||
+      url === '/metrics' ||
+      url === '/dashboard' ||
+      url.startsWith('/dashboard/')
+    ) {
+      return false;
+    }
+    const authKey =
+      (req.headers['x-api-key'] as string) ||
+      (req.headers['authorization'] as string)?.replace(/^Bearer\s+/i, '') ||
+      '';
+    if (!authKey) return false; // passthrough (OAuth tokens, no model calls)
+
+    if (!boundSessionKey) {
+      boundSessionKey = authKey;
+      return false;
+    }
+    if (authKey !== boundSessionKey) {
+      res.writeHead(409, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          type: 'error',
+          error: {
+            type: 'api_error',
+            message:
+              'This proxy is bound to another Claude Code session. Start a new session with `dc`.',
+          },
+        }),
+      );
+      return true;
+    }
+    return false;
+  }
+
   const server = http.createServer((req: http.IncomingMessage, res: http.ServerResponse) => {
     req.setTimeout(30000); // Prevent slow-body trickle from starving concurrency slots
 
@@ -2010,22 +2056,6 @@ if (probeIdx >= 2) {
       if (startupCheckResult.probesSkipped) {
         log.warn(null, 'Startup checks skipped (no providers configured)');
       }
-
-      // --- Single-tenant enforcement ---
-      // The proxy is per-session: each CC window gets its own proxy instance.
-      // Only one active TCP connection is allowed at a time — reject extras
-      // so a single proxy can't be accidentally shared across CC sessions.
-      let activeConnection = false;
-      server.on('connection', (sock) => {
-        if (activeConnection) {
-          sock.destroy();
-          return;
-        }
-        activeConnection = true;
-        sock.on('close', () => {
-          activeConnection = false;
-        });
-      });
 
       // --- Lifecycle ---
       server.listen(parsed.port || 0, '127.0.0.1', () => {
