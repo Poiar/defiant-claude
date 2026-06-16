@@ -8,7 +8,22 @@ describe('validatePreExecResponse', () => {
       model: 'claude-haiku-4-5-20251001',
       type: 'message',
       role: 'assistant',
-      content: [{ type: 'web_search_tool_result', content: 'search results here' }],
+      content: [
+        {
+          type: 'web_search_tool_result',
+          tool_use_id: 'toolu_SEARCH_1',
+          caller: { type: 'direct' },
+          content: [
+            {
+              type: 'web_search_result',
+              url: 'https://example.com/test',
+              title: 'Test Result',
+              encrypted_content: 'This is a test snippet.',
+              page_age: null,
+            },
+          ],
+        },
+      ],
       stop_reason: 'end_turn',
       stop_sequence: null,
       usage: {
@@ -22,12 +37,44 @@ describe('validatePreExecResponse', () => {
 
   // ── Valid responses ─────────────────────────────────────────────────
 
-  test('accepts web_search_tool_result content block type', () => {
+  test('accepts valid web_search_tool_result with all required fields', () => {
     expect(validatePreExecResponse(validBody())).toBeNull();
   });
 
   test('accepts text content block type as fallback', () => {
-    const body = validBody({ content: [{ type: 'text', text: 'results' }] });
+    const body = {
+      ...validBody(),
+      content: [{ type: 'text', text: 'results' }],
+    };
+    expect(validatePreExecResponse(body)).toBeNull();
+  });
+
+  test('accepts web_search_tool_result with multiple result sub-blocks', () => {
+    const body = validBody({
+      content: [
+        {
+          type: 'web_search_tool_result',
+          tool_use_id: 'toolu_SEARCH_2',
+          caller: { type: 'direct' },
+          content: [
+            {
+              type: 'web_search_result',
+              url: 'https://a.com',
+              title: 'A',
+              encrypted_content: 'snippet A',
+              page_age: null,
+            },
+            {
+              type: 'web_search_result',
+              url: 'https://b.com',
+              title: 'B',
+              encrypted_content: 'snippet B',
+              page_age: '2026-06-15',
+            },
+          ],
+        },
+      ],
+    });
     expect(validatePreExecResponse(body)).toBeNull();
   });
 
@@ -77,6 +124,70 @@ describe('validatePreExecResponse', () => {
     ).toContain('unexpected content block type');
   });
 
+  // ── web_search_tool_result field validation ─────────────────────────
+
+  test('rejects web_search_tool_result missing tool_use_id', () => {
+    const body = validBody();
+    (body.content as Array<Record<string, unknown>>)[0].tool_use_id = undefined;
+    expect(validatePreExecResponse(body)).toContain('tool_use_id');
+  });
+
+  test('rejects web_search_tool_result missing caller', () => {
+    const body = validBody();
+    delete (body.content as Array<Record<string, unknown>>)[0].caller;
+    expect(validatePreExecResponse(body)).toContain('caller');
+  });
+
+  test('rejects web_search_tool_result caller missing type', () => {
+    const body = validBody();
+    (body.content as Array<Record<string, unknown>>)[0].caller = {};
+    expect(validatePreExecResponse(body)).toContain('caller');
+  });
+
+  test('rejects web_search_tool_result missing content array', () => {
+    const body = validBody();
+    delete (body.content as Array<Record<string, unknown>>)[0].content;
+    expect(validatePreExecResponse(body)).toContain('content array');
+  });
+
+  test('rejects web_search_tool_result empty content array', () => {
+    const body = validBody();
+    (body.content as Array<Record<string, unknown>>)[0].content = [];
+    expect(validatePreExecResponse(body)).toContain('empty');
+  });
+
+  // ── web_search_result sub-block validation ──────────────────────────
+
+  test('rejects unexpected sub-block type in web_search_tool_result', () => {
+    const body = validBody();
+    (body.content as Array<Record<string, unknown>>)[0].content = [{ type: 'text', text: 'wrong' }];
+    expect(validatePreExecResponse(body)).toContain('unexpected sub-block type');
+  });
+
+  test('rejects web_search_result missing url', () => {
+    const body = validBody();
+    (
+      (body.content as Array<Record<string, unknown>>)[0].content as Array<Record<string, unknown>>
+    )[0].url = undefined;
+    expect(validatePreExecResponse(body)).toContain('missing url');
+  });
+
+  test('rejects web_search_result missing title', () => {
+    const body = validBody();
+    (
+      (body.content as Array<Record<string, unknown>>)[0].content as Array<Record<string, unknown>>
+    )[0].title = undefined;
+    expect(validatePreExecResponse(body)).toContain('missing title');
+  });
+
+  test('rejects web_search_result missing encrypted_content', () => {
+    const body = validBody();
+    (
+      (body.content as Array<Record<string, unknown>>)[0].content as Array<Record<string, unknown>>
+    )[0].encrypted_content = undefined;
+    expect(validatePreExecResponse(body)).toContain('missing encrypted_content');
+  });
+
   // ── Usage / server_tool_use validation ─────────────────────────────
 
   test('rejects missing usage', () => {
@@ -115,14 +226,29 @@ describe('validatePreExecResponse', () => {
   // ── Real-world scenarios ────────────────────────────────────────────
 
   test('catches the bug: text block without web_search_tool_result', () => {
-    // This was the actual bug: pre-exec returned text blocks instead
-    // of web_search_tool_result. CC counted zero search blocks → "Did 0 searches".
-    // The validator still ACCEPTS text (it's a valid fallback), but the
-    // integration tests now check for web_search_tool_result specifically.
-    // This test ensures the validator doesn't reject text — it's the
-    // integration test's job to enforce web_search_tool_result.
+    // text blocks are still accepted as valid fallback, but CC won't
+    // count them toward "Did N searches" display. The integration tests
+    // enforce web_search_tool_result for search responses.
     expect(
       validatePreExecResponse(validBody({ content: [{ type: 'text', text: 'results' }] })),
     ).toBeNull();
+  });
+
+  test('catches the bug: web_search_tool_result without tool_use_id (the undefined error)', () => {
+    // This was the actual bug: we returned {type: 'web_search_tool_result', content: '...'}
+    // without tool_use_id or caller. CC tried to access tool_use_id → "Web search error: undefined".
+    const body = {
+      model: 'claude-haiku-4-5-20251001',
+      type: 'message',
+      role: 'assistant',
+      content: [{ type: 'web_search_tool_result', content: 'results' }],
+      stop_reason: 'end_turn',
+      usage: {
+        input_tokens: 1,
+        output_tokens: 100,
+        server_tool_use: { web_search_requests: 1, web_fetch_requests: 0 },
+      },
+    };
+    expect(validatePreExecResponse(body)).toContain('tool_use_id');
   });
 });

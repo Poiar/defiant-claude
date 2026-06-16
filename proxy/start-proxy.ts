@@ -42,6 +42,7 @@ import {
   populateToolResults,
   preprocessServerTools,
   webSearch,
+  webSearchStructured,
   extractSearchQuery,
 } from './server-tools';
 import { buildHotSwapHeaders } from './hot-swap-headers';
@@ -419,17 +420,18 @@ if (probeIdx >= 2) {
   }
 
   /**
-   * Validate a pre-execution response body has the fields CC requires
-   * to display "Did N searches" correctly.
-   *
-  /**
    * Pre-execute a web search request — run DDG locally and return results
    * inline, bypassing the model entirely. Returns true if the request was
    * handled (response sent), false to fall through to normal routing.
    *
+   * Returns a proper web_search_tool_result content block that CC recognizes
+   * for "Did N searches" display. Uses structured search results (SearchResult[])
+   * to build individual web_search_result sub-blocks with url, title,
+   * encrypted_content, and page_age fields.
+   *
    * Guardrails:
    * - 100KB response cap (prevents OOM from unbounded search results)
-   * - Empty-result handling (returns clear "No results" message)
+   * - 15 result max (realistic limit — DDG rarely returns more)
    * - Query length limit (800 chars, prevents abuse)
    * - Concurrent fetch slotting (shared with webSearch's own limiter)
    * - Error fallthrough (returns false → normal model routing)
@@ -460,37 +462,78 @@ if (probeIdx >= 2) {
     }
 
     try {
-      const searchResult = await webSearch(query);
+      // Use structured search to get individual result objects
+      const structured = await webSearchStructured(query);
       const MAX_RESULT_BYTES = 100_000;
+      const MAX_RESULTS = 15;
       const isStream = body.stream === true;
       const trustModel = getTrustedModel(modelName || (body.model as string) || null);
       const msgId = 'msg_search_' + reqId;
+      const toolUseId = 'toolu_SEARCH_' + reqId;
 
-      // Guard: truncate oversized results
-      let displayText = searchResult;
+      // Build web_search_result blocks from SearchResult[]
+      const webSearchResultBlocks: Array<Record<string, unknown>> = [];
+      let totalBytes = 0;
       let truncated = false;
-      if (Buffer.byteLength(displayText, 'utf-8') > MAX_RESULT_BYTES) {
-        // Walk back to a safe cut point
-        const buf = Buffer.from(displayText, 'utf-8');
-        displayText = buf.slice(0, MAX_RESULT_BYTES).toString('utf-8');
-        // Don't split multi-byte characters
-        if (displayText.endsWith('�')) {
-          displayText = displayText.slice(0, -1);
+
+      for (let i = 0; i < structured.length && webSearchResultBlocks.length < MAX_RESULTS; i++) {
+        const r = structured[i];
+        const snippet = (r.snippet || '')
+          .replace(/[\uD800-\uDFFF]/g, '')
+          .replace(/[\x00-\x1F\x7F]/g, '');
+        const blockBytes =
+          Buffer.byteLength(r.url, 'utf-8') +
+          Buffer.byteLength(r.title, 'utf-8') +
+          Buffer.byteLength(snippet, 'utf-8');
+
+        if (totalBytes + blockBytes > MAX_RESULT_BYTES) {
+          truncated = true;
+          break;
         }
-        displayText += '\n\n[Results truncated at ' + Math.round(MAX_RESULT_BYTES / 1024) + 'KB]';
-        truncated = true;
+        totalBytes += blockBytes;
+
+        webSearchResultBlocks.push({
+          type: 'web_search_result',
+          url: r.url,
+          title: r.title,
+          encrypted_content: snippet,
+          page_age: null,
+        });
       }
 
-      // Guard: sanitize for JSON embedding (search results may contain
-      // control characters or unescaped unicode surrogates)
-      try {
-        JSON.stringify(displayText);
-      } catch {
-        // Strip surrogates and control chars if JSON.stringify fails
-        displayText = displayText.replace(/[\uD800-\uDFFF]/g, '').replace(/[\x00-\x1F\x7F]/g, '');
+      // Fallback: if no structured results, build a single block from text search
+      if (webSearchResultBlocks.length === 0) {
+        const fallbackText = await webSearch(query);
+        if (!fallbackText || fallbackText.startsWith('No results found')) {
+          webSearchResultBlocks.push({
+            type: 'web_search_result',
+            url: '',
+            title: 'No results found',
+            encrypted_content: fallbackText || 'No results found for query: "' + query + '"',
+            page_age: null,
+          });
+        } else {
+          webSearchResultBlocks.push({
+            type: 'web_search_result',
+            url: '',
+            title: 'Search results for: ' + query.slice(0, 100),
+            encrypted_content: fallbackText.slice(0, MAX_RESULT_BYTES),
+            page_age: null,
+          });
+        }
       }
+
+      // Build the web_search_tool_result content block
+      const searchBlock: Record<string, unknown> = {
+        type: 'web_search_tool_result',
+        tool_use_id: toolUseId,
+        caller: { type: 'direct' },
+        content: webSearchResultBlocks,
+      };
 
       if (isStream) {
+        // Streaming: emit full content in content_block_start (no deltas needed
+        // for web_search_tool_result — Anthropic delivers these as complete blocks)
         const sse =
           'event: message_start\ndata: ' +
           JSON.stringify({
@@ -510,13 +553,7 @@ if (probeIdx >= 2) {
           JSON.stringify({
             type: 'content_block_start',
             index: 0,
-            content_block: { type: 'text', text: '' },
-          }) +
-          '\n\nevent: content_block_delta\ndata: ' +
-          JSON.stringify({
-            type: 'content_block_delta',
-            index: 0,
-            delta: { type: 'text_delta', text: displayText },
+            content_block: searchBlock,
           }) +
           '\n\nevent: content_block_stop\ndata: ' +
           JSON.stringify({ type: 'content_block_stop', index: 0 }) +
@@ -526,11 +563,27 @@ if (probeIdx >= 2) {
             delta: { stop_reason: 'end_turn', stop_sequence: null },
             usage: {
               input_tokens: 1,
-              output_tokens: Math.ceil(Buffer.byteLength(displayText, 'utf-8') / 4),
+              output_tokens: Math.ceil(totalBytes / 4) || 50,
               server_tool_use: { web_search_requests: 1, web_fetch_requests: 0 },
             },
           }) +
           '\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\n';
+        // Validate streaming pre-exec block before sending
+        {
+          const fakeBody: Record<string, unknown> = {
+            model: trustModel,
+            content: [searchBlock],
+            usage: {
+              input_tokens: 1,
+              output_tokens: 50,
+              server_tool_use: { web_search_requests: 1, web_fetch_requests: 0 },
+            },
+          };
+          const valErr = validatePreExecResponse(fakeBody);
+          if (valErr) {
+            log.error(null, 'PREX_STREAM_VALIDATION: ' + valErr);
+          }
+        }
         response.writeHead(200, sseHeaders({}) as Record<string, string | number>);
         response.end(sse);
       } else {
@@ -539,12 +592,12 @@ if (probeIdx >= 2) {
           type: 'message' as const,
           role: 'assistant' as const,
           model: trustModel,
-          content: [{ type: 'text' as const, text: displayText }],
+          content: [searchBlock],
           stop_reason: 'end_turn' as const,
           stop_sequence: null,
           usage: {
             input_tokens: 1,
-            output_tokens: Math.ceil(Buffer.byteLength(displayText, 'utf-8') / 4),
+            output_tokens: Math.ceil(totalBytes / 4) || 50,
             server_tool_use: { web_search_requests: 1, web_fetch_requests: 0 },
           },
         };
@@ -561,8 +614,8 @@ if (probeIdx >= 2) {
         null,
         'WEB_SEARCH_PREX: query="' +
           query.slice(0, 80) +
-          '" len=' +
-          displayText.length +
+          '" results=' +
+          webSearchResultBlocks.length +
           (truncated ? ' TRUNCATED' : '') +
           ' stream=' +
           isStream,
