@@ -7,7 +7,6 @@
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
-import { get } from 'http';
 import { execSync } from 'child_process';
 
 // Read all of stdin — works cross-platform (Windows lacks readFileSync(0)).
@@ -142,11 +141,8 @@ async function main() {
         ? fg(255, 180, 50)
         : fg(80, 200, 120);
 
-  // ── Health check (fire now, await later) ───────────────────
-  // Per-session proxy: port discovered from ANTHROPIC_BASE_URL env var.
-  // Falls back to DEEPCLAUDE_PROXY_PORT for explicit override.
+  // ── Proxy port discovery ────────────────────────────────────
   let proxyPort = 0;
-  let healthPromise = Promise.resolve(null);
   try {
     const baseUrl = process.env.ANTHROPIC_BASE_URL || '';
     const explicitPort = process.env.DEEPCLAUDE_PROXY_PORT;
@@ -155,29 +151,11 @@ async function main() {
       const port = parseInt(portMatch, 10);
       if (Number.isFinite(port) && port > 0 && port <= 65535) {
         proxyPort = port;
-        healthPromise = new Promise((resolve) => {
-          const req = get(`http://127.0.0.1:${port}/health`, { timeout: 1000 }, (res) => {
-            let data = '';
-            res.on('data', (chunk) => (data += chunk));
-            res.on('end', () => {
-              try {
-                resolve(JSON.parse(data));
-              } catch (_) {
-                resolve(null);
-              }
-            });
-          });
-          req.on('error', () => resolve(null));
-          req.on('timeout', () => {
-            req.destroy();
-            resolve(null);
-          });
-        });
       }
     }
   } catch (_) {}
 
-  // ── Spend data (while health check is in-flight) ───────────
+  // ── Spend data ──────────────────────────────────────────────
   let spendGroup = '';
   try {
     const spendPath = join(deepclaudeDir, 'spend.json');
@@ -240,48 +218,6 @@ async function main() {
     spendGroup = spendGroup + ' ' + fg(90, 90, 90) + proxyPort + reset;
   }
 
-  // ── Await health check result ──────────────────────────────
-  const health = await healthPromise;
-
-  // ── Circuit breaker / fallback / budget indicators ─────────
-  const cbIndicator = (() => {
-    const parts = [];
-    try {
-      if (health && health.providers) {
-        let worstState = 'CLOSED';
-        let hasData = false;
-        for (const v of Object.values(health.providers)) {
-          if (v.requests > 0) hasData = true;
-          if (v.circuitBreaker === 'OPEN') {
-            worstState = 'OPEN';
-            break;
-          }
-          if (v.circuitBreaker === 'HALF_OPEN' && worstState !== 'OPEN') {
-            worstState = 'HALF_OPEN';
-          }
-        }
-        if (hasData) {
-          if (worstState === 'OPEN') parts.push(bold + fg(255, 80, 80) + '✕' + reset);
-          else if (worstState === 'HALF_OPEN') parts.push(bold + fg(255, 180, 50) + '◐' + reset);
-          // CLOSED is silent — no need for a "normal" indicator.
-        }
-      }
-      if (health && health.lastFallback) {
-        const ageMin = Math.round(
-          (Date.now() - new Date(health.lastFallback.at).getTime()) / 60000,
-        );
-        if (ageMin < 10) {
-          parts.push(bold + fg(255, 180, 50) + '↳' + health.lastFallback.to + reset);
-        }
-      }
-      if (health && health.budgetWarning && health.budgetWarning.level !== 'info') {
-        const color = health.budgetWarning.level === 'red' ? fg(255, 80, 80) : fg(255, 180, 50);
-        parts.push(bold + color + '⚠ ' + health.budgetWarning.message + reset);
-      }
-    } catch (_) {}
-    return parts.join(' ');
-  })();
-
   // ── Assemble groups ────────────────────────────────────────
   const locationGroup = [
     dirName ? bold + fg(100, 180, 255) + dirName + reset : '',
@@ -294,7 +230,6 @@ async function main() {
   const modelGroup = [
     slotLabel || model ? bold + fg(200, 100, 255) + slotLabel + displayModel + reset : '',
     effort ? bold + effortColor + effort + reset : '',
-    cbIndicator,
   ]
     .filter(Boolean)
     .join(narrow);
