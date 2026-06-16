@@ -1,7 +1,7 @@
 # deepclaude
 
 <!-- AUTO:tagline -->
-Provider-agnostic Claude Code wrapper. Route each model slot (Opus, Sonnet, Haiku, subagent) to a different provider. Mix Alibaba, BytePlus, DeepSeek, Fireworks, Groq, Kimi, Mimo, MiniMax, Mistral, Novita, OpenCode, OpenRouter, SiliconFlow, Umans, Z.ai, gm, oa, xa, Anthropic in one session.
+Provider-agnostic Claude Code wrapper. Route each model slot (Opus, Sonnet, Haiku, subagent) to a different provider. Mix Alibaba, BytePlus, DeepSeek, Fireworks, Groq, Kimi, Mimo, MiniMax, Mistral, Novita, OpenCode, OpenRouter, SiliconFlow, Umans, Z.ai, gm, lo, oa, xa, Anthropic in one session.
 <!-- /AUTO:tagline -->
 
 ## Architecture
@@ -84,7 +84,7 @@ Config resolution, routes JSON construction, env var computation, slot/thinking 
 ### Test coverage
 
 <!-- AUTO:test-coverage -->
-1418 tests across 48 test files covering all proxy modules — transport errors, concurrency, LRU cache, provider registry validation, error codes, routing, stats, forwarding, server tools, config, protocol translation, thinking cache (including fingerprint-free cross-turn regression tests), reasoning cache, header sanitization, truncation, crypto, friendly errors, SSRF validation, dead stream detection, startup checks, and stream metrics. Run with `npm test`.
+1419 tests across 48 test files covering all proxy modules — transport errors, concurrency, LRU cache, provider registry validation, error codes, routing, stats, forwarding, server tools, config, protocol translation, thinking cache (including fingerprint-free cross-turn regression tests), reasoning cache, header sanitization, truncation, crypto, friendly errors, SSRF validation, dead stream detection, startup checks, and stream metrics. Run with `npm test`.
 <!-- /AUTO:test-coverage -->
 
 ### Pre-commit
@@ -141,6 +141,7 @@ deepclaude -b km              # Kimi K2.6
 deepclaude -b mx              # MiniMax M1
 deepclaude -b mt              # Mistral Large
 deepclaude -b nv              # Novita (DeepSeek V4 Pro)
+deepclaude -b lo              # Ollama (local)
 deepclaude -b oa              # OpenAI (direct)
 deepclaude -b oc              # OpenCode Zen
 deepclaude -b or              # OpenRouter (DeepSeek)
@@ -233,12 +234,13 @@ deepclaude ds:deepseek-v4-pro ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-a
 | `XAI_API_KEY` | xAI / Grok | `xa` | bearer |
 | `GEMINI_API_KEY` | Google Gemini | `gm` | x-api-key |
 | `ANTHROPIC_API_KEY` | Anthropic (direct) | `an` | x-api-key |
+| `` | Ollama (local) | `lo` | x-api-key |
 <!-- /AUTO:providers-table -->
 
 Keys are read from both process env and machine/user environment variables.
 
 <!-- AUTO:openai-note -->
-Providers with `format = "openai"` (OpenRouter, Alibaba/DashScope, Kimi/Moonshot, Xiaomi Mimo, Groq, Mistral, MiniMax, Z.ai / GLM, BytePlus/Doubao, SiliconFlow, Novita, oa, xa) use OpenAI-compatible endpoints. The proxy automatically translates between Anthropic and OpenAI protocols — including thinking/reasoning, tool calls, streaming, and multi-turn context management. Direct DeepSeek (`ds`) uses the `/anthropic` endpoint and bypasses all translation.
+Providers with `format = "openai"` (OpenRouter, Alibaba/DashScope, Kimi/Moonshot, Xiaomi Mimo, Groq, Mistral, MiniMax, Z.ai / GLM, BytePlus/Doubao, SiliconFlow, Novita, oa, xa, lo) use OpenAI-compatible endpoints. The proxy automatically translates between Anthropic and OpenAI protocols — including thinking/reasoning, tool calls, streaming, and multi-turn context management. Direct DeepSeek (`ds`) uses the `/anthropic` endpoint and bypasses all translation.
 <!-- /AUTO:openai-note -->
 
 ## Provider fallback
@@ -282,6 +284,7 @@ sf      opus=sf:siliconflow/deepseek-v4-pro  sonnet=sf:siliconflow/deepseek-v4-p
 nv      opus=nv:novita/deepseek-v4-pro  sonnet=nv:novita/deepseek-v4-pro  haiku=nv:novita/deepseek-v4-pro  sub=nv:novita/deepseek-v4-pro  fable=nv:novita/deepseek-v4-pro  (all slots same)
 oa      opus=oa:gpt-5  sonnet=oa:gpt-5  haiku=oa:gpt-5-mini  sub=oa:gpt-5-mini  fable=oa:gpt-5
 xa      opus=xa:grok-4  sonnet=xa:grok-4  haiku=xa:grok-code-fast  sub=xa:grok-code-fast  fable=xa:grok-4
+lo      opus=lo:ollama/llama3.3  sonnet=lo:ollama/llama3.3  haiku=lo:ollama/qwen3  sub=lo:ollama/qwen3  fable=lo:ollama/llama3.3
 ds+oc   opus=ds:deepseek-v4-pro  sonnet=ds:deepseek-v4-pro  haiku=oc:big-pickle  sub=oc:big-pickle  fable=ds:deepseek-v4-pro
 ds+an   opus=ds:deepseek-v4-pro  sonnet=ds:deepseek-v4-pro  haiku=an:claude-haiku-4-5-20251001  sub=an:claude-haiku-4-5-20251001  fable=ds:deepseek-v4-pro
 <!-- /AUTO:configs-reference -->
@@ -318,7 +321,7 @@ Per-model context limits are configured automatically:
 | `deepseek-v4-pro`, `deepseek-v4-flash`, `deepseek/deepseek-v4-pro`, `deepseek/deepseek-v4-flash`, `accounts/fireworks/models/deepseek-v4-pro`, `siliconflow/deepseek-v4-pro`, `novita/deepseek-v4-pro`, `gemini-2.5-flash`, `gemini-3.0-flash` | 1M |
 | `kimi-k2.6`, `umans-kimi-k2.6`, `umans-coder`, `minimax/minimax-m1` | 256K |
 | `o4`, `o4-mini`, `claude-haiku-4-5-20251001`, `claude-sonnet-4-6`, `claude-opus-4-7` | 195K |
-| `z-ai/glm-4.5-air:free`, `big-pickle`, `mimo-v2.5-pro`, `umans-flash`, `umans-glm-5.1`, `groq/llama-4-maverick`, `groq/deepseek-r1-distill-qwen-32b`, `mistral/mistral-large`, `mistral/mistral-small`, `zai/glm-4.5`, `byteplus/doubao-1.5-pro`, `gpt-5`, `gpt-5-mini`, `grok-4`, `grok-3`, `grok-code-fast` | 128K |
+| `z-ai/glm-4.5-air:free`, `big-pickle`, `mimo-v2.5-pro`, `umans-flash`, `umans-glm-5.1`, `groq/llama-4-maverick`, `groq/deepseek-r1-distill-qwen-32b`, `mistral/mistral-large`, `mistral/mistral-small`, `zai/glm-4.5`, `byteplus/doubao-1.5-pro`, `gpt-5`, `gpt-5-mini`, `grok-4`, `grok-3`, `grok-code-fast`, `ollama/llama3.3`, `ollama/qwen3`, `ollama/deepseek-r1` | 128K |
 <!-- /AUTO:context-table -->
 
 Models at 1M tokens get `CLAUDE_CODE_AUTO_COMPACT_WINDOW` set (clamped to 1,000,000 — Claude Code's internal max). Models between 128K–1M get `CLAUDE_CODE_MAX_CONTEXT_TOKENS` with compaction disabled. A `[1m]` suffix is appended to 1M-context model IDs (e.g. `deepseek-v4-pro[1m]`) — this is stripped by the proxy's router and used internally by Claude Code for dynamic context-window detection.
