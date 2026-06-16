@@ -90,13 +90,28 @@ export function sanitizeHeaders(
 }
 
 /**
- * Strip effort-2025-11-24 from the anthropic-beta header when the target
- * model or provider doesn't support it. Haiku models return 400 "model does
- * not support effort" and non-Anthropic providers don't implement Anthropic
- * beta headers at all.
+ * Beta values that trigger DeepSeek's "thinking mode" detection on the
+ * /anthropic endpoint. When any of these are present, DeepSeek rejects
+ * tool_choice with "Thinking mode does not support this tool_choice" (400).
+ */
+const THINKING_BETA_VALUES = new Set([
+  'effort-2025-11-24',
+  'interleaved-thinking-2025-05-14',
+  'thinking-token-count-2026-05-13',
+  'redact-thinking-2026-02-12',
+]);
+
+/**
+ * Strip Anthropic beta headers that are unsupported by the target.
  *
- * When effort-2025-11-24 is the ONLY value, the header is deleted entirely
- * rather than being set to an empty string, which also causes a 400.
+ * - Non-native providers (DeepSeek): strip ALL beta values — none of
+ *   Anthropic's beta features apply. Any thinking-related beta value
+ *   triggers "Thinking mode does not support this tool_choice" (400).
+ * - Haiku models on Anthropic: strip only effort-2025-11-24 since
+ *   Haiku doesn't support the effort parameter.
+ *
+ * When stripping produces an empty header, it is deleted entirely
+ * rather than being set to an empty string (which also causes 400).
  *
  * @returns true if the header was modified, false otherwise.
  */
@@ -105,13 +120,24 @@ export function stripEffortBetaHeader(
   upstreamModel: string,
   isNativeProvider: boolean,
 ): boolean {
-  if (!upstreamModel.includes('haiku') && isNativeProvider) return false;
+  // Non-native provider: strip ALL beta values
+  if (!isNativeProvider) {
+    if (headers['anthropic-beta']) {
+      delete headers['anthropic-beta'];
+      return true;
+    }
+    return false;
+  }
+
+  // Native provider: only strip for haiku models
+  if (!upstreamModel.includes('haiku')) return false;
+
   const beta = headers['anthropic-beta'];
   if (typeof beta === 'string') {
     const filtered = beta
       .split(',')
       .map((s) => s.trim())
-      .filter((s) => s !== 'effort-2025-11-24' && s.length > 0);
+      .filter((s) => !THINKING_BETA_VALUES.has(s) && s.length > 0);
     if (filtered.length === 0) {
       delete headers['anthropic-beta'];
     } else {
@@ -119,7 +145,7 @@ export function stripEffortBetaHeader(
     }
     return true;
   } else if (Array.isArray(beta)) {
-    const filtered = beta.filter((s) => s !== 'effort-2025-11-24');
+    const filtered = beta.filter((s) => !THINKING_BETA_VALUES.has(s));
     if (filtered.length === 0) {
       delete headers['anthropic-beta'];
     } else {

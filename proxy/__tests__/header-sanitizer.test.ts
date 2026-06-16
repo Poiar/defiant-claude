@@ -182,9 +182,10 @@ describe('stripEffortBetaHeader', () => {
     expect(headers['anthropic-beta']).toBeUndefined();
   });
 
-  test('preserves other beta values when stripping effort', () => {
+  test('strips all thinking-related beta values for haiku on native', () => {
     const headers: Record<string, string | string[] | undefined> = {
-      'anthropic-beta': 'prompt-caching-2024-07-31, effort-2025-11-24, tools-2024-04-04',
+      'anthropic-beta':
+        'prompt-caching-2024-07-31, effort-2025-11-24, tools-2024-04-04, interleaved-thinking-2025-05-14',
     };
     stripEffortBetaHeader(headers, 'claude-haiku-4-5-20251001', true);
     // Note: segment trimming removes spaces around commas
@@ -208,11 +209,11 @@ describe('stripEffortBetaHeader', () => {
     expect(headers['anthropic-beta']).toBe('tools-2024-04-04');
   });
 
-  test('strips effort for non-native provider regardless of model', () => {
+  test('strips ALL beta values for non-native provider (DeepSeek)', () => {
     const headers: Record<string, string | string[] | undefined> = {
-      'anthropic-beta': 'effort-2025-11-24',
+      'anthropic-beta': 'context-1m-2025-08-07,effort-2025-11-24,interleaved-thinking-2025-05-14',
     };
-    // DeepSeek model on DeepSeek provider (non-native)
+    // Non-native — all beta values deleted (none apply)
     const modified = stripEffortBetaHeader(headers, 'deepseek-v4-pro', false);
     expect(modified).toBe(true);
     expect(headers['anthropic-beta']).toBeUndefined();
