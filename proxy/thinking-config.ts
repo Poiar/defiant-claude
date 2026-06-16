@@ -49,6 +49,7 @@ export function applyThinkingConfig(
   hasWebTools: boolean,
   constraints: ProviderConstraints,
   thinkingCfg: ThinkingConfigEntry | null,
+  upstreamModel?: string,
 ): boolean {
   let modified = false;
 
@@ -65,7 +66,19 @@ export function applyThinkingConfig(
     modified = true;
   }
 
-  // Rule 3: Inject thinking from config (only when provider supports it,
+  // Rule 3: Haiku models on Anthropic don't support thinking/effort.
+  // Strip thinking from the body (CC sends it from the user's effort level).
+  if (
+    constraints.nativeServerTools &&
+    upstreamModel &&
+    upstreamModel.includes('haiku') &&
+    body.thinking
+  ) {
+    delete body.thinking;
+    modified = true;
+  }
+
+  // Rule 4: Inject thinking from config (only when provider supports it,
   // no thinking exists yet, and no web tools are present)
   if (thinkingCfg && constraints.thinkingFormat === 'anthropic' && !body.thinking && !hasWebTools) {
     body.thinking = { type: thinkingCfg.type, budget_tokens: thinkingCfg.budget_tokens };
