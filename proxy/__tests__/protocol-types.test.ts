@@ -382,6 +382,25 @@ describe('SSE event round-trip', () => {
     }
   });
 
+  test('message_delta with service_tier', () => {
+    const event: AnthropicSSEEvent = {
+      type: 'message_delta',
+      delta: { stop_reason: 'end_turn', stop_sequence: null },
+      usage: {
+        output_tokens: 42,
+        service_tier: 'standard',
+      },
+    };
+    const wire = serializeSSEEvent(event);
+    const parsed = parseSSEEvent('message_delta', wire) as any;
+    expect(parsed).toBeDefined();
+    expect(parsed!.type).toBe('message_delta');
+    if (parsed!.type === 'message_delta') {
+      expect(parsed.usage.service_tier).toBe('standard');
+      expect(parsed.usage.output_tokens).toBe(42);
+    }
+  });
+
   test('message_stop', () => {
     const event: AnthropicSSEEvent = { type: 'message_stop' };
     const wire = serializeSSEEvent(event);
