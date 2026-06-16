@@ -144,15 +144,30 @@ async function main() {
   // ── Proxy port discovery ────────────────────────────────────
   let proxyPort = 0;
   try {
+    // Disk port: updated on every hot-swap, most current.
+    const deepclaudeDir =
+      process.env.DEEPCLAUDE_CONFIG_DIR ||
+      process.env.DEEPCLAUDE_DIR ||
+      join(homedir() || '.', '.deepclaude');
+    const portFile = join(deepclaudeDir, 'proxy.port');
+    let diskPort = 0;
+    if (existsSync(portFile)) {
+      const raw = readFileSync(portFile, 'utf-8').trim();
+      const p = parseInt(raw, 10);
+      if (Number.isFinite(p) && p > 0 && p <= 65535) diskPort = p;
+    }
+    // Env var port (set at CC launch, stale after hot-swap)
     const baseUrl = process.env.ANTHROPIC_BASE_URL || '';
     const explicitPort = process.env.DEEPCLAUDE_PROXY_PORT;
-    const portMatch = explicitPort || (baseUrl.match(/:(\d+)$/) || [])[1];
-    if (portMatch) {
-      const port = parseInt(portMatch, 10);
-      if (Number.isFinite(port) && port > 0 && port <= 65535) {
-        proxyPort = port;
-      }
+    const envPortStr = explicitPort || (baseUrl.match(/:(\d+)$/) || [])[1];
+    let envPort = 0;
+    if (envPortStr) {
+      const p = parseInt(envPortStr, 10);
+      if (Number.isFinite(p) && p > 0 && p <= 65535) envPort = p;
     }
+    // Disk wins if it exists (updated by hot-swap).
+    // Env var as fallback for first launch before proxy writes port file.
+    proxyPort = diskPort || envPort;
   } catch (_) {}
 
   // ── Spend data ──────────────────────────────────────────────
