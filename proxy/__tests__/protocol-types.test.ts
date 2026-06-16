@@ -63,6 +63,13 @@ describe('ProviderConstraints', () => {
     expect(ds.forbidsToolChoiceWithThinking).toBe(true);
     expect(ds.requiresThinkingEcho).toBe(true);
     expect(ds.thinkingFormat).toBe('anthropic');
+    expect(ds.stripFields).toContain('metadata');
+  });
+
+  test('oc (OpenCode) has correct values', () => {
+    const oc = PROVIDER_CONSTRAINTS.oc;
+    expect(oc.format).toBe('anthropic');
+    expect(oc.stripFields).toContain('metadata');
   });
 
   test('or (OpenRouter) has correct values', () => {
