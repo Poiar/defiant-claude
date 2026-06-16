@@ -458,6 +458,7 @@ Tip: `deepclaude --install-statusline` automates the manual setup above.
 | `DEEPCLAUDE_MAX_CONCURRENT` | Max concurrent upstream requests for main slots (default: `25`) |
 | `DEEPCLAUDE_SEARCH_ENGINES` | (undocumented) |
 | `DEEPCLAUDE_SEARCH_NO_NETWORK` | (undocumented) |
+| `DEEPCLAUDE_SEARXNG_URL` | (undocumented) |
 | `DEEPCLAUDE_SKIP_STARTUP_CHECK` | Skip provider health checks on proxy startup (`true` to skip) |
 | `DEEPCLAUDE_STREAM_DEADLINE_MS` | Hard wall-clock cap on total streaming duration in ms (default: `300000`) |
 | `DEEPCLAUDE_STREAM_HEARTBEAT_MS` | Stream silence timeout in ms before heartbeat triggers (default: `180000`) |
