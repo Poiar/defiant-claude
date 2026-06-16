@@ -1554,15 +1554,25 @@ if (probeIdx >= 2) {
               recordCanaryResult(true, canaryEntry.state, canaryEntry.config);
             }
             if (result.streamUsage) {
-              // NOTE: recordSpend is deferred to the pipeline completion
-              // callback (Path 2 below) so cache_hit_tokens / cache_miss_tokens
-              // from the final SSE chunk are available. Calling it here would
-              // see all-zero cache fields and miss the ~120× cache discount.
-              recordUsage(
-                target.providerKey,
-                result.streamUsage.prompt_tokens || 0,
-                result.streamUsage.completion_tokens || 0,
-              );
+              // Non-streaming: streamUsage has complete token counts from
+              // the full response body. Record usage + spend immediately.
+              //
+              // Streaming: streamUsage has only partial counts from the
+              // initial SSE peeking. Defer recordUsage + recordSpend to
+              // the pipeline completion callback where the final SSE
+              // usage event provides accurate cache_hit/miss_tokens.
+              if (!result.stream) {
+                recordUsage(
+                  target.providerKey,
+                  result.streamUsage.prompt_tokens || 0,
+                  result.streamUsage.completion_tokens || 0,
+                );
+                const upstreamModel = target.rewriteModel || model;
+                if (upstreamModel)
+                  recordSpend(upstreamModel, result.streamUsage, target.providerKey).catch(
+                    () => {},
+                  );
+              }
             }
             if (sk) recordMomentum(sk, target.providerKey, model || '');
 
