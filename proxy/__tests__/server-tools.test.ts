@@ -55,6 +55,15 @@ jest.mock('../ssrf', () => ({
 const mockFetch = jest.fn();
 global.fetch = mockFetch;
 
+// Registry mock — prevents envWithRegistry from reading real Registry keys.
+// Must use requireActual inside the factory (hoisted before variable declarations).
+jest.mock('child_process', () => ({
+  ...jest.requireActual('child_process'),
+  execSync: jest.fn().mockImplementation(() => {
+    throw new Error('not found');
+  }),
+}));
+
 function makeMockFetchResponse(json: unknown, status = 200): Partial<Response> {
   return {
     ok: status >= 200 && status < 300,
