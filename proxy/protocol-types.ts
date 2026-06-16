@@ -62,16 +62,45 @@ export interface DocumentSource {
  *
  * Note: tool_result.content is a recursive type (can contain nested blocks).
  * We use `AnthropicContentBlock[]` for the structured form.
+ *
+ * Updated 2026-06-16 with new Anthropic API blocks: search_result, compaction,
+ * fallback, mid_conv_system, web_search_tool_result, web_fetch_tool_result.
  */
 export type AnthropicContentBlock =
-  | { type: 'text'; text: string }
+  | { type: 'text'; text: string; citations?: TextCitation[] }
   | { type: 'thinking'; thinking: string; signature: string }
   | { type: 'redacted_thinking'; data: string }
-  | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
+  | {
+      type: 'tool_use';
+      id: string;
+      name: string;
+      input: Record<string, unknown>;
+      caller?: { type: 'direct' };
+    }
   | { type: 'tool_result'; tool_use_id?: string; content?: string | AnthropicContentBlock[] }
   | { type: 'image'; source: ImageSource }
-  | { type: 'document'; source: DocumentSource; title?: string; file_name?: string }
-  | { type: 'server_tool_use'; id: string; name: string; input: Record<string, unknown> };
+  | {
+      type: 'document';
+      source: DocumentSource;
+      title?: string;
+      file_name?: string;
+      context?: string;
+    }
+  | { type: 'server_tool_use'; id: string; name: string; input: Record<string, unknown> }
+  | {
+      type: 'web_search_tool_result';
+      tool_use_id?: string;
+      content?: string | AnthropicContentBlock[];
+    }
+  | {
+      type: 'web_fetch_tool_result';
+      tool_use_id?: string;
+      content?: string | AnthropicContentBlock[];
+    }
+  | { type: 'search_result'; source: string; title: string; content: AnthropicContentBlock[] }
+  | { type: 'compaction'; content?: string; encrypted_content?: string }
+  | { type: 'mid_conv_system'; content: { type: 'text'; text: string }[] }
+  | { type: 'fallback'; from: { model: string }; to?: { model: string } };
 
 /** Legacy alias for backward compatibility with existing code. */
 export type ContentBlock = AnthropicContentBlock;
@@ -166,12 +195,37 @@ export interface MessageStartPayload {
   usage: { input_tokens: 0; output_tokens: 0 };
 }
 
+/** Citation within a text block. */
+export interface TextCitation {
+  type:
+    | 'char_location'
+    | 'page_location'
+    | 'content_block_location'
+    | 'web_search_result_location'
+    | 'search_result_location';
+  cited_text: string;
+  document_index?: number;
+  document_title?: string | null;
+  start_char_index?: number;
+  end_char_index?: number;
+  start_page_number?: number;
+  end_page_number?: number;
+  start_block_index?: number;
+  end_block_index?: number;
+  file_id?: string | null;
+  url?: string;
+  title?: string;
+  encrypted_index?: string;
+}
+
 /** Delta variants in content_block_delta events. */
 export type AnthropicDelta =
   | { type: 'text_delta'; text: string }
-  | { type: 'thinking_delta'; thinking: string }
+  | { type: 'thinking_delta'; thinking: string; estimated_tokens?: number }
   | { type: 'signature_delta'; signature: string }
-  | { type: 'input_json_delta'; partial_json: string };
+  | { type: 'input_json_delta'; partial_json: string }
+  | { type: 'citations_delta'; citation: TextCitation }
+  | { type: 'compaction_delta'; content: string; encrypted_content: string };
 
 /**
  * Full discriminated union of Anthropic-format SSE events.

@@ -562,6 +562,329 @@ describe('SSE_EVENT_TYPES', () => {
 });
 
 // =========================================================================
+// New content block types (added 2026-06-16)
+// =========================================================================
+
+describe('New Anthropic content block types', () => {
+  test('search_result block serializes and parses', () => {
+    const block: AnthropicContentBlock = {
+      type: 'search_result',
+      source: 'https://example.com',
+      title: 'Example Search',
+      content: [{ type: 'text', text: 'Result text' }],
+    };
+    const event: AnthropicSSEEvent = {
+      type: 'content_block_start',
+      index: 3,
+      content_block: block,
+    };
+    const wire = serializeSSEEvent(event);
+    const parsed = parseSSEEvent('content_block_start', wire);
+    expect(parsed).toEqual(event);
+  });
+
+  test('compaction block serializes and parses', () => {
+    const block: AnthropicContentBlock = {
+      type: 'compaction',
+      content: 'Summary of previous conversation...',
+      encrypted_content: 'opaque-blob',
+    };
+    const event: AnthropicSSEEvent = {
+      type: 'content_block_start',
+      index: 4,
+      content_block: block,
+    };
+    const wire = serializeSSEEvent(event);
+    const parsed = parseSSEEvent('content_block_start', wire);
+    expect(parsed).toEqual(event);
+  });
+
+  test('fallback block serializes and parses', () => {
+    const block: AnthropicContentBlock = {
+      type: 'fallback',
+      from: { model: 'claude-haiku-4-5-20251001' },
+      to: { model: 'claude-sonnet-4-6' },
+    };
+    const event: AnthropicSSEEvent = {
+      type: 'content_block_start',
+      index: 5,
+      content_block: block,
+    };
+    const wire = serializeSSEEvent(event);
+    const parsed = parseSSEEvent('content_block_start', wire);
+    expect(parsed).toEqual(event);
+  });
+
+  test('mid_conv_system block serializes and parses', () => {
+    const block: AnthropicContentBlock = {
+      type: 'mid_conv_system',
+      content: [{ type: 'text', text: 'Updated system instructions...' }],
+    };
+    const event: AnthropicSSEEvent = {
+      type: 'content_block_start',
+      index: 6,
+      content_block: block,
+    };
+    const wire = serializeSSEEvent(event);
+    const parsed = parseSSEEvent('content_block_start', wire);
+    expect(parsed).toEqual(event);
+  });
+
+  test('web_search_tool_result block serializes and parses', () => {
+    const block: AnthropicContentBlock = {
+      type: 'web_search_tool_result',
+      tool_use_id: 'toolu_ws_001',
+      content: 'Search results content',
+    };
+    const event: AnthropicSSEEvent = {
+      type: 'content_block_start',
+      index: 7,
+      content_block: block,
+    };
+    const wire = serializeSSEEvent(event);
+    const parsed = parseSSEEvent('content_block_start', wire);
+    expect(parsed).toEqual(event);
+  });
+
+  test('web_fetch_tool_result block serializes and parses', () => {
+    const block: AnthropicContentBlock = {
+      type: 'web_fetch_tool_result',
+      tool_use_id: 'toolu_wf_001',
+      content: 'Fetched page content',
+    };
+    const event: AnthropicSSEEvent = {
+      type: 'content_block_start',
+      index: 8,
+      content_block: block,
+    };
+    const wire = serializeSSEEvent(event);
+    const parsed = parseSSEEvent('content_block_start', wire);
+    expect(parsed).toEqual(event);
+  });
+
+  test('text block with citations', () => {
+    const block: AnthropicContentBlock = {
+      type: 'text',
+      text: 'The sky is blue.',
+      citations: [
+        {
+          type: 'char_location',
+          cited_text: 'sky is blue',
+          document_index: 0,
+          document_title: 'Weather Report',
+          start_char_index: 4,
+          end_char_index: 15,
+        },
+      ],
+    };
+    const event: AnthropicSSEEvent = {
+      type: 'content_block_start',
+      index: 9,
+      content_block: block,
+    };
+    const wire = serializeSSEEvent(event);
+    const parsed = parseSSEEvent('content_block_start', wire);
+    expect(parsed).toEqual(event);
+  });
+
+  test('tool_use block with caller field', () => {
+    const block: AnthropicContentBlock = {
+      type: 'tool_use',
+      id: 'toolu_caller_001',
+      name: 'read',
+      input: { file_path: '/test.txt' },
+      caller: { type: 'direct' },
+    };
+    const event: AnthropicSSEEvent = {
+      type: 'content_block_start',
+      index: 10,
+      content_block: block,
+    };
+    const wire = serializeSSEEvent(event);
+    const parsed = parseSSEEvent('content_block_start', wire);
+    expect(parsed).toEqual(event);
+  });
+
+  test('document block with context field', () => {
+    const block: AnthropicContentBlock = {
+      type: 'document',
+      source: { type: 'text', media_type: 'text/plain', data: 'doc content' },
+      title: 'notes.txt',
+      context: 'User notes from meeting',
+    };
+    const event: AnthropicSSEEvent = {
+      type: 'content_block_start',
+      index: 11,
+      content_block: block,
+    };
+    const wire = serializeSSEEvent(event);
+    const parsed = parseSSEEvent('content_block_start', wire);
+    expect(parsed).toEqual(event);
+  });
+});
+
+// =========================================================================
+// New delta types (added 2026-06-16)
+// =========================================================================
+
+describe('New Anthropic delta types', () => {
+  test('thinking_delta with estimated_tokens', () => {
+    const event: AnthropicSSEEvent = {
+      type: 'content_block_delta',
+      index: 0,
+      delta: { type: 'thinking_delta', thinking: 'Let me analyze...', estimated_tokens: 142 },
+    };
+    const wire = serializeSSEEvent(event);
+    const parsed = parseSSEEvent('content_block_delta', wire);
+    expect(parsed).toEqual(event);
+  });
+
+  test('thinking_delta without estimated_tokens (backward compat)', () => {
+    // Existing code that doesn't set estimated_tokens should still work
+    const event: AnthropicSSEEvent = {
+      type: 'content_block_delta',
+      index: 0,
+      delta: { type: 'thinking_delta', thinking: 'Hmm...' },
+    };
+    const wire = serializeSSEEvent(event);
+    const parsed = parseSSEEvent('content_block_delta', wire);
+    expect(parsed).toEqual(event);
+  });
+
+  test('citations_delta round-trips through SSE serialization', () => {
+    const citation: import('../protocol-types').TextCitation = {
+      type: 'char_location',
+      cited_text: 'referenced text',
+      document_index: 0,
+      document_title: 'Source Document',
+      start_char_index: 10,
+      end_char_index: 25,
+    };
+    const event: AnthropicSSEEvent = {
+      type: 'content_block_delta',
+      index: 1,
+      delta: { type: 'citations_delta', citation },
+    };
+    const wire = serializeSSEEvent(event);
+    const parsed = parseSSEEvent('content_block_delta', wire);
+    expect(parsed).toEqual(event);
+  });
+
+  test('citations_delta with web_search_result_location', () => {
+    const citation: import('../protocol-types').TextCitation = {
+      type: 'web_search_result_location',
+      cited_text: 'Pricing data',
+      url: 'https://example.com/pricing',
+      title: 'Pricing Page',
+      encrypted_index: 'enc_idx_123',
+    };
+    const event: AnthropicSSEEvent = {
+      type: 'content_block_delta',
+      index: 1,
+      delta: { type: 'citations_delta', citation },
+    };
+    const wire = serializeSSEEvent(event);
+    const parsed = parseSSEEvent('content_block_delta', wire);
+    expect(parsed).toEqual(event);
+  });
+
+  test('citations_delta with search_result_location', () => {
+    const citation: import('../protocol-types').TextCitation = {
+      type: 'search_result_location',
+      cited_text: 'Result content',
+      search_result_index: 2,
+      start_block_index: 0,
+      end_block_index: 3,
+    };
+    const event: AnthropicSSEEvent = {
+      type: 'content_block_delta',
+      index: 1,
+      delta: { type: 'citations_delta', citation },
+    };
+    const wire = serializeSSEEvent(event);
+    const parsed = parseSSEEvent('content_block_delta', wire);
+    expect(parsed).toEqual(event);
+  });
+
+  test('compaction_delta round-trips through SSE serialization', () => {
+    const event: AnthropicSSEEvent = {
+      type: 'content_block_delta',
+      index: 2,
+      delta: { type: 'compaction_delta', content: 'compact...', encrypted_content: 'enc_blob' },
+    };
+    const wire = serializeSSEEvent(event);
+    const parsed = parseSSEEvent('content_block_delta', wire);
+    expect(parsed).toEqual(event);
+  });
+});
+
+// =========================================================================
+// TextCitation type validation
+// =========================================================================
+
+describe('TextCitation', () => {
+  test('char_location citation has all required fields', () => {
+    const citation: import('../protocol-types').TextCitation = {
+      type: 'char_location',
+      cited_text: 'exact text match',
+      document_index: 0,
+      document_title: 'My Doc',
+      start_char_index: 5,
+      end_char_index: 19,
+    };
+    expect(citation.type).toBe('char_location');
+    expect(citation.cited_text).toBe('exact text match');
+    expect(citation.start_char_index).toBe(5);
+    expect(citation.end_char_index).toBe(19);
+  });
+
+  test('page_location citation', () => {
+    const citation: import('../protocol-types').TextCitation = {
+      type: 'page_location',
+      cited_text: 'text on page',
+      document_index: 1,
+      document_title: 'PDF Doc',
+      start_page_number: 3,
+      end_page_number: 5,
+    };
+    expect(citation.type).toBe('page_location');
+    expect(citation.start_page_number).toBe(3);
+    expect(citation.end_page_number).toBe(5);
+  });
+
+  test('content_block_location citation', () => {
+    const citation: import('../protocol-types').TextCitation = {
+      type: 'content_block_location',
+      cited_text: 'block range text',
+      document_index: 0,
+      document_title: 'Doc',
+      start_block_index: 1,
+      end_block_index: 4,
+    };
+    expect(citation.type).toBe('content_block_location');
+    expect(citation.start_block_index).toBe(1);
+    expect(citation.end_block_index).toBe(4);
+  });
+
+  test('all five citation location types are valid', () => {
+    const validTypes = [
+      'char_location',
+      'page_location',
+      'content_block_location',
+      'web_search_result_location',
+      'search_result_location',
+    ] as const;
+    validTypes.forEach((t) => {
+      const citation: import('../protocol-types').TextCitation = {
+        type: t,
+        cited_text: 'test',
+      };
+      expect(citation.type).toBe(t);
+    });
+  });
+});
+
+// =========================================================================
 // Helper — parse SSE wire format back to event
 // =========================================================================
 

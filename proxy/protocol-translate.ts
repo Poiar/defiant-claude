@@ -69,6 +69,8 @@ function stringifyContent(content: string | AnthropicContentBlock[] | null | und
         );
       } else if (b.type === 'tool_use') {
         parts.push(`[Tool call: ${b.name || 'unknown'}(${JSON.stringify(b.input || {})})]`);
+      } else if (b.type === 'search_result') {
+        parts.push(`[Search result: ${b.title || b.source}]`);
       }
     }
     return parts.join('\n');
@@ -159,7 +161,12 @@ function convertMessage(msg: AnthropicMessage): OpenAIMessage | OpenAIMessage[] 
       return { role: 'user', content: msg.content };
     }
     const contentBlocks = msg.content as ContentBlock[];
-    const toolResults = contentBlocks.filter((b) => b.type === 'tool_result');
+    const toolResultTypes = new Set([
+      'tool_result',
+      'web_search_tool_result',
+      'web_fetch_tool_result',
+    ]);
+    const toolResults = contentBlocks.filter((b) => toolResultTypes.has(b.type));
     const textBlocks = contentBlocks.filter((b) => b.type === 'text' && b.text);
     if (toolResults.length > 0) {
       // Filter out tool results without a valid tool_use_id to avoid
