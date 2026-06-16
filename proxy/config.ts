@@ -593,7 +593,12 @@ export function validateConfig(state: ConfigState): string[] {
       if (provider.auth && provider.auth !== 'bearer' && provider.auth !== 'x-api-key') {
         warnings.push('Provider "' + key + '" has unrecognized auth type: ' + provider.auth);
       }
-      if (provider.format && provider.format !== 'anthropic' && provider.format !== 'openai') {
+      if (
+        provider.format &&
+        provider.format !== 'anthropic' &&
+        provider.format !== 'openai' &&
+        provider.format !== 'gemini'
+      ) {
         warnings.push('Provider "' + key + '" has unrecognized format: ' + provider.format);
       }
       if (Array.isArray(provider.fallback)) {
