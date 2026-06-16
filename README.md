@@ -29,6 +29,7 @@ DeepClaude runs a local HTTP routing proxy that intercepts Claude Code's Anthrop
 | `forward.ts` | Upstream HTTP forwarding with SSE streaming, gzip decompression, stream heartbeat/deadline timers with byte diagnostics, total-byte cap (500MB), fallback header injection, SSE buffer guarding, usage token extraction, peekFirstChunk with fast-stream race protection |
 | `friendly-error.ts` | Conversational error responses for exhausted fallback chains |
 | `header-sanitizer.ts` | Request header sanitization before logging (drops auth, cookies, noise) |
+| `hot-swap-headers.ts` | (undocumented) |
 | `launcher.mjs` | Unified Node.js engine shared by deepclaude.ps1, deepclaude.sh, and scripts/cli.mjs — config resolution, routes JSON, env vars with [1m] suffix and compaction window, slot/thinking overrides, proxy state, pricing/model/key data. Zero npm deps, single source of truth. |
 | `log.ts` | Structured logger with per-module namespacing, request IDs, and env-gated debug level (`DEEPCLAUDE_DEBUG=true`) |
 | `lru-cache.ts` | TTL cache with LRU eviction using delete-then-set MRU promotion and lazy shared cleanup |
@@ -85,7 +86,7 @@ Config resolution, routes JSON construction, env var computation, slot/thinking 
 ### Test coverage
 
 <!-- AUTO:test-coverage -->
-1506 tests across 49 test files covering all proxy modules — transport errors, concurrency, LRU cache, provider registry validation, error codes, routing, stats, forwarding, server tools, config, protocol translation, thinking cache (including fingerprint-free cross-turn regression tests), reasoning cache, header sanitization, truncation, crypto, friendly errors, SSRF validation, dead stream detection, startup checks, and stream metrics. Run with `npm test`.
+1539 tests across 49 test files covering all proxy modules — transport errors, concurrency, LRU cache, provider registry validation, error codes, routing, stats, forwarding, server tools, config, protocol translation, thinking cache (including fingerprint-free cross-turn regression tests), reasoning cache, header sanitization, truncation, crypto, friendly errors, SSRF validation, dead stream detection, startup checks, and stream metrics. Run with `npm test`.
 <!-- /AUTO:test-coverage -->
 
 ### Pre-commit
