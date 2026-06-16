@@ -1,0 +1,44 @@
+# GitLeaks config for DeepClaude CI/CD
+# Catches API keys before they land on main.
+
+title = "DeepClaude"
+
+[allowlist]
+  description = "Test files and known-safe patterns"
+  paths = [
+    '''proxy/__tests__/.*''',
+    '''.*\.test\.ts''',
+  ]
+  regexes = [
+    '''test-key-\d+''',
+    '''sk-your-key''',
+    '''secret_key: "ultrasecretkey"''',
+    '''secret_key: ".+searxng.+change-me"''',
+  ]
+
+[[rules]]
+  id = "brave-api-key"
+  description = "Brave Search API key"
+  regex = '''BSA[A-Za-z0-9_]{10,}'''
+
+[[rules]]
+  id = "openai-key"
+  description = "OpenAI API key"
+  regex = '''sk-(?!your-)[A-Za-z0-9]{20,}'''
+
+[[rules]]
+  id = "anthropic-key"
+  description = "Anthropic API key"
+  regex = '''sk-ant-[A-Za-z0-9\-_]{20,}'''
+
+[[rules]]
+  id = "deepseek-key"
+  description = "DeepSeek API key"
+  regex = '''sk-[a-z0-9]{32}'''
+
+[[rules]]
+  id = "generic-secret"
+  description = "Generic secret in KEY=value format"
+  regex = '''(?i)(api[_-]?key|secret|token|password)\s*[:=]\s*['"]?[A-Za-z0-9_\-\.]{20,}['"]?'''
+  [rules.allowlist]
+    regexes = ['''(?i)test''', '''(?i)example''']
