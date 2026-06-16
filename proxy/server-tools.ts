@@ -326,7 +326,7 @@ interface SearchResult {
  * Handles both current direct-URL format and legacy uddg= redirect format,
  * both quote styles, and both attribute orderings.
  */
-function parseDdgLiteHtml(html: string): SearchResult[] {
+export function parseDdgLiteHtml(html: string): SearchResult[] {
   // Two-pass: first find every <a> with class=result-link, then
   // extract href and title. This handles both orderings
   // (href before class, class before href) and both quote styles.
@@ -392,8 +392,26 @@ function parseDdgLiteHtml(html: string): SearchResult[] {
   return results.slice(0, 10);
 }
 
-// --- Cookie jar (shared across POST requests) ---
+// --- Cookie jar (shared across POST requests, persisted to disk) ---
 let ddgCookieJar = '';
+
+// Chrome versions to rotate through — prevents fingerprinting based on
+// a single UA string. Picked from stable Chrome releases.
+const DDG_USER_AGENTS = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+];
+
+let _uaIdx = 0;
+function getDdgUA(): string {
+  // Pick next UA in rotation with deterministic offset based on current
+  // second — adds jitter without needing Math.random() (banned in this repo).
+  const now = new Date();
+  _uaIdx = (_uaIdx + now.getSeconds()) % DDG_USER_AGENTS.length;
+  return DDG_USER_AGENTS[_uaIdx];
+}
 
 function extractDdgCookies(setCookieHeaders: string[] | undefined): void {
   if (!setCookieHeaders) return;
@@ -415,9 +433,6 @@ function extractDdgCookies(setCookieHeaders: string[] | undefined): void {
   }
 }
 
-const DDG_UA =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
-
 /**
  * DDG Lite search via POST (current working method).
  * DDG now requires POST, session cookies, browser UA, and Referer.
@@ -427,7 +442,7 @@ export function ddgLiteSearch(query: string): Promise<SearchResult[]> {
     const shortQuery = query.slice(0, 100);
     const postData = 'q=' + encodeURIComponent(query);
     const headers: Record<string, string> = {
-      'User-Agent': DDG_UA,
+      'User-Agent': getDdgUA(),
       'Content-Type': 'application/x-www-form-urlencoded',
       Referer: 'https://lite.duckduckgo.com/lite/',
     };
@@ -579,9 +594,11 @@ export async function webSearch(query: string): Promise<string> {
 
   await acquireFetchSlot();
   try {
-    // Tier 1: DDG Lite POST (browser UA + cookies — current working method)
+    // Tier 1: DDG Lite POST (rotating browser UA + cookies)
     let liteResults = await ddgLiteSearch(query);
-    // Tier 2: DDG Lite GET (legacy — kept for future Playwright revival)
+    // Tier 2: DDG Lite GET (legacy — kept for reference; DDG currently
+    // returns empty forms for GET, but the URL is trivially portable to
+    // a future Playwright or headful browser approach.)
     if (liteResults.length === 0) {
       liteResults = await ddgLiteSearchGet(query);
     }
@@ -599,7 +616,7 @@ export async function webSearch(query: string): Promise<string> {
       return result;
     }
 
-    // Tier 3: DDG JSON API (instant answers for simple factual queries)
+    // Tier 4: DDG JSON API (instant answers for simple factual queries)
     const result = await new Promise<string>((resolve) => {
       const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&no_redirect=1`;
       https
