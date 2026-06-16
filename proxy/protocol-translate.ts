@@ -903,6 +903,30 @@ export function translateRequestToGemini(anthropicBody: AnthropicRequestBody): {
           ];
           geminiBody.contents.push({ role: 'function', parts: trParts });
           continue;
+        } else if (
+          block.type === 'web_search_tool_result' ||
+          block.type === 'web_fetch_tool_result'
+        ) {
+          // Treat server-side search/fetch results same as tool_result
+          const raw = block.content;
+          const content = raw == null ? '' : typeof raw === 'string' ? raw : JSON.stringify(raw);
+          const fcName = (block.tool_use_id && toolNameById.get(block.tool_use_id)) || 'unknown';
+          const trParts: GeminiPart[] = [
+            {
+              functionResponse: {
+                name: fcName,
+                response: { content },
+              },
+            },
+          ];
+          geminiBody.contents.push({ role: 'function', parts: trParts });
+          continue;
+        } else if (block.type === 'search_result') {
+          // Flatten search result blocks to text for Gemini
+          const textParts = (block.content as AnthropicContentBlock[])
+            .filter((b) => b.type === 'text')
+            .map((b) => (b as { type: 'text'; text: string }).text);
+          if (textParts.length > 0) parts.push({ text: textParts.join('\n') });
         } else if (block.type === 'thinking') {
           parts.push({ thought: block.thinking || '' });
         }

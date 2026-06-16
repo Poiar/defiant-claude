@@ -1571,3 +1571,131 @@ describe('createAnthropicStreamInterceptor server_tool_use', () => {
     expect((startEvent!.data as any).message.model).toBe('deepseek-v4-flash');
   });
 });
+
+// =========================================================================
+// Gemini translator — new content block types (added 2026-06-16)
+// =========================================================================
+
+import { translateRequestToGemini } from '../protocol-translate';
+
+describe('translateRequestToGemini with new block types', () => {
+  const minimalBody = {
+    model: 'gemini-2.5-flash',
+    messages: [] as any[],
+    max_tokens: 100,
+  };
+
+  test('converts web_search_tool_result like tool_result', () => {
+    const body = {
+      ...minimalBody,
+      messages: [
+        {
+          role: 'assistant' as const,
+          content: [
+            { type: 'tool_use' as const, id: 'tu_1', name: 'web_search', input: { query: 'test' } },
+          ],
+        },
+        {
+          role: 'user' as const,
+          content: [
+            {
+              type: 'web_search_tool_result' as const,
+              tool_use_id: 'tu_1',
+              content: 'Search results here',
+            },
+          ],
+        },
+      ],
+    };
+    const { geminiBody } = translateRequestToGemini(body);
+    // Should have model (assistant), function (tool result), and user messages
+    const functionMsgs = geminiBody.contents.filter((c) => c.role === 'function');
+    expect(functionMsgs.length).toBe(1);
+    const resp = functionMsgs[0].parts[0].functionResponse;
+    expect(resp).toBeDefined();
+    expect(resp!.name).toBe('web_search');
+  });
+
+  test('converts web_fetch_tool_result like tool_result', () => {
+    const body = {
+      ...minimalBody,
+      messages: [
+        {
+          role: 'assistant' as const,
+          content: [
+            {
+              type: 'tool_use' as const,
+              id: 'tu_2',
+              name: 'web_fetch',
+              input: { url: 'https://example.com' },
+            },
+          ],
+        },
+        {
+          role: 'user' as const,
+          content: [
+            {
+              type: 'web_fetch_tool_result' as const,
+              tool_use_id: 'tu_2',
+              content: 'Fetched content',
+            },
+          ],
+        },
+      ],
+    };
+    const { geminiBody } = translateRequestToGemini(body);
+    const functionMsgs = geminiBody.contents.filter((c) => c.role === 'function');
+    expect(functionMsgs.length).toBe(1);
+    expect(functionMsgs[0].parts[0].functionResponse!.name).toBe('web_fetch');
+  });
+
+  test('flattens search_result blocks to text parts', () => {
+    const body = {
+      ...minimalBody,
+      messages: [
+        {
+          role: 'user' as const,
+          content: [
+            {
+              type: 'search_result' as const,
+              source: 'https://example.com',
+              title: 'Search Result',
+              content: [{ type: 'text' as const, text: 'Result snippet' }],
+            },
+          ],
+        },
+      ],
+    };
+    const { geminiBody } = translateRequestToGemini(body);
+    // search_result should produce a text part with the snippet
+    const lastMsg = geminiBody.contents[geminiBody.contents.length - 1];
+    const textParts = lastMsg.parts.filter((p) => p.text);
+    expect(textParts.length).toBeGreaterThanOrEqual(1);
+    expect(textParts.some((p) => p.text?.includes('Result snippet'))).toBe(true);
+  });
+
+  test('handles null content in web_search_tool_result gracefully', () => {
+    const body = {
+      ...minimalBody,
+      messages: [
+        {
+          role: 'assistant' as const,
+          content: [
+            { type: 'tool_use' as const, id: 'tu_3', name: 'web_search', input: { query: 'test' } },
+          ],
+        },
+        {
+          role: 'user' as const,
+          content: [
+            { type: 'web_search_tool_result' as const, tool_use_id: 'tu_3', content: null },
+          ],
+        },
+      ],
+    };
+    const { geminiBody } = translateRequestToGemini(body);
+    const functionMsgs = geminiBody.contents.filter((c) => c.role === 'function');
+    expect(functionMsgs.length).toBe(1);
+    // null content → empty string
+    expect(functionMsgs[0].parts[0].functionResponse!.response.content).toBe('');
+  });
+});
