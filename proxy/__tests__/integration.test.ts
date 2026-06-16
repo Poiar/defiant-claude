@@ -811,3 +811,85 @@ describe.skip('Protocol routing integration', () => {
     expect(usage.output_tokens).toBe(15);
   });
 });
+
+// =========================================================================
+// buildHotSwapHeaders — header rewriting for hot-swap forwarding
+// =========================================================================
+
+import { buildHotSwapHeaders } from '../hot-swap-headers';
+
+describe('buildHotSwapHeaders', () => {
+  test('rewrites x-api-key to deepclaude-<targetPort>', () => {
+    const original = {
+      'x-api-key': 'deepclaude-53746',
+      'content-type': 'application/json',
+      'anthropic-version': '2023-06-01',
+    };
+    const result = buildHotSwapHeaders(original, 53747);
+    expect(result['x-api-key']).toBe('deepclaude-53747');
+  });
+
+  test('preserves non-auth headers', () => {
+    const original = {
+      'x-api-key': 'deepclaude-53746',
+      'content-type': 'application/json',
+      'anthropic-version': '2023-06-01',
+      accept: 'text/event-stream',
+    };
+    const result = buildHotSwapHeaders(original, 65151);
+    expect(result['content-type']).toBe('application/json');
+    expect(result['anthropic-version']).toBe('2023-06-01');
+    expect(result['accept']).toBe('text/event-stream');
+  });
+
+  test('sets host header to new proxy address', () => {
+    const result = buildHotSwapHeaders(
+      { host: '127.0.0.1:53746', 'x-api-key': 'deepclaude-53746' },
+      53747,
+    );
+    expect(result['host']).toBe('127.0.0.1:53747');
+  });
+
+  test('strips authorization header', () => {
+    const original = {
+      authorization: 'Bearer sk-ant-api03-old-session-token',
+      'x-api-key': 'deepclaude-53746',
+      'content-type': 'application/json',
+    };
+    const result = buildHotSwapHeaders(original, 53747);
+    expect(result['x-api-key']).toBe('deepclaude-53747');
+    expect(result['authorization']).toBeUndefined();
+    expect(result['content-type']).toBe('application/json');
+  });
+
+  test('handles header keys with mixed case (x-api-key)', () => {
+    // HTTP headers are case-insensitive; the function should still rewrite
+    const original: Record<string, string> = {
+      'X-API-Key': 'deepclaude-53746',
+      'Content-Type': 'application/json',
+    };
+    const result = buildHotSwapHeaders(original, 65151);
+    // JavaScript object keys are case-sensitive — x-api-key is set, original
+    // X-API-Key remains (Node.js http library normalizes to lowercase, so
+    // this tests that the function sets the canonical form)
+    expect(result['x-api-key']).toBe('deepclaude-65151');
+  });
+
+  test('immutates original headers object', () => {
+    const original = {
+      'x-api-key': 'deepclaude-53746',
+      'content-type': 'application/json',
+    };
+    const originalKeys = Object.keys(original).sort();
+    buildHotSwapHeaders(original, 53747);
+    // Original object should be unchanged
+    expect(Object.keys(original).sort()).toEqual(originalKeys);
+    expect(original['x-api-key']).toBe('deepclaude-53746');
+  });
+
+  test('default port schema works for any valid port', () => {
+    const result = buildHotSwapHeaders({ 'x-api-key': 'deepclaude-3000' }, 65199);
+    expect(result['x-api-key']).toBe('deepclaude-65199');
+    expect(result['host']).toBe('127.0.0.1:65199');
+  });
+});
