@@ -929,6 +929,38 @@ export function translateRequestToGemini(anthropicBody: AnthropicRequestBody): {
           if (textParts.length > 0) parts.push({ text: textParts.join('\n') });
         } else if (block.type === 'thinking') {
           parts.push({ thought: block.thinking || '' });
+        } else if (block.type === 'redacted_thinking') {
+          // Pass through as thought with redacted marker
+          parts.push({ thought: '[redacted]' });
+        } else if (block.type === 'image' && block.source) {
+          // Gemini supports inlineData for images
+          if (block.source.type === 'base64' && block.source.data) {
+            parts.push({
+              inlineData: {
+                mimeType: block.source.media_type || 'image/png',
+                data: block.source.data,
+              },
+            });
+          } else if (block.source.type === 'url' && block.source.url) {
+            // URL images: pass as text annotation (Gemini can't fetch URLs directly)
+            parts.push({ text: `[Image: ${block.source.url}]` });
+          }
+        } else if (block.type === 'document' && block.source) {
+          // Pass document as inlineData or text annotation
+          if (block.source.type === 'base64' && block.source.data) {
+            parts.push({
+              inlineData: {
+                mimeType: block.source.media_type || 'application/octet-stream',
+                data: block.source.data,
+              },
+            });
+          } else if (block.source.type === 'url' && block.source.url) {
+            parts.push({
+              text: `[Document: ${block.title || block.file_name || block.source.url}]`,
+            });
+          } else if (block.source.type === 'text' && block.source.data) {
+            parts.push({ text: block.source.data });
+          }
         }
       }
     }

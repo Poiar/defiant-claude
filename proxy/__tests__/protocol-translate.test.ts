@@ -1698,4 +1698,85 @@ describe('translateRequestToGemini with new block types', () => {
     // null content → empty string
     expect(functionMsgs[0].parts[0].functionResponse!.response.content).toBe('');
   });
+
+  test('converts image block to inlineData for Gemini', () => {
+    const body: any = {
+      ...minimalBody,
+      messages: [
+        {
+          role: 'user' as const,
+          content: [
+            {
+              type: 'image' as const,
+              source: { type: 'base64' as const, media_type: 'image/png', data: 'abc123' },
+            },
+          ],
+        },
+      ],
+    };
+    const { geminiBody } = translateRequestToGemini(body);
+    const lastMsg = geminiBody.contents[geminiBody.contents.length - 1];
+    const inlineParts = lastMsg.parts.filter((p) => p.inlineData);
+    expect(inlineParts.length).toBe(1);
+    expect(inlineParts[0].inlineData!.mimeType).toBe('image/png');
+    expect(inlineParts[0].inlineData!.data).toBe('abc123');
+  });
+
+  test('converts image block with URL source to text annotation', () => {
+    const body: any = {
+      ...minimalBody,
+      messages: [
+        {
+          role: 'user' as const,
+          content: [
+            {
+              type: 'image' as const,
+              source: { type: 'url' as const, url: 'https://example.com/img.png' },
+            },
+          ],
+        },
+      ],
+    };
+    const { geminiBody } = translateRequestToGemini(body);
+    const textParts = geminiBody.contents[0].parts.filter((p) => p.text);
+    expect(textParts.some((p) => p.text?.includes('example.com/img.png'))).toBe(true);
+  });
+
+  test('converts document block to inlineData for Gemini', () => {
+    const body: any = {
+      ...minimalBody,
+      messages: [
+        {
+          role: 'user' as const,
+          content: [
+            {
+              type: 'document' as const,
+              source: { type: 'base64' as const, media_type: 'application/pdf', data: 'pdfdata' },
+              title: 'report.pdf',
+            },
+          ],
+        },
+      ],
+    };
+    const { geminiBody } = translateRequestToGemini(body);
+    const inlineParts = geminiBody.contents[0].parts.filter((p) => p.inlineData);
+    expect(inlineParts.length).toBe(1);
+    expect(inlineParts[0].inlineData!.mimeType).toBe('application/pdf');
+  });
+
+  test('handles redacted_thinking block', () => {
+    const body: any = {
+      ...minimalBody,
+      messages: [
+        {
+          role: 'assistant' as const,
+          content: [{ type: 'redacted_thinking' as const, data: 'hidden' }],
+        },
+      ],
+    };
+    const { geminiBody } = translateRequestToGemini(body);
+    const thoughtParts = geminiBody.contents[0].parts.filter((p) => p.thought);
+    expect(thoughtParts.length).toBe(1);
+    expect(thoughtParts[0].thought).toBe('[redacted]');
+  });
 });
