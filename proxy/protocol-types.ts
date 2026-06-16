@@ -162,8 +162,15 @@ export interface AnthropicUsage {
   output_tokens: number;
   /** Anthropic-only: cache read token count. */
   cache_read_input_tokens?: number;
-  /** Anthropic-only: cache creation token count. */
+  /** Anthropic-only: cache creation token count (legacy flat field). */
   cache_creation_input_tokens?: number;
+  /** New granular cache creation breakdown (2026 API). */
+  cache_creation?: {
+    ephemeral_5m_input_tokens: number;
+    ephemeral_1h_input_tokens: number;
+  };
+  /** Geographic region where inference was served. */
+  inference_geo?: string;
   /** Service tier that processed the request (auto, standard, scaled). */
   service_tier?: 'auto' | 'standard' | 'scaled' | string;
   /** CC reads this to show "Did N searches" in the UI. Must be injected for non-Anthropic providers. */
@@ -181,6 +188,7 @@ export interface AnthropicResponseBody {
   model: string;
   stop_reason: AnthropicStopReason | null;
   stop_sequence: string | null;
+  stop_details: Record<string, unknown> | null;
   usage: AnthropicUsage;
 }
 
