@@ -81,6 +81,8 @@ export function getKey(pk) {
   const reg = registry();
   const prov = reg.providers[pk];
   if (!prov) return '';
+  // noAuth providers skip key resolution entirely
+  if (prov.noAuth) return '';
   // Try process.env first, then Windows registry (for detached proxy starts)
   return process.env[prov.keyEnv] || readWinReg(prov.keyEnv) || '';
 }

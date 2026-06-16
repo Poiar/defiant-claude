@@ -644,6 +644,20 @@ export const PROVIDER_CONSTRAINTS: Record<string, ProviderConstraints> = {
     stripFields: ['top_k', 'metadata'],
   },
 
+  // --- Ollama (local) ---
+  lo: {
+    key: 'lo',
+    format: 'openai',
+    nativeServerTools: false,
+    nativeServerToolUse: false,
+    requiresModelRewrite: true,
+    forbidsToolChoiceWithThinking: false,
+    requiresThinkingEcho: false,
+    thinkingFormat: null,
+    stripFields: ['top_k', 'metadata'],
+    noAutoFallback: true,
+  },
+
   // --- Google Gemini ---
   gm: {
     key: 'gm',
