@@ -1531,7 +1531,7 @@ describe('createAnthropicStreamInterceptor server_tool_use', () => {
     const { events } = await new Promise<{
       events: Array<{ event: string; data: Record<string, unknown> }>;
     }>((resolve, reject) => {
-      const transformer = createAnthropicStreamInterceptor(0, 'haiku:claude-sonnet-4-6');
+      const transformer = createAnthropicStreamInterceptor('haiku:claude-sonnet-4-6');
       let output = '';
       transformer.on('data', (chunk: string) => {
         output += chunk.toString();
@@ -1545,6 +1545,45 @@ describe('createAnthropicStreamInterceptor server_tool_use', () => {
     // Model should stay untouched (already starts with claude-)
     const startEvent = events.find((e) => e.event === 'message_start');
     expect((startEvent!.data as any).message.model).toBe('claude-haiku-4-5-20251001');
+  });
+
+  test('rewrites to claude-* model for non-claude slot overrides (the fix)', async () => {
+    // BUG REPRODUCTION: CC slot-override haiku→deepseek-v4-flash.
+    // The upstream returns model "deepseek-v4-flash" which doesn't start
+    // with "claude-". Before the fix, the interceptor would strip the slot
+    // prefix from "haiku:deepseek-v4-flash" → "deepseek-v4-flash" and use
+    // THAT as the target model. CC ignores server_tool_use from non-claude
+    // models → "Did 0 searches".
+    //
+    // After the fix, getTrustedModel() maps the slot to claude-haiku-4-5.
+    const input =
+      `event: message_start\ndata: {"type":"message_start","message":{"id":"msg_nc","type":"message","role":"assistant","content":[],"model":"deepseek-v4-flash","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":5,"output_tokens":0}}}\n\n` +
+      makeAnthroSSE({ tools: [{ name: 'web_search', id: 'call_nc1' }] }).replace(
+        /^event: message_start\n.+$/m,
+        '',
+      );
+
+    const { events } = await new Promise<{
+      events: Array<{ event: string; data: Record<string, unknown> }>;
+    }>((resolve, reject) => {
+      const transformer = createAnthropicStreamInterceptor('haiku:deepseek-v4-flash');
+      let output = '';
+      transformer.on('data', (chunk: string) => {
+        output += chunk.toString();
+      });
+      transformer.on('end', () => resolve({ events: parseSSE(output) }));
+      transformer.on('error', reject);
+      transformer.write(input);
+      transformer.end();
+    });
+
+    // Must rewrite to a claude-* model for CC to trust server_tool_use
+    const startEvent = events.find((e) => e.event === 'message_start');
+    expect((startEvent!.data as any).message.model).toBe('claude-haiku-4-5-20251001');
+
+    const deltaEvent = events.find((e) => e.event === 'message_delta');
+    const usage = (deltaEvent!.data as any).usage;
+    expect(usage.server_tool_use.web_search_requests).toBe(1);
   });
 
   test('does NOT rewrite model when no originalModel is passed (backward compat)', async () => {
