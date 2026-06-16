@@ -38,7 +38,12 @@ import {
 import { tryForward, addFallbackHeaders, sseHeaders, type ForwardResult } from './forward';
 import { sendProbe } from './probe';
 import type { ProbeSlot } from './probe';
-import { populateToolResults, preprocessServerTools } from './server-tools';
+import {
+  populateToolResults,
+  preprocessServerTools,
+  webSearch,
+  extractSearchQuery,
+} from './server-tools';
 import { buildHotSwapHeaders } from './hot-swap-headers';
 import { getConstraints, validateResponseConformance } from './protocol-types';
 import { getTrustedModel } from './model-trust';
@@ -409,6 +414,109 @@ if (probeIdx >= 2) {
           subSessionKeys.size +
           ' sub-sessions)',
       );
+    }
+  }
+
+  /**
+   * Pre-execute a web search request — run DDG locally and return results
+   * inline, bypassing the model entirely. Returns true if the request was
+   * handled (response sent), false to fall through to normal routing.
+   */
+  async function tryPreExecuteWebSearch(
+    body: Record<string, unknown>,
+    modelName: string | undefined,
+    reqId: number,
+    response: http.ServerResponse,
+  ): Promise<boolean> {
+    if (response.headersSent || response.destroyed) return false;
+
+    const messages = body.messages as Array<Record<string, unknown>> | undefined;
+    const query = messages ? extractSearchQuery(messages as any[]) : null;
+    if (!query) return false;
+
+    try {
+      const searchResult = await webSearch(query);
+      const isStream = body.stream === true;
+      const trustModel = getTrustedModel(modelName || (body.model as string) || null);
+      const msgId = 'msg_search_' + reqId;
+
+      if (isStream) {
+        const sse =
+          'event: message_start\ndata: ' +
+          JSON.stringify({
+            type: 'message_start',
+            message: {
+              id: msgId,
+              type: 'message',
+              role: 'assistant',
+              content: [],
+              model: trustModel,
+              stop_reason: null,
+              stop_sequence: null,
+              usage: { input_tokens: 1, output_tokens: 0 },
+            },
+          }) +
+          '\n\nevent: content_block_start\ndata: ' +
+          JSON.stringify({
+            type: 'content_block_start',
+            index: 0,
+            content_block: { type: 'text', text: '' },
+          }) +
+          '\n\nevent: content_block_delta\ndata: ' +
+          JSON.stringify({
+            type: 'content_block_delta',
+            index: 0,
+            delta: { type: 'text_delta', text: searchResult },
+          }) +
+          '\n\nevent: content_block_stop\ndata: ' +
+          JSON.stringify({ type: 'content_block_stop', index: 0 }) +
+          '\n\nevent: message_delta\ndata: ' +
+          JSON.stringify({
+            type: 'message_delta',
+            delta: { stop_reason: 'end_turn', stop_sequence: null },
+            usage: {
+              input_tokens: 1,
+              output_tokens: Math.ceil(searchResult.length / 4),
+              server_tool_use: { web_search_requests: 1, web_fetch_requests: 0 },
+            },
+          }) +
+          '\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\n';
+        response.writeHead(200, sseHeaders({}) as Record<string, string | number>);
+        response.write(sse);
+        response.end();
+      } else {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(
+          JSON.stringify({
+            id: msgId,
+            type: 'message',
+            role: 'assistant',
+            model: trustModel,
+            content: [{ type: 'text', text: searchResult }],
+            stop_reason: 'end_turn',
+            stop_sequence: null,
+            usage: {
+              input_tokens: 1,
+              output_tokens: Math.ceil(searchResult.length / 4),
+              server_tool_use: { web_search_requests: 1, web_fetch_requests: 0 },
+            },
+          }),
+        );
+      }
+
+      log.info(
+        null,
+        'WEB_SEARCH_PREX: query="' +
+          query.slice(0, 80) +
+          '" len=' +
+          searchResult.length +
+          ' stream=' +
+          isStream,
+      );
+      return true;
+    } catch (e) {
+      log.error(null, 'WEB_SEARCH_PREX error: ' + truncateForLog((e as Error).message));
+      return false; // Fall through to normal forwarding
     }
   }
 
@@ -918,6 +1026,31 @@ if (probeIdx >= 2) {
           }
         }
 
+        // --- Web search pre-execution (early, before routing) ---
+        // Intercept web_search/web_fetch requests before they hit the
+        // routing layer. Run DDG locally and return results inline.
+        // This works regardless of whether providers are configured.
+        if (parsedBody && !res.headersSent && !res.destroyed) {
+          const tools = (parsedBody as Record<string, unknown>).tools as
+            | Array<{ type?: string }>
+            | undefined;
+          if (tools && Array.isArray(tools)) {
+            const hasWeb = tools.some(
+              (t) =>
+                t.type && (t.type.startsWith('web_search_') || t.type.startsWith('web_fetch_')),
+            );
+            if (hasWeb) {
+              const handled = await tryPreExecuteWebSearch(
+                parsedBody as Record<string, unknown>,
+                model,
+                reqId,
+                res,
+              );
+              if (handled) return;
+            }
+          }
+        }
+
         const resolved = await resolveTarget(
           model,
           state.routing,
@@ -1044,6 +1177,21 @@ if (probeIdx >= 2) {
               if (result.hadWebSearch || result.hadWebFetch) hasWebTools = true;
             }
 
+            // Also detect web tools for native providers (Anthropic).
+            // preprocessServerTools is gated on !nativeServerTools, so
+            // for native providers we check the tools array directly.
+            if (!hasWebTools && parsedBody.tools && Array.isArray(parsedBody.tools)) {
+              for (const t of parsedBody.tools as Array<{ type?: string }>) {
+                if (
+                  t.type &&
+                  (t.type.startsWith('web_search_') || t.type.startsWith('web_fetch_'))
+                ) {
+                  hasWebTools = true;
+                  break;
+                }
+              }
+            }
+
             if (parsedBody.messages) {
               try {
                 const messages = parsedBody.messages as Array<Record<string, unknown>>;
@@ -1061,6 +1209,21 @@ if (probeIdx >= 2) {
           } catch (e) {
             log.error(reqId, 'preprocessing error: ' + truncateForLog((e as Error).message));
           }
+        }
+
+        // --- Web search pre-execution (late, after preprocessing) ---
+        // Preprocessing may have discovered web tools that weren't obvious
+        // from the raw body (e.g. after tool conversion for non-native
+        // providers). The early check before routing handles the common
+        // case; this handles the converted case.
+        if (hasWebTools && !res.headersSent && !res.destroyed) {
+          const handled = await tryPreExecuteWebSearch(
+            parsedBody as Record<string, unknown>,
+            model,
+            reqId,
+            res,
+          );
+          if (handled) return;
         }
 
         const resolvedResult = resolved as { primary: ResolvedTarget; fallbacks: ResolvedTarget[] };

@@ -892,3 +892,191 @@ describe('buildHotSwapHeaders', () => {
     expect(result['host']).toBe('127.0.0.1:65199');
   });
 });
+
+// =========================================================================
+// Web search pre-execution — requests intercepted and served from DDG
+// =========================================================================
+
+describe('web search pre-execution', () => {
+  test('intercepts web search request and returns results inline', async () => {
+    const ccBody = {
+      model: 'haiku:deepseek-v4-flash',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: 'Perform a web search for the query: latest iPhone model 2026',
+            },
+          ],
+        },
+      ],
+      system: [{ type: 'text', text: 'You are an assistant for performing a web search tool use' }],
+      tools: [
+        {
+          type: 'web_search_20250305',
+          name: 'web_search',
+          description: 'Search',
+          input_schema: {
+            type: 'object',
+            properties: { query: { type: 'string', description: 'Search query' } },
+            required: ['query'],
+          },
+        },
+      ],
+      tool_choice: { type: 'tool', name: 'web_search_20250305' },
+      max_tokens: 500,
+      stream: false,
+    };
+
+    const res = await request('POST', '/v1/messages', {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(ccBody),
+    });
+
+    // Pre-execution should intercept and return 200, not fall through to routing
+    expect(res.status).toBe(200);
+
+    const body = res.body as Record<string, unknown>;
+    // Model must start with claude- for CC to trust server_tool_use
+    expect(typeof body.model).toBe('string');
+    expect(body.model!.toString()).toMatch(/^claude-/);
+
+    // Must have server_tool_use so CC shows "Did N searches"
+    const usage = body.usage as Record<string, unknown>;
+    expect(usage).toBeDefined();
+    expect(usage.server_tool_use).toBeDefined();
+    const stu = usage.server_tool_use as Record<string, number>;
+    expect(stu.web_search_requests).toBeGreaterThanOrEqual(1);
+
+    // Content must contain search results
+    const content = body.content as Array<Record<string, unknown>>;
+    expect(Array.isArray(content)).toBe(true);
+    expect(content.length).toBeGreaterThan(0);
+  });
+
+  test('returns streaming SSE response for stream:true', async () => {
+    const ccBody = {
+      model: 'haiku:deepseek-v4-flash',
+      messages: [
+        {
+          role: 'user',
+          content: [{ type: 'text', text: 'Perform a web search for the query: iPhone 18 Pro' }],
+        },
+      ],
+      system: [{ type: 'text', text: 'You are an assistant for performing a web search tool use' }],
+      tools: [
+        {
+          type: 'web_search_20250305',
+          name: 'web_search',
+          description: 'Search',
+          input_schema: {
+            type: 'object',
+            properties: { query: { type: 'string' } },
+            required: ['query'],
+          },
+        },
+      ],
+      tool_choice: { type: 'tool', name: 'web_search_20250305' },
+      max_tokens: 500,
+      stream: true,
+    };
+
+    const result = await request('POST', '/v1/messages', {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(ccBody),
+    });
+
+    // Streaming SSE should return 200 with server_tool_use
+    expect(result.status).toBe(200);
+  });
+
+  test('falls through to normal routing when no query extractable', async () => {
+    // Message format without "Perform a web search for the query:" pattern
+    const ccBody = {
+      model: 'haiku:claude-haiku-4-5-20251001',
+      messages: [{ role: 'user', content: 'What is the weather in Paris?' }],
+      tools: [
+        {
+          type: 'web_search_20250305',
+          name: 'web_search',
+          description: 'Search the web',
+          input_schema: {
+            type: 'object',
+            properties: { query: { type: 'string' } },
+            required: ['query'],
+          },
+        },
+      ],
+      tool_choice: { type: 'tool', name: 'web_search' },
+      max_tokens: 200,
+      stream: false,
+    };
+
+    const res = await request('POST', '/v1/messages', {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(ccBody),
+    });
+
+    // Should not be intercepted — no extractable query means routing fails
+    // (routes file has no providers), so we get a 502 from fallback exhaustion
+    // or the request may hang. Either way, it should NOT be a 200 with
+    // server_tool_use injected from pre-execution.
+    if (res.status === 200) {
+      const body = res.body as Record<string, unknown>;
+      if (body.usage) {
+        const stu = (body.usage as Record<string, unknown>).server_tool_use as
+          | Record<string, unknown>
+          | undefined;
+        // If we somehow got here, server_tool_use should not be present
+        // since pre-execution should have been skipped
+        expect(stu).toBeUndefined();
+      }
+    }
+    // 502 or other error is expected (no providers configured)
+  });
+
+  test('intercepts web_fetch tools too', async () => {
+    const ccBody = {
+      model: 'haiku:deepseek-v4-flash',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: 'Perform a web search for the query: latest news',
+            },
+          ],
+        },
+      ],
+      system: [{ type: 'text', text: 'You are an assistant for performing a web search tool use' }],
+      tools: [
+        {
+          type: 'web_fetch_20250305',
+          name: 'web_fetch',
+          description: 'Fetch URL content',
+          input_schema: {
+            type: 'object',
+            properties: { url: { type: 'string' } },
+            required: ['url'],
+          },
+        },
+      ],
+      tool_choice: { type: 'tool', name: 'web_fetch_20250305' },
+      max_tokens: 500,
+      stream: false,
+    };
+
+    const res = await request('POST', '/v1/messages', {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(ccBody),
+    });
+
+    // web_fetch type is detected by hasWebTools, and "Perform a web search
+    // for the query:" in the user message triggers extractSearchQuery.
+    // Should be intercepted and return 200 with DDG results.
+    expect(res.status).toBe(200);
+  });
+});
