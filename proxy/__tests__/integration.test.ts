@@ -257,40 +257,58 @@ describe('Proxy integration tests', () => {
     }
   });
 
-  test('health endpoint works (single-tenant: one connection at a time)', async () => {
-    // The proxy only accepts one active TCP connection. Sequential requests
-    // over separate connections (default http agent behavior) should all work.
-    const res1 = await request('GET', '/health');
-    expect(res1.status).toBe(200);
-    expect((res1.body as Record<string, unknown>).status).toBe('ok');
-    expect((res1.body as Record<string, unknown>).concurrency).toBeDefined();
+  test('health endpoint works (multiple concurrent connections allowed)', async () => {
+    // Health/dashboard/metrics endpoints are exempt from single-tenant
+    // enforcement so statusline and probes don't get blocked. Both
+    // concurrent requests over separate connections should succeed.
+    const results = await Promise.all([request('GET', '/health'), request('GET', '/health')]);
 
-    const res2 = await request('GET', '/health');
-    expect(res2.status).toBe(200);
-    expect((res2.body as Record<string, unknown>).status).toBe('ok');
+    expect(results[0].status).toBe(200);
+    expect((results[0].body as Record<string, unknown>).status).toBe('ok');
+    expect(results[1].status).toBe(200);
+    expect((results[1].body as Record<string, unknown>).status).toBe('ok');
   });
 
-  test('concurrent TCP connections beyond the first are rejected', async () => {
-    // The proxy only allows one active TCP connection. When two concurrent
-    // requests race (each with agent:false = fresh connection), one must
-    // succeed and the other must be rejected.
-    const results = await Promise.allSettled([
+  test('concurrent health connections are all allowed (session-based, not TCP-level)', async () => {
+    // Three concurrent health requests should all succeed. Session-based
+    // enforcement only blocks model calls, not health endpoints.
+    const results = await Promise.all([
+      request('GET', '/health'),
       request('GET', '/health'),
       request('GET', '/health'),
     ]);
-
-    const fulfilled = results.filter((r) => r.status === 'fulfilled');
-    const rejected = results.filter((r) => r.status === 'rejected');
-
-    // At least one must succeed (the first connection accepted)
-    expect(fulfilled.length).toBeGreaterThanOrEqual(1);
-    if (fulfilled.length > 0) {
-      const res = (fulfilled[0] as PromiseFulfilledResult<Awaited<ReturnType<typeof request>>>)
-        .value;
-      expect(res.status).toBe(200);
+    for (const r of results) {
+      expect(r.status).toBe(200);
     }
-    // At least one must be rejected (the second connection destroyed)
-    expect(rejected.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test('session-based single-tenant enforcement', async () => {
+    // First model call with key-A binds the session.
+    const res1 = await request('POST', '/v1/messages', {
+      headers: { 'Content-Type': 'application/json', 'x-api-key': 'session-alpha' },
+      body: JSON.stringify({ model: 'test', max_tokens: 1, messages: [] }),
+    });
+    // First call binds the session (may 502 if no upstream, but not 409)
+    expect(res1.status).not.toBe(409);
+
+    // Second call with same key-A → allowed (same session)
+    const res2 = await request('POST', '/v1/messages', {
+      headers: { 'Content-Type': 'application/json', 'x-api-key': 'session-alpha' },
+      body: JSON.stringify({ model: 'test', max_tokens: 1, messages: [] }),
+    });
+    expect(res2.status).not.toBe(409);
+
+    // Third call with key-B → rejected (different session)
+    const res3 = await request('POST', '/v1/messages', {
+      headers: { 'Content-Type': 'application/json', 'x-api-key': 'session-beta' },
+      body: JSON.stringify({ model: 'test', max_tokens: 1, messages: [] }),
+    });
+    expect(res3.status).toBe(409);
+    expect((res3.body as Record<string, unknown>).error).toBeDefined();
+
+    // Health endpoint always exempt
+    const healthRes = await request('GET', '/health');
+    expect(healthRes.status).toBe(200);
   });
 
   test('POST /v1/messages without Content-Type header is rejected with 415', async () => {
