@@ -983,9 +983,6 @@ if (probeIdx >= 2) {
         // tool_choice preservation.  When set, thinking injection is skipped
         // for providers that reject tool_choice with thinking (DeepSeek).
         let hasWebTools = false;
-        // Track whether we pre-executed DDG search so downstream code can
-        // skip tool conversion (web tools were already removed).
-        let _webSearchPreExecuted = false;
         if (parsedBody) {
           try {
             let modified = false;
@@ -995,60 +992,6 @@ if (probeIdx >= 2) {
             // tool_choice stripping (nativeServerTools, forbidsToolChoiceWithThinking).
             const constraints = getConstraints(resolved.primary?.providerKey || '');
             if (!constraints.nativeServerTools && parsedBody.tools) {
-              // Pre-execute web search for non-native providers.
-              // Instead of converting web_search tools and hoping the model
-              // invokes them (which requires tool_choice + no-thinking that
-              // breaks on DeepSeek), execute DDG search now and inject results
-              // as context.  The model responds naturally without tool_use.
-              const searchQuery =
-                parsedBody.messages && Array.isArray(parsedBody.messages)
-                  ? extractSearchQuery(parsedBody.messages as any[])
-                  : null;
-              if (searchQuery) {
-                try {
-                  log.info(reqId, 'pre-executing DDG search for: ' + searchQuery.slice(0, 100));
-                  const results = await webSearch(searchQuery);
-                  if (results && !results.startsWith('No results found')) {
-                    // Inject search results as a synthetic user message.
-                    // The model sees these as context and responds with text.
-                    const messages = parsedBody.messages as any[];
-                    messages.push({
-                      role: 'user',
-                      content: [
-                        {
-                          type: 'text',
-                          text: 'Web search results for "' + searchQuery + '":\n\n' + results,
-                        },
-                      ],
-                    });
-                    // Remove web search/fetch tools — we already executed.
-                    const WEB_PREFIXES = ['web_search_', 'web_fetch_', 'url_fetch_'];
-                    const isWeb = (t: any) =>
-                      t &&
-                      typeof t.type === 'string' &&
-                      WEB_PREFIXES.some((p) => t.type.startsWith(p));
-                    parsedBody.tools = (parsedBody.tools as any[]).filter((t: any) => !isWeb(t));
-                    if (parsedBody.tools.length === 0) delete parsedBody.tools;
-                    // Strip tool_choice if it targets web_search.
-                    const tc = parsedBody.tool_choice;
-                    if (tc && typeof tc === 'object' && (tc as any).name === 'web_search') {
-                      delete parsedBody.tool_choice;
-                    }
-                    _webSearchPreExecuted = true;
-                    hasWebTools = true;
-                    modified = true;
-                    log.info(reqId, 'DDG pre-execute: injected results, removed web tools');
-                  }
-                } catch (e) {
-                  log.warn(
-                    reqId,
-                    'DDG pre-execute failed: ' + truncateForLog((e as Error).message),
-                  );
-                }
-              }
-
-              // Still convert any remaining server tools (non-web ones
-              // like text_editor, bash, etc.) that pre-execution didn't handle.
               const result = preprocessServerTools(
                 parsedBody as Record<string, unknown> & {
                   tools?: unknown[];
