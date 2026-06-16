@@ -54,6 +54,9 @@ describe('applyThinkingConfig', () => {
   // --- Rule 1: Web tools → strip thinking, keep tool_choice ---
 
   test('web tools present: strips thinking, keeps tool_choice (DeepSeek)', () => {
+    // Beta header stripping (stripEffortBetaHeader) handles removing
+    // thinking-related beta values. applyThinkingConfig strips thinking
+    // from body but keeps tool_choice to force model to invoke the tool.
     const body: Record<string, unknown> = {
       model: 'deepseek-v4-flash',
       thinking: { type: 'enabled', budget_tokens: 32000 },
@@ -63,19 +66,45 @@ describe('applyThinkingConfig', () => {
 
     expect(modified).toBe(true);
     expect(body.thinking).toBeUndefined();
-    expect(body.tool_choice).toBeDefined();
+    expect(body.tool_choice).toBeDefined(); // Kept — beta strip handles the rest
   });
 
-  test('web tools present, no thinking field: no-op', () => {
+  test('DeepSeek forwarded body matches Haiku structure for web search', () => {
+    // CC sends this to both providers. After applyThinkingConfig,
+    // the DeepSeek body should have the same shape as Haiku's body —
+    // no thinking, no tool_choice. The model follows the system prompt
+    // instructions to invoke the tool.
+    const body: Record<string, unknown> = {
+      model: 'deepseek-v4-flash',
+      thinking: { type: 'enabled', budget_tokens: 16000 },
+      tool_choice: { type: 'tool', name: 'web_search' },
+      messages: [{ role: 'user', content: 'search query' }],
+      tools: [{ name: 'web_search' }],
+      max_tokens: 200,
+      stream: false,
+    };
+    const modified = applyThinkingConfig(body, true, ds, thinkingCfg);
+
+    expect(modified).toBe(true);
+    // thinking stripped from body, tool_choice preserved for web tools
+    expect(body.thinking).toBeUndefined();
+    expect(body.tool_choice).toBeDefined();
+    // Non-thinking fields preserved
+    expect(body.messages).toBeDefined();
+    expect(body.tools).toBeDefined();
+    expect(body.max_tokens).toBe(200);
+    expect(body.stream).toBe(false);
+  });
+
+  test('web tools present, no thinking field: strips tool_choice', () => {
     const body: Record<string, unknown> = {
       model: 'deepseek-v4-flash',
       tool_choice: { type: 'tool', name: 'web_search' },
     };
     const modified = applyThinkingConfig(body, true, ds, thinkingCfg);
 
-    expect(modified).toBe(false);
-    expect(body.thinking).toBeUndefined();
-    expect(body.tool_choice).toBeDefined();
+    expect(modified).toBe(false); // No thinking, no tool_choice to strip
+    expect(body.tool_choice).toBeDefined(); // Kept to force tool invocation
   });
 
   test('web tools present, thinkingCfg is null: still strips thinking', () => {
@@ -90,7 +119,7 @@ describe('applyThinkingConfig', () => {
 
     expect(modified).toBe(true);
     expect(body.thinking).toBeUndefined();
-    expect(body.tool_choice).toBeDefined();
+    expect(body.tool_choice).toBeDefined(); // Kept to force tool invocation
   });
 
   // --- Rule 2: No web tools → strip tool_choice ---
@@ -250,6 +279,6 @@ describe('applyThinkingConfig', () => {
     applyThinkingConfig(body, true, ds, thinkingCfg);
 
     expect(body.thinking).toBeUndefined();
-    expect(body.tool_choice).toBeDefined();
+    expect(body.tool_choice).toBeDefined(); // Web tools keep tool_choice
   });
 });

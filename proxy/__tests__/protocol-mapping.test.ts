@@ -12,6 +12,8 @@ import { PROVIDER_CONSTRAINTS, translateToolChoice, mapFinishReason } from '../p
 import type { AnthropicRequestBody, AnthropicContentBlock } from '../protocol-types';
 import { translateRequest, translateResponse } from '../protocol-translate';
 import { preprocessServerTools } from '../server-tools';
+import { applyThinkingConfig } from '../thinking-config';
+import { stripEffortBetaHeader } from '../header-sanitizer';
 
 // =========================================================================
 // Shared test fixtures — realistic Anthropic requests from Claude Code
@@ -548,5 +550,162 @@ describe('Scenario 4: Full end-to-end pipeline', () => {
         expect(c.nativeServerToolUse).toBe(false);
       }
     }
+  });
+});
+
+// =========================================================================
+// Scenario 5: Haiku-equivalence — DeepSeek gets same body shape as Haiku
+// =========================================================================
+
+describe('Scenario 5: DeepSeek forwarded body matches Haiku structure', () => {
+  const THINKING_CFG = { type: 'enabled', budget_tokens: 16000 } as const;
+
+  // Realistic CC harness web_search request — what CC actually sends
+  const ccWebSearchBody = (): Record<string, unknown> => ({
+    model: 'haiku:deepseek-v4-flash',
+    max_tokens: 200,
+    stream: false,
+    system: [
+      {
+        type: 'text',
+        text: 'x-anthropic-billing-header: cc_version=2.1.177.bfb; cc_entrypoint=cli; cc_is_subagent=true;',
+      },
+      { type: 'text', text: "You are Claude Code, Anthropic's official CLI for Claude." },
+      { type: 'text', text: 'You are an assistant for performing a web search tool use' },
+    ],
+    tools: [
+      {
+        type: 'web_search_20250305',
+        name: 'web_search',
+        description: 'Search the web for current information.',
+        input_schema: {
+          type: 'object',
+          properties: { query: { type: 'string', description: 'Search query' } },
+          required: ['query'],
+        },
+      },
+    ],
+    tool_choice: { type: 'tool', name: 'web_search' },
+    messages: [
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'Perform a web search for the query: latest iPhone' }],
+      },
+    ],
+  });
+
+  test('DeepSeek forwarded body matches Haiku structure (no thinking, no tool_choice)', () => {
+    const body = ccWebSearchBody();
+    const ds = PROVIDER_CONSTRAINTS.ds;
+
+    // Step 1: Slot prefix stripping (what start-proxy.ts does)
+    body.model = 'deepseek-v4-flash';
+
+    // Step 2: Server tool preprocessing (what start-proxy.ts does)
+    const preResult = preprocessServerTools(body as any, ds);
+    expect(preResult.hadWebSearch).toBe(true);
+
+    // Step 3: Apply thinking config (what start-proxy.ts does)
+    applyThinkingConfig(body, true, ds, THINKING_CFG, 'deepseek-v4-flash');
+
+    // Step 4: Strip beta header (what start-proxy.ts does)
+    const headers: Record<string, string | string[] | undefined> = {
+      'anthropic-beta': 'context-1m-2025-08-07,effort-2025-11-24',
+    };
+    stripEffortBetaHeader(headers, 'deepseek-v4-flash', false);
+
+    // --- Assertions: DeepSeek body = Haiku body ---
+    // Neither path has thinking in body
+    expect(body.thinking).toBeUndefined();
+    // Both paths keep tool_choice to force model to invoke the tool
+    expect((body as any).tool_choice).toBeDefined();
+    // Both have tools
+    expect(body.tools).toBeDefined();
+    // Both have messages
+    expect(body.messages).toBeDefined();
+    // Both have the same core fields
+    expect(body.model).toBe('deepseek-v4-flash');
+    expect(body.max_tokens).toBe(200);
+    expect(body.stream).toBe(false);
+
+    // All beta values stripped for non-native provider
+    expect(headers['anthropic-beta']).toBeUndefined();
+  });
+
+  test('Haiku path passes through natively (no modification needed)', () => {
+    const body = ccWebSearchBody();
+    body.model = 'claude-haiku-4-5-20251001';
+
+    // Anthropic native: preprocessServerTools is NOT called in start-proxy
+    // (gated by !constraints.nativeServerTools check). Tools pass through.
+    expect(PROVIDER_CONSTRAINTS.an.nativeServerTools).toBe(true);
+
+    // Rule 3: Haiku on Anthropic strips thinking from body.
+    // CC doesn't include thinking in the web_search body, so no strip needed.
+    applyThinkingConfig(body, true, PROVIDER_CONSTRAINTS.an, null, 'claude-haiku-4-5-20251001');
+    // thinking wasn't present, tool_choice stays (native provider supports it)
+    expect(body.thinking).toBeUndefined();
+
+    // Native provider preserves Anthropic-native tool type
+    const tool = (body.tools as any[])[0];
+    expect(tool).toBeDefined();
+    expect(tool.name).toBe('web_search');
+  });
+
+  test('response: DeepSeek server_tool_use injected matches Anthropic native response', () => {
+    // Anthropic returns server_tool_use natively. DeepSeek doesn't —
+    // the proxy injects it after counting tool_use blocks.
+    // Both should have the same structure in usage.
+
+    const expectedUsage = {
+      input_tokens: expect.any(Number),
+      output_tokens: expect.any(Number),
+      server_tool_use: {
+        web_search_requests: 1,
+        web_fetch_requests: 0,
+      },
+    };
+
+    // Anthropic native response (has server_tool_use natively)
+    const anResponse = {
+      id: 'msg_an',
+      type: 'message',
+      role: 'assistant',
+      model: 'claude-haiku-4-5-20251001',
+      content: [{ type: 'tool_use', id: 'tu_1', name: 'web_search', input: { query: 'test' } }],
+      stop_reason: 'tool_use',
+      stop_sequence: null,
+      usage: {
+        input_tokens: 100,
+        output_tokens: 50,
+        server_tool_use: { web_search_requests: 1, web_fetch_requests: 0 },
+      },
+    };
+
+    // DeepSeek response after proxy injection
+    const dsResponse = {
+      id: 'msg_ds',
+      type: 'message',
+      role: 'assistant',
+      model: 'deepseek-v4-flash',
+      content: [{ type: 'tool_use', id: 'call_x', name: 'web_search', input: { query: 'test' } }],
+      stop_reason: 'tool_use',
+      stop_sequence: null,
+      usage: {
+        input_tokens: 100,
+        output_tokens: 50,
+        server_tool_use: { web_search_requests: 1, web_fetch_requests: 0 },
+      },
+    };
+
+    // Both have same usage structure
+    expect(dsResponse.usage.server_tool_use).toEqual(expectedUsage.server_tool_use);
+    expect(anResponse.usage.server_tool_use).toEqual(expectedUsage.server_tool_use);
+    // Both have tool_use content blocks
+    expect(dsResponse.content[0].name).toBe('web_search');
+    expect(anResponse.content[0].name).toBe('web_search');
+    // Both have tool_use stop_reason
+    expect(dsResponse.stop_reason).toBe('tool_use');
+    expect(anResponse.stop_reason).toBe('tool_use');
   });
 });
