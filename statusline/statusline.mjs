@@ -56,7 +56,10 @@ async function main() {
     } catch (_) {}
   }
 
-  const deepclaudeDir = process.env.DEEPCLAUDE_DIR || join(homedir(), '.deepclaude');
+  const deepclaudeDir =
+    process.env.DEEPCLAUDE_CONFIG_DIR ||
+    process.env.DEEPCLAUDE_DIR ||
+    join(homedir(), '.deepclaude');
 
   // ── Model & slot overrides ──────────────────────────────────
   let model = d?.model?.id || d?.model?.display_name || '';
@@ -115,7 +118,13 @@ async function main() {
     tokens != null ? (tokens >= 1000 ? Math.round(tokens / 1000) + 'k' : String(tokens)) : '';
   let pct = null;
   if (tokens != null && maxTokens != null && maxTokens > 0) {
-    pct = Math.round((tokens / maxTokens) * 100);
+    const rawPct = Math.round((tokens / maxTokens) * 100);
+    // Only show percentage when it makes sense: maxTokens must be at least
+    // as large as the token count, and the result must be ≤100%.
+    // When a subagent or fallback model has a smaller context than the
+    // accumulated conversation, CC may report a max_input_tokens that is
+    // smaller than total_input_tokens — producing nonsense >100% values.
+    if (rawPct <= 100) pct = rawPct;
   }
   const ctxStr = tokStr + (tokStr && pct != null ? '/' + pct + '%' : pct != null ? pct + '%' : '');
 
@@ -292,8 +301,12 @@ async function main() {
 
   let ctxGroup = ctxStr ? bold + ctxColor + ctxStr + reset : '';
 
-  // DeepSeek V4 Pro context-window milestone tags
-  if (modelLookup === 'deepseek-v4-pro' && tokens) {
+  // DeepSeek V4 / large-context model milestone tags.
+  // SR (Serious Reduction): 300K+ tokens — user is burning cache headroom.
+  // FBR (Full Backup Required): 400K+ tokens — compaction is imminent, prefix
+  //   rewrite will destroy disk cache (DeepSeek) / ephemeral cache (Anthropic).
+  // Any model with ≥1M context window gets these tags.
+  if (tokens && ctxMap[modelLookup] && ctxMap[modelLookup] >= 1_000_000) {
     if (tokens >= 400000) {
       ctxGroup += ' ' + bold + fg(255, 80, 80) + 'FBR' + reset;
     } else if (tokens >= 300000) {

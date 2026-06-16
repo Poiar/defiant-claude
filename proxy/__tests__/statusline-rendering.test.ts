@@ -375,7 +375,13 @@ describe('statusline context window', () => {
 });
 
 describe('statusline DeepSeek milestone tags', () => {
+  // Helper: write current-routes.json so ctxMap is populated for milestone checks.
+  function writeRoutes(contextLimits: Record<string, number>): void {
+    writeFileSync(join(tmpDir, 'current-routes.json'), JSON.stringify({ contextLimits }));
+  }
+
   test('shows FBR tag at 400K+ tokens for deepseek-v4-pro', () => {
+    writeRoutes({ 'deepseek-v4-pro': 1048576 });
     const ccJson = JSON.stringify({
       workspace: { current_dir: '/home/user/proj' },
       model: { id: 'ds:deepseek-v4-pro' },
@@ -401,6 +407,7 @@ describe('statusline DeepSeek milestone tags', () => {
   });
 
   test('shows SR tag at 300K-399K tokens for deepseek-v4-pro', () => {
+    writeRoutes({ 'deepseek-v4-pro': 1048576 });
     const ccJson = JSON.stringify({
       workspace: { current_dir: '/home/user/proj' },
       model: { id: 'ds:deepseek-v4-pro' },
@@ -427,6 +434,7 @@ describe('statusline DeepSeek milestone tags', () => {
   });
 
   test('shows no milestone tag below 300K tokens', () => {
+    writeRoutes({ 'deepseek-v4-pro': 1048576 });
     const ccJson = JSON.stringify({
       workspace: { current_dir: '/home/user/proj' },
       model: { id: 'ds:deepseek-v4-pro' },
@@ -450,7 +458,8 @@ describe('statusline DeepSeek milestone tags', () => {
     expect(plain).not.toContain('FR');
   });
 
-  test('shows no milestone tag for non-DeepSeek models even at high tokens', () => {
+  test('shows no milestone tag for models with <1M context even at high tokens', () => {
+    writeRoutes({ 'claude-opus-4-7': 200000 });
     const ccJson = JSON.stringify({
       workspace: { current_dir: '/home/user/proj' },
       model: { id: 'an:claude-opus-4-7' },
@@ -472,6 +481,106 @@ describe('statusline DeepSeek milestone tags', () => {
     const plain = stripAnsi(result.stdout);
     expect(plain).not.toContain('FBR');
     expect(plain).not.toContain('FR');
+  });
+
+  test('shows FBR tag at 400K+ tokens for deepseek-v4-flash', () => {
+    writeRoutes({ 'deepseek-v4-flash': 1048576 });
+    const ccJson = JSON.stringify({
+      workspace: { current_dir: '/home/user/proj' },
+      model: { id: 'ds:deepseek-v4-flash' },
+      effort: { level: 'medium' },
+      context_window: { total_input_tokens: 420000, max_input_tokens: 1000000 },
+    });
+
+    const result = runStatusline({
+      stdin: ccJson,
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const plain = stripAnsi(result.stdout);
+    expect(plain).toContain('FBR');
+    expect(result.stdout).toContain('38;2;255;80;80mFBR');
+  });
+
+  test('shows SR tag at 300K-399K tokens for deepseek-v4-flash', () => {
+    writeRoutes({ 'deepseek-v4-flash': 1048576 });
+    const ccJson = JSON.stringify({
+      workspace: { current_dir: '/home/user/proj' },
+      model: { id: 'ds:deepseek-v4-flash' },
+      effort: { level: 'medium' },
+      context_window: { total_input_tokens: 310000, max_input_tokens: 1000000 },
+    });
+
+    const result = runStatusline({
+      stdin: ccJson,
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const plain = stripAnsi(result.stdout);
+    expect(plain).toContain('SR');
+    expect(plain).not.toContain('FBR');
+  });
+
+  test('shows FBR tag at 400K+ tokens for gemini-2.5-flash', () => {
+    writeRoutes({ 'gemini-2.5-flash': 1048576 });
+    const ccJson = JSON.stringify({
+      workspace: { current_dir: '/home/user/proj' },
+      model: { id: 'gm:gemini-2.5-flash' },
+      effort: { level: 'medium' },
+      context_window: { total_input_tokens: 500000, max_input_tokens: 1000000 },
+    });
+
+    const result = runStatusline({
+      stdin: ccJson,
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const plain = stripAnsi(result.stdout);
+    expect(plain).toContain('FBR');
+  });
+
+  test('no milestone tag when modelLookup is missing from ctxMap', () => {
+    // Model not in ctxMap → ctxMap[modelLookup] is undefined → no tags.
+    writeRoutes({ 'some-other-model': 1048576 });
+    const ccJson = JSON.stringify({
+      workspace: { current_dir: '/home/user/proj' },
+      model: { id: 'ds:deepseek-v4-pro' },
+      effort: { level: 'medium' },
+      context_window: { total_input_tokens: 450000, max_input_tokens: 1000000 },
+    });
+
+    const result = runStatusline({
+      stdin: ccJson,
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const plain = stripAnsi(result.stdout);
+    expect(plain).not.toContain('FBR');
+    expect(plain).not.toContain('SR');
   });
 });
 
@@ -987,12 +1096,46 @@ describe('statusline context window edge cases', () => {
     expect(plain).toContain('5k');
     expect(plain).not.toMatch(/\d+%/);
   });
+
+  test('no percentage when tokens exceed max_tokens (subagent / fallback model mismatch)', () => {
+    // When a subagent or fallback model has a smaller context window than
+    // the accumulated conversation, CC may report max_input_tokens smaller
+    // than total_input_tokens. The raw percentage would be >100% — nonsense.
+    // The statusline should suppress the percentage and show only token count.
+    const ccJson = JSON.stringify({
+      workspace: { current_dir: '/home/user/proj' },
+      model: { id: 'sub:some-small-model' },
+      effort: { level: 'medium' },
+      context_window: { total_input_tokens: 230000, max_input_tokens: 80000 },
+    });
+
+    const result = runStatusline({
+      stdin: ccJson,
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const plain = stripAnsi(result.stdout);
+    // Token count should appear.
+    expect(plain).toContain('230k');
+    // But NO percentage — 230K / 80K = 288%, suppressed.
+    expect(plain).not.toMatch(/\d+%/);
+  });
 });
 
 describe('statusline modelLookup [1m] suffix stripping', () => {
   test('strips [1m] suffix for DS milestone matching', () => {
     // When the model has a [1m] flag, modelLookup should strip it so
     // 'deepseek-v4-pro[1m]' → 'deepseek-v4-pro' for milestone tag matching.
+    writeFileSync(
+      join(tmpDir, 'current-routes.json'),
+      JSON.stringify({ contextLimits: { 'deepseek-v4-pro': 1048576 } }),
+    );
     const ccJson = JSON.stringify({
       workspace: { current_dir: '/home/user/proj' },
       model: { id: 'ds:deepseek-v4-pro[1m]' },
@@ -1016,10 +1159,14 @@ describe('statusline modelLookup [1m] suffix stripping', () => {
     expect(plain).toContain('FBR');
   });
 
-  test('strips [500k] suffix but OR path format does not match milestone literal', () => {
-    // modelLookup strips [500k] → 'deepseek/deepseek-v4-pro'
-    // but milestone check is strict: modelLookup === 'deepseek-v4-pro'
-    // OpenRouter '/deepseek/deepseek-v4-pro' won't match the literal.
+  test('OR path models now match via ctxMap (not literal string comparison)', () => {
+    // With the old literal 'deepseek-v4-pro' comparison, OR paths like
+    // 'deepseek/deepseek-v4-pro' wouldn't match. The new ctxMap-based check
+    // looks up the context limit, so OR models with ≥1M context get tags too.
+    writeFileSync(
+      join(tmpDir, 'current-routes.json'),
+      JSON.stringify({ contextLimits: { 'deepseek/deepseek-v4-pro': 1048576 } }),
+    );
     const ccJson = JSON.stringify({
       workspace: { current_dir: '/home/user/proj' },
       model: { id: 'or:deepseek/deepseek-v4-pro[500k]' },
@@ -1039,10 +1186,9 @@ describe('statusline modelLookup [1m] suffix stripping', () => {
 
     expect(result.status).toBe(0);
     const plain = stripAnsi(result.stdout);
-    // [500k] stays in the displayed modelKey (only stripped from modelLookup).
-    // OR path format 'deepseek/deepseek-v4-pro' !== 'deepseek-v4-pro' → no milestone.
-    expect(plain).not.toContain('FR');
-    expect(plain).not.toContain('FBR');
+    // [500k] is stripped from modelLookup → 'deepseek/deepseek-v4-pro'
+    // ctxMap lookup finds 1048576 ≥ 1M → milestone active → SR at 350K.
+    expect(plain).toContain('SR');
   });
 });
 
