@@ -2111,17 +2111,32 @@ if (probeIdx >= 2) {
                       if (fs.existsSync(nextPortFile)) fs.unlinkSync(nextPortFile);
                     } catch (_) {}
 
-                    // Forward all requests to the new proxy
+                    // Forward all requests to the new proxy.
+                    // Rewrite x-api-key to the new proxy's expected key so the
+                    // new proxy's single-tenant enforcement binds to its own
+                    // port rather than the old proxy's port. Without this the
+                    // new proxy binds to the old key and rejects the restarted
+                    // CC session.
+                    const newProxyKey = 'deepclaude-' + targetPort;
                     server.removeAllListeners('request');
                     server.on(
                       'request',
                       (clientReq: http.IncomingMessage, clientRes: http.ServerResponse) => {
+                        const fwdHeaders: Record<string, string | string[] | undefined> = {
+                          ...clientReq.headers,
+                          host: '127.0.0.1:' + targetPort,
+                          'x-api-key': newProxyKey,
+                        };
+                        // If the client used Bearer auth instead, rewrite that too
+                        if (fwdHeaders['authorization']) {
+                          delete fwdHeaders['authorization'];
+                        }
                         const opts: http.RequestOptions = {
                           hostname: '127.0.0.1',
                           port: targetPort,
                           path: clientReq.url,
                           method: clientReq.method,
-                          headers: { ...clientReq.headers, host: '127.0.0.1:' + targetPort },
+                          headers: fwdHeaders,
                         };
                         const upstream = http.request(opts, (upstreamRes) => {
                           clientRes.writeHead(upstreamRes.statusCode || 200, upstreamRes.headers);
