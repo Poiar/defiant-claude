@@ -8,6 +8,7 @@ import zlib from 'zlib';
 import { pipeline, Transform } from 'stream';
 import { buildSafeHeaders } from './util';
 import { translateResponse } from './protocol-translate';
+import { getTrustedModel } from './model-trust';
 import { validateStreamEventConformance, validateResponseConformance } from './protocol-types';
 import { extractThinkingBlocks, store } from './thinking-cache';
 import type { Message as ThinkingMessage, MessageBlock } from './thinking-cache';
@@ -872,24 +873,24 @@ export function tryForward(
                       };
                       // Rewrite response model so CC trusts server_tool_use.
                       // CC only reads server_tool_use from Claude models.
+                      // getTrustedModel maps ANY CC model (including slot
+                      // overrides like haiku:deepseek-v4-flash) to a claude-*
+                      // name that CC trusts.
                       const upstreamModel = (resp as Record<string, unknown>).model;
-                      const originalModel =
+                      const trustModel = getTrustedModel(
                         (parsed && typeof (parsed as Record<string, unknown>).model === 'string'
                           ? ((parsed as Record<string, unknown>).model as string)
                           : null) ||
-                        model ||
-                        null;
-                      // Strip slot prefix (haiku:claude-... -> claude-...)
-                      const ccModel = originalModel
-                        ? (originalModel.match(/^[a-z]+:(.+)$/) || [null, originalModel])[1]
-                        : null;
+                          model ||
+                          null,
+                      );
                       if (
-                        ccModel &&
+                        trustModel &&
                         upstreamModel &&
                         typeof upstreamModel === 'string' &&
                         !upstreamModel.startsWith('claude-')
                       ) {
-                        (resp as Record<string, unknown>).model = ccModel;
+                        (resp as Record<string, unknown>).model = trustModel;
                       }
                     }
                     respModified = true;
