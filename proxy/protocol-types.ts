@@ -899,3 +899,177 @@ export function translateToolChoice(tc: AnthropicToolChoice): OpenAIToolChoice {
   // Default fallback
   return 'auto';
 }
+
+// =========================================================================
+// Runtime Protocol Conformance — validates unknown JSON against known types
+// and reports unrecognized fields. Used by the proxy to auto-detect when
+// Anthropic or upstream providers add new fields to the API.
+// =========================================================================
+
+/** Known top-level fields in AnthropicResponseBody */
+const KNOWN_RESPONSE_FIELDS = new Set([
+  'id',
+  'type',
+  'role',
+  'content',
+  'model',
+  'stop_reason',
+  'stop_sequence',
+  'stop_details',
+  'usage',
+]);
+
+/** Known usage sub-fields in AnthropicUsage */
+const KNOWN_USAGE_FIELDS = new Set([
+  'input_tokens',
+  'output_tokens',
+  'cache_read_input_tokens',
+  'cache_creation_input_tokens',
+  'cache_creation',
+  'inference_geo',
+  'service_tier',
+  'server_tool_use',
+]);
+
+/** Known content block types */
+const KNOWN_CONTENT_BLOCK_TYPES = new Set([
+  'text',
+  'thinking',
+  'redacted_thinking',
+  'tool_use',
+  'tool_result',
+  'image',
+  'document',
+  'server_tool_use',
+  'web_search_tool_result',
+  'web_fetch_tool_result',
+  'search_result',
+  'compaction',
+  'mid_conv_system',
+  'fallback',
+]);
+
+/** Known delta types in content_block_delta events */
+const KNOWN_DELTA_TYPES = new Set([
+  'text_delta',
+  'thinking_delta',
+  'signature_delta',
+  'input_json_delta',
+  'citations_delta',
+  'compaction_delta',
+]);
+
+/** Known SSE event types */
+const KNOWN_SSE_EVENT_TYPES = new Set([
+  'message_start',
+  'content_block_start',
+  'content_block_delta',
+  'content_block_stop',
+  'message_delta',
+  'message_stop',
+  'error',
+  'ping',
+]);
+
+export interface ConformanceResult {
+  valid: boolean;
+  unrecognizedFields: string[];
+  unrecognizedContentBlockTypes: string[];
+  unrecognizedDeltaTypes: string[];
+  unrecognizedUsageFields: string[];
+}
+
+/**
+ * Validate an Anthropic response body against the known type schema.
+ * Reports any unrecognized fields so operators can update the types.
+ */
+export function validateResponseConformance(body: Record<string, unknown>): ConformanceResult {
+  const result: ConformanceResult = {
+    valid: true,
+    unrecognizedFields: [],
+    unrecognizedContentBlockTypes: [],
+    unrecognizedDeltaTypes: [],
+    unrecognizedUsageFields: [],
+  };
+
+  // Check top-level fields
+  for (const key of Object.keys(body)) {
+    if (!KNOWN_RESPONSE_FIELDS.has(key)) {
+      result.unrecognizedFields.push('response.' + key);
+      result.valid = false;
+    }
+  }
+
+  // Check content blocks
+  if (Array.isArray(body.content)) {
+    for (let i = 0; i < (body.content as unknown[]).length; i++) {
+      const block = (body.content as Record<string, unknown>[])[i];
+      if (block && typeof block === 'object') {
+        if (typeof block.type === 'string' && !KNOWN_CONTENT_BLOCK_TYPES.has(block.type)) {
+          result.unrecognizedContentBlockTypes.push('content[' + i + '].type=' + block.type);
+          result.valid = false;
+        }
+      }
+    }
+  }
+
+  // Check usage fields
+  if (body.usage && typeof body.usage === 'object') {
+    for (const key of Object.keys(body.usage as Record<string, unknown>)) {
+      if (!KNOWN_USAGE_FIELDS.has(key)) {
+        result.unrecognizedUsageFields.push('usage.' + key);
+        result.valid = false;
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Validate an Anthropic SSE event against the known event type and delta schema.
+ */
+export function validateStreamEventConformance(
+  eventType: string,
+  data: Record<string, unknown>,
+): ConformanceResult {
+  const result: ConformanceResult = {
+    valid: true,
+    unrecognizedFields: [],
+    unrecognizedContentBlockTypes: [],
+    unrecognizedDeltaTypes: [],
+    unrecognizedUsageFields: [],
+  };
+
+  if (!KNOWN_SSE_EVENT_TYPES.has(eventType)) {
+    result.unrecognizedFields.push('event.type=' + eventType);
+    result.valid = false;
+  }
+
+  if (eventType === 'content_block_start' && data.content_block) {
+    const block = data.content_block as Record<string, unknown>;
+    if (typeof block.type === 'string' && !KNOWN_CONTENT_BLOCK_TYPES.has(block.type)) {
+      result.unrecognizedContentBlockTypes.push('block.type=' + block.type);
+      result.valid = false;
+    }
+  }
+
+  if (eventType === 'content_block_delta' && data.delta) {
+    const delta = data.delta as Record<string, unknown>;
+    if (typeof delta.type === 'string' && !KNOWN_DELTA_TYPES.has(delta.type)) {
+      result.unrecognizedDeltaTypes.push('delta.type=' + delta.type);
+      result.valid = false;
+    }
+  }
+
+  if (eventType === 'message_delta' && data.usage) {
+    for (const key of Object.keys(data.usage as Record<string, unknown>)) {
+      if (!KNOWN_USAGE_FIELDS.has(key)) {
+        result.unrecognizedUsageFields.push('usage.' + key);
+        result.valid = false;
+      }
+    }
+  }
+
+  return result;
+}
