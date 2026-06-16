@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "powershell -NoProfile -File .claude/hooks/proxy-guard.ps1 2>$null",
+            "command": "powershell -NoProfile -File .claude/hooks/proxy-guard.ps1 2>/dev/null",
             "timeout": 5
           }
         ]

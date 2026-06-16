@@ -503,7 +503,7 @@ export const PROVIDER_CONSTRAINTS: Record<string, ProviderConstraints> = {
     forbidsToolChoiceWithThinking: true,
     requiresThinkingEcho: true,
     thinkingFormat: 'anthropic',
-    stripFields: [],
+    stripFields: ['metadata'],
     noAutoFallback: false,
   },
 
@@ -543,7 +543,7 @@ export const PROVIDER_CONSTRAINTS: Record<string, ProviderConstraints> = {
     forbidsToolChoiceWithThinking: true,
     requiresThinkingEcho: false,
     thinkingFormat: null,
-    stripFields: [],
+    stripFields: ['metadata'],
     noAutoFallback: false,
   },
 

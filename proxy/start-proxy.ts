@@ -1536,6 +1536,28 @@ if (probeIdx >= 2) {
             }
           }
 
+          // Strip provider-unsupported fields (metadata, top_k, etc.) from the
+          // request body BEFORE sending upstream. This keeps the request body
+          // identical across sessions → DeepSeek disk cache recognizes the prefix
+          // → cache hit at $0.0036/M instead of miss at $0.435/M.
+          if (constraints.stripFields && constraints.stripFields.length > 0) {
+            try {
+              const p = JSON.parse(forwardedBody.toString());
+              let stripped = false;
+              for (const field of constraints.stripFields) {
+                if (field in p) {
+                  delete (p as Record<string, unknown>)[field];
+                  stripped = true;
+                }
+              }
+              if (stripped) {
+                forwardedBody = Buffer.from(JSON.stringify(p));
+              }
+            } catch (_) {
+              /* non-fatal */
+            }
+          }
+
           // Inject thinking mode configuration for models that support it.
           // Look up the upstream model name in the effective thinking config
           // (providers.json base + thinking-overrides.json overlay) and add the
