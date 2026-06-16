@@ -1594,6 +1594,39 @@ if (probeIdx >= 2) {
               );
             }
 
+            // Debug: log forwarded body for web_search requests
+            if (forwardedBody && rawBody) {
+              try {
+                const rawStr = rawBody.toString('utf-8', 0, Math.min(rawBody.length, 8192));
+                const fwdStr = forwardedBody.toString(
+                  'utf-8',
+                  0,
+                  Math.min(forwardedBody.length, 8192),
+                );
+                if (rawStr.includes('web_search') || fwdStr.includes('web_search')) {
+                  log.info(reqId, 'WEB_SEARCH_REQ body=' + truncateForLog(rawStr));
+                  log.info(reqId, 'WEB_SEARCH_FWD body=' + truncateForLog(fwdStr));
+                  if (result.rawBody) {
+                    log.info(
+                      reqId,
+                      'WEB_SEARCH_UPSTREAM body=' + truncateForLog(result.rawBody.slice(0, 4096)),
+                    );
+                  }
+                  if (result.body) {
+                    log.info(
+                      reqId,
+                      'WEB_SEARCH_PROXY_RESP body=' +
+                        truncateForLog(
+                          result.body.toString('utf-8', 0, Math.min(result.body.length, 4096)),
+                        ),
+                    );
+                  }
+                }
+              } catch (_) {
+                /* best effort */
+              }
+            }
+
             // Record request log entry
             {
               const logEntry: RequestLogEntry = {
