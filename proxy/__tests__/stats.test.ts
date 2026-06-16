@@ -32,6 +32,7 @@ import {
   setGitHash,
   nextRequestId,
   setSpendFilePath,
+  lookupPrice,
   _resetBudgetState,
   _setSessionTotal,
   buildPrometheusMetrics,
@@ -1116,6 +1117,79 @@ describe('recordSpend — pricing edge cases', () => {
       if (prevId !== undefined) process.env.CLAUDE_CODE_SESSION_ID = prevId;
       else delete process.env.CLAUDE_CODE_SESSION_ID;
     }
+  });
+});
+
+describe('lookupPrice — fuzzy model name resolution', () => {
+  // All providers.json pricing keys should resolve
+  test('exact match for canonical names', () => {
+    expect(lookupPrice('deepseek-v4-pro')).toBeTruthy();
+    expect(lookupPrice('deepseek-v4-flash')).toBeTruthy();
+    expect(lookupPrice('claude-sonnet-4-6')).toBeTruthy();
+    expect(lookupPrice('claude-opus-4-7')).toBeTruthy();
+    expect(lookupPrice('claude-haiku-4-5-20251001')).toBeTruthy();
+  });
+
+  // Slot prefix: CC sends "opus:model", "haiku:model" etc.
+  test('strips slot prefix (opus:/sonnet:/haiku:/sub:/fable:)', () => {
+    expect(lookupPrice('opus:deepseek-v4-pro')).toBeTruthy();
+    expect(lookupPrice('sonnet:deepseek-v4-pro')).toBeTruthy();
+    expect(lookupPrice('haiku:deepseek-v4-flash')).toBeTruthy();
+    expect(lookupPrice('sub:deepseek-v4-flash')).toBeTruthy();
+    expect(lookupPrice('subagent:deepseek-v4-flash')).toBeTruthy();
+    expect(lookupPrice('fable:deepseek-v4-pro')).toBeTruthy();
+    expect(lookupPrice('opus:claude-opus-4-7')).toBeTruthy();
+    expect(lookupPrice('sonnet:claude-sonnet-4-6')).toBeTruthy();
+    expect(lookupPrice('haiku:claude-haiku-4-5-20251001')).toBeTruthy();
+  });
+
+  // Provider prefix: "ds:model", "or:model" etc.
+  test('strips provider prefix (ds:/or:/an:/gm:)', () => {
+    expect(lookupPrice('ds:deepseek-v4-pro')).toBeTruthy();
+    expect(lookupPrice('ds:deepseek-v4-flash')).toBeTruthy();
+    expect(lookupPrice('or:deepseek/deepseek-v4-pro')).toBeTruthy();
+    expect(lookupPrice('gm:gemini-2.5-flash')).toBeTruthy();
+  });
+
+  // Compound: slot prefix THEN provider prefix (from CC overrides)
+  test('strips slot+provider compound prefix (haiku:ds:model)', () => {
+    expect(lookupPrice('haiku:ds:deepseek-v4-flash')).toBeTruthy();
+    expect(lookupPrice('opus:ds:deepseek-v4-pro')).toBeTruthy();
+  });
+
+  // OpenRouter path format: "deepseek/deepseek-v4-pro"
+  test('matches by last path segment for OR-style model names', () => {
+    expect(lookupPrice('deepseek/deepseek-v4-pro')).toBeTruthy();
+    expect(lookupPrice('deepseek/deepseek-v4-flash')).toBeTruthy();
+  });
+
+  // Heavy path nesting: "accounts/fireworks/models/deepseek-v4-pro"
+  test('strips multi-segment paths incrementally (fireworks-style)', () => {
+    expect(lookupPrice('accounts/fireworks/models/deepseek-v4-pro')).toBeTruthy();
+  });
+
+  // Cross-provider paths like "openrouter/deepseek-v4-flash"
+  test('finds pricing for openrouter-qualified models', () => {
+    expect(lookupPrice('openrouter/deepseek-v4-flash')).toBeTruthy();
+  });
+
+  // Alias resolution: "v4-pro" → "deepseek-v4-pro"
+  test('resolves via reverse alias lookup (v4-pro → deepseek-v4-pro)', () => {
+    expect(lookupPrice('v4-pro')).toBeTruthy();
+    expect(lookupPrice('v4-flash')).toBeTruthy();
+    expect(lookupPrice('flash')).toBeTruthy();
+  });
+
+  // Known internal API model names from providers
+  test('normalizes deepseek-chat → deepseek-v4-pro', () => {
+    expect(lookupPrice('deepseek-chat')).toBeTruthy();
+    expect(lookupPrice('deepseek-reasoner')).toBeTruthy();
+  });
+
+  // Unknown models
+  test('returns null for truly unknown models', () => {
+    expect(lookupPrice('nonexistent-model-xyz')).toBeNull();
+    expect(lookupPrice('')).toBeNull();
   });
 });
 

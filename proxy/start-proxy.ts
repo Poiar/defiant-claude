@@ -41,6 +41,7 @@ import type { ProbeSlot } from './probe';
 import { populateToolResults, preprocessServerTools } from './server-tools';
 import { buildHotSwapHeaders } from './hot-swap-headers';
 import { getConstraints, validateResponseConformance } from './protocol-types';
+import { getTrustedModel } from './model-trust';
 import {
   isProviderHealthy,
   recordSpend,
@@ -1376,13 +1377,14 @@ if (probeIdx >= 2) {
               // Attach Anthropic SSE interceptor for streaming requests so
               // web_search/web_fetch tool counts are injected into usage.
               if (reqParsed.stream && !streamTransformer) {
-                const ccModel =
+                const trustModel = getTrustedModel(
                   (parsedBody && typeof (parsedBody as Record<string, unknown>).model === 'string'
                     ? ((parsedBody as Record<string, unknown>).model as string)
                     : null) ||
-                  model ||
-                  null;
-                streamTransformer = createAnthropicStreamInterceptor(ccModel);
+                    model ||
+                    null,
+                );
+                streamTransformer = createAnthropicStreamInterceptor(trustModel);
               }
             } catch (e) {
               log.error(reqId, 'thinking injection error: ' + truncateForLog((e as Error).message));

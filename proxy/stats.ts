@@ -882,9 +882,10 @@ try {
   /* continue without provider budgets */
 }
 
-function lookupPrice(
+export function lookupPrice(
   modelName: string,
 ): { input: number; output: number; inputCacheHit?: number; inputCacheMiss?: number } | null {
+  // 1. Exact match
   if (pricingData[modelName])
     return pricingData[modelName] as {
       input: number;
@@ -892,15 +893,118 @@ function lookupPrice(
       inputCacheHit?: number;
       inputCacheMiss?: number;
     };
-  const stripped = modelName.replace(/^[a-z][a-z0-9_-]*:/, '');
-  if (stripped !== modelName && pricingData[stripped])
-    return pricingData[stripped] as {
+
+  // 2. Strip slot prefix: "opus:claude-opus-4-7" → "claude-opus-4-7"
+  //    Slot prefixes are always two-letter-or-less: o, s, h, sub, f
+  let stripped = modelName.replace(/^(sonnet|opus|haiku|sub|subagent|fable|o|s|h|sub|f):/, '');
+  if (stripped !== modelName) {
+    const found = _tryPrice(stripped);
+    if (found) return found;
+  }
+
+  // 3. Strip provider prefixes iteratively (handles compound "ds:model" and
+  //    multi-layer "haiku:ds:deepseek-v4-flash" → "deepseek-v4-flash").
+  stripped = modelName;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const next = stripped.replace(/^[a-z][a-z0-9_-]*:/, '');
+    if (next === stripped) break; // no more prefixes to strip
+    stripped = next;
+    const found = _tryPrice(stripped);
+    if (found) return found;
+  }
+
+  // 4. Last path segment: "deepseek/deepseek-v4-pro" → "deepseek-v4-pro"
+  //    "accounts/fireworks/models/deepseek-v4-pro" → "deepseek-v4-pro"
+  const lastSlash = modelName.lastIndexOf('/');
+  if (lastSlash >= 0) {
+    const segment = modelName.slice(lastSlash + 1);
+    if (segment) {
+      const found = _tryPrice(segment);
+      if (found) return found;
+    }
+    // Also try without the first segment: "openrouter/deepseek-v4-flash" → "openrouter/deepseek-v4-flash" didn't match but maybe the full path did
+    // Already tried exact at step 1
+  }
+
+  // 5. Try without every slash-delimited prefix incrementally
+  //    "accounts/fireworks/models/deepseek-v4-pro" → try "fireworks/models/deepseek-v4-pro"
+  //    → try "models/deepseek-v4-pro" → try "deepseek-v4-pro"
+  if (lastSlash >= 0) {
+    let remaining = modelName;
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const idx = remaining.indexOf('/');
+      if (idx < 0) break;
+      remaining = remaining.slice(idx + 1);
+      if (!remaining) break;
+      const found = _tryPrice(remaining);
+      if (found) return found;
+    }
+  }
+
+  // 6. Reverse alias lookup: "v4-pro" → "deepseek-v4-pro", "flash" → "deepseek-v4-flash"
+  const aliasTarget = _resolveAlias(modelName);
+  if (aliasTarget) {
+    const found = _tryPrice(aliasTarget);
+    if (found) return found;
+  }
+
+  // 7. Known model name normalizations for providers that return internal names
+  const normalized = NORMALIZED_NAMES[modelName];
+  if (normalized) {
+    const found = _tryPrice(normalized);
+    if (found) return found;
+  }
+
+  return null;
+}
+
+// Single pricing lookup with LRU miss cache to avoid repeated failures.
+// _tryPrice checks pricingData and returns the entry, or null.
+function _tryPrice(
+  key: string,
+): { input: number; output: number; inputCacheHit?: number; inputCacheMiss?: number } | null {
+  if (pricingData[key])
+    return pricingData[key] as {
       input: number;
       output: number;
       inputCacheHit?: number;
       inputCacheMiss?: number;
     };
   return null;
+}
+
+// Known model names that providers return instead of the canonical ID.
+// These are the API-level model identifiers that differ from the pricing key.
+const NORMALIZED_NAMES: Record<string, string> = {
+  'deepseek-chat': 'deepseek-v4-pro',
+  'deepseek-reasoner': 'deepseek-v4-pro',
+  'gpt-5': 'gpt-5',
+  'gpt-5-mini': 'gpt-5-mini',
+  'o4-mini': 'o4-mini',
+};
+
+// Resolve an alias → pricing key. Built once from providers.json aliases,
+// inverted so we can look up by alias value as well as by alias key.
+let _aliasIndex: Record<string, string> | null = null;
+function _resolveAlias(name: string): string | null {
+  if (!_aliasIndex) {
+    _aliasIndex = {};
+    try {
+      const aliases: Record<string, string> = require('./providers.json').aliases || {};
+      // Forward: alias → pricing key
+      for (const [k, v] of Object.entries(aliases)) {
+        _aliasIndex[k] = v;
+        // Also index the value itself (so looking up an alias target
+        // by its short form still works)
+        if (!_aliasIndex[v]) _aliasIndex[v] = v;
+      }
+    } catch (_) {
+      /* continue without aliases */
+    }
+  }
+  return _aliasIndex[name] || null;
 }
 
 // Record per-provider, per-model spend in the in-memory accumulator.
