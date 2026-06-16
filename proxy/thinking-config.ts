@@ -50,6 +50,7 @@ export function applyThinkingConfig(
   constraints: ProviderConstraints,
   thinkingCfg: ThinkingConfigEntry | null,
   upstreamModel?: string,
+  tier?: string,
 ): boolean {
   let modified = false;
 
@@ -87,10 +88,21 @@ export function applyThinkingConfig(
   }
 
   // Rule 4: Inject thinking from config (only when provider supports it,
-  // no thinking exists yet, and no web tools are present)
+  // no thinking exists yet, and no web tools are present).
+  // For TRIVIAL requests (<50 char single messages like greetings), skip
+  // thinking entirely — it's wasted output tokens at $0.87/M.
   if (thinkingCfg && constraints.thinkingFormat === 'anthropic' && !body.thinking && !hasWebTools) {
-    body.thinking = { type: thinkingCfg.type, budget_tokens: thinkingCfg.budget_tokens };
-    modified = true;
+    if (tier === 'TRIVIAL') {
+      // TRIVIAL requests don't need reasoning. Skip thinking to save output cost.
+      modified = false; // nothing to inject
+    } else {
+      const budget =
+        tier === 'CHAT'
+          ? Math.min(thinkingCfg.budget_tokens, 4096) // CHAT gets minimal thinking
+          : thinkingCfg.budget_tokens; // CODE/TOOL/HEAVY get full budget
+      body.thinking = { type: thinkingCfg.type, budget_tokens: budget };
+      modified = true;
+    }
   }
 
   return modified;

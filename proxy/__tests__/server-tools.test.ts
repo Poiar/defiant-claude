@@ -10,7 +10,6 @@ import {
   safeSlice,
   isPrivateIPv4,
   ddgLiteSearch,
-  ddgLiteSearchGet,
   webSearch,
   webSearchStructured,
   webFetch,
@@ -143,21 +142,6 @@ function setupMockRequestHtml(html: string): void {
       on: jest.fn().mockReturnThis(),
       write: jest.fn(),
       end: jest.fn(),
-      destroy: jest.fn(),
-    };
-    return req as any;
-  });
-}
-
-function setupMockGetLegacy(html: string): void {
-  mockHttpsGet.mockImplementation((_url: string, _opts: any, cb: any) => {
-    const res = makeMockResponse();
-    setTimeout(() => {
-      cb(res);
-      fireDataEnd(res, html);
-    }, 0);
-    const req = {
-      on: jest.fn().mockReturnThis(),
       destroy: jest.fn(),
     };
     return req as any;
@@ -1226,46 +1210,8 @@ describe('ddgLiteSearch', () => {
 // via Playwright browser automation.
 // =========================================================================
 
-describe('ddgLiteSearchGet', () => {
-  beforeEach(() => {
-    mockHttpsGet.mockReset();
-  });
-
-  test('extracts titles and URLs from legacy uddg= format', async () => {
-    setupMockGetLegacy(SAMPLE_HTML_LEGACY);
-    const results = await ddgLiteSearchGet('test query');
-    expect(results.length).toBeGreaterThanOrEqual(2);
-    expect(results[0].title).toBe('Example Title');
-    expect(results[0].url).toBe('https://example.com');
-    expect(results[1].title).toBe('Test Org');
-    expect(results[1].url).toBe('https://test.org');
-  });
-
-  test('also handles direct URL format (forward-compat)', async () => {
-    setupMockGetLegacy(SAMPLE_HTML);
-    const results = await ddgLiteSearchGet('test query');
-    expect(results.length).toBeGreaterThanOrEqual(2);
-    expect(results[0].url).toBe('https://example.com');
-    expect(results[1].url).toBe('https://test.org');
-  });
-
-  test('returns empty array on network error', async () => {
-    mockHttpsGet.mockImplementation((_url: string, _opts: any) => {
-      const req = { on: jest.fn(), destroy: jest.fn() } as any;
-      req.on.mockImplementation((event: string, cb: any) => {
-        if (event === 'error') setTimeout(() => cb(new Error('connection refused')), 5);
-        return req;
-      });
-      return req;
-    });
-    const results = await ddgLiteSearchGet('test');
-    expect(Array.isArray(results)).toBe(true);
-    expect(results.length).toBe(0);
-  });
-});
-
 // =========================================================================
-// webSearch — three-tier: POST → GET (legacy) → DDG JSON API
+// webSearch — two-tier: POST scraper → DDG JSON API
 // =========================================================================
 
 describe('webSearch', () => {
@@ -1297,16 +1243,14 @@ describe('webSearch', () => {
     expect(r1).toBe(r2);
   });
 
-  test('falls back to legacy GET when POST returns empty (Tier 2)', async () => {
+  test('falls through to DDG JSON API when POST returns empty', async () => {
     // POST returns empty
     mockHttpsRequest.mockImplementation((_url: string, _opts: any, cb: any) => {
       const res = makeMockResponse();
       res.headers = {};
       setTimeout(() => {
         cb(res);
-        if (res.listeners['end']) {
-          res.listeners['end'].forEach((fn: any) => fn());
-        }
+        if (res.listeners['end']) res.listeners['end'].forEach((fn: any) => fn());
       }, 0);
       const req = {
         on: jest.fn().mockReturnThis(),
@@ -1316,23 +1260,31 @@ describe('webSearch', () => {
       };
       return req as any;
     });
-    // GET returns results via legacy method
-    setupMockGetLegacy(SAMPLE_HTML);
+    // JSON API returns abstract
+    mockHttpsGet.mockImplementation((_url: string, _opts: any, cb: any) => {
+      const res = makeMockResponse();
+      setTimeout(() => {
+        cb(res);
+        fireDataEnd(
+          res,
+          JSON.stringify({ AbstractText: 'Test abstract', AbstractURL: 'https://a.com' }),
+        );
+      }, 0);
+      const req = { on: jest.fn().mockReturnThis(), destroy: jest.fn() };
+      return req as any;
+    });
     const result = await webSearch('fallback-test');
-    expect(result).toContain('Example Title');
-    expect(result).toContain('https://example.com');
+    expect(result).toContain('Test abstract');
   });
 
-  test('returns fallback message when all three tiers empty', async () => {
-    // Tier 1: POST returns empty
+  test('returns fallback message when all tiers empty', async () => {
+    // POST returns empty
     mockHttpsRequest.mockImplementation((_url: string, _opts: any, cb: any) => {
       const res = makeMockResponse();
       res.headers = {};
       setTimeout(() => {
         cb(res);
-        if (res.listeners['end']) {
-          res.listeners['end'].forEach((fn: any) => fn());
-        }
+        if (res.listeners['end']) res.listeners['end'].forEach((fn: any) => fn());
       }, 0);
       const req = {
         on: jest.fn().mockReturnThis(),
@@ -1342,7 +1294,7 @@ describe('webSearch', () => {
       };
       return req as any;
     });
-    // Tier 2 + Tier 3: GET returns empty (for both ddgLiteSearchGet + JSON API)
+    // JSON API returns empty
     mockHttpsGet.mockImplementation((_url: string, _opts: any, cb: any) => {
       const res = makeMockResponse();
       setTimeout(() => {
@@ -1393,16 +1345,14 @@ describe('webSearchStructured', () => {
     expect(r1).toBe(r2);
   });
 
-  test('falls back to legacy GET when POST returns empty', async () => {
+  test('returns empty when POST returns empty', async () => {
     // POST returns empty
     mockHttpsRequest.mockImplementation((_url: string, _opts: any, cb: any) => {
       const res = makeMockResponse();
       res.headers = {};
       setTimeout(() => {
         cb(res);
-        if (res.listeners['end']) {
-          res.listeners['end'].forEach((fn: any) => fn());
-        }
+        if (res.listeners['end']) res.listeners['end'].forEach((fn: any) => fn());
       }, 0);
       const req = {
         on: jest.fn().mockReturnThis(),
@@ -1412,44 +1362,7 @@ describe('webSearchStructured', () => {
       };
       return req as any;
     });
-    // GET returns results via legacy method
-    setupMockGetLegacy(SAMPLE_HTML);
     const results = await webSearchStructured('fallback-test');
-    expect(results.length).toBeGreaterThan(0);
-    expect(results[0].title).toBe('Example Title');
-  });
-
-  test('returns empty array when no results found', async () => {
-    // POST returns empty
-    mockHttpsRequest.mockImplementation((_url: string, _opts: any, cb: any) => {
-      const res = makeMockResponse();
-      res.headers = {};
-      setTimeout(() => {
-        cb(res);
-        if (res.listeners['end']) {
-          res.listeners['end'].forEach((fn: any) => fn());
-        }
-      }, 0);
-      const req = {
-        on: jest.fn().mockReturnThis(),
-        write: jest.fn(),
-        end: jest.fn(),
-        destroy: jest.fn(),
-      };
-      return req as any;
-    });
-    // GET also returns empty
-    mockHttpsGet.mockImplementation((_url: string, _opts: any, cb: any) => {
-      const res = makeMockResponse();
-      setTimeout(() => {
-        cb(res);
-        fireDataEnd(res, '');
-      }, 0);
-      const req = { on: jest.fn().mockReturnThis(), destroy: jest.fn() };
-      return req as any;
-    });
-    const results = await webSearchStructured('nonexistent');
-    expect(Array.isArray(results)).toBe(true);
     expect(results.length).toBe(0);
   });
 });

@@ -299,12 +299,27 @@ export function buildRoutesJson(resolved, includeAllModels = true) {
     if (!model.startsWith('_')) ctxLimits[model] = limit;
   }
 
+  // Default prompt-router: route trivial requests to free providers.
+  // Trivial requests are <50 char single messages (greetings, "ok", "thanks").
+  // These don't need expensive models — free providers handle them fine.
+  const promptRouter = {
+    enabled: true,
+    routes: {
+      opus: [{ tier: 'TRIVIAL', provider: 'oc', model: 'big-pickle' }],
+      sonnet: [{ tier: 'TRIVIAL', provider: 'oc', model: 'big-pickle' }],
+      haiku: [{ tier: 'TRIVIAL', provider: 'oc', model: 'big-pickle' }],
+      subagent: [{ tier: 'TRIVIAL', provider: 'oc', model: 'big-pickle' }],
+      fable: [{ tier: 'TRIVIAL', provider: 'oc', model: 'big-pickle' }],
+    },
+  };
+
   return {
     slots: slotsMap,
     routes,
     providers: providerEntries,
     defaultProvider: resolved.defaultProvider,
     contextLimits: ctxLimits,
+    promptRouter,
   };
 }
 

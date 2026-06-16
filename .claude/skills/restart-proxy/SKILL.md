@@ -1,46 +1,43 @@
 ---
 name: restart-proxy
-description: Hot-swap proxies — run the restart script, old forwards traffic and dies when connections drain.
+description: Proxy restart procedure — tells you NOT to restart from within CC, kills the session
 ---
 
 # Proxy Hot-Swap
 
-**NEVER kill the proxy. NEVER `Stop-Process`. NEVER `taskkill`.** Killing the proxy kills your Claude Code session instantly with "connection refused."
+**WARNING: The proxy IS the API connection. Restarting/killing it from within a CC session kills the session instantly with "connection refused." This has happened twice.**
 
-## How it works
+## When invoked from within a CC session
 
-1. Run `node scripts/restart-proxy.mjs`
-2. Script writes `~/.deepclaude/next-proxy.port` with the new port
-3. Script starts a NEW proxy on that port (detached, `--port <NEW_PORT>`)
-4. The OLD proxy detects the signal file and enters forwarding mode
-5. Old proxy forwards all traffic to the new proxy
-6. When all active connections drain (user restarts CC), the old proxy exits
+**DO NOT run the restart script.** The `restart-proxy.mjs` script has a guard that blocks in-session use, but do not even try.
 
-**No timers. No silent death. The old proxy exits when connections hit zero.**
+Instead, tell the user:
 
-## Steps (automated by script)
+> To pick up the new code, restart with `dc` from PowerShell.
 
-```
-node C:\OC\deepclaude\scripts\restart-proxy.mjs
-```
+Then wait for the user to restart. Do not attempt to restart the proxy yourself.
 
-The script:
-1. Reads current port from `~/.deepclaude/proxy.port`
-2. Picks new port (current + 1)
-3. Writes `~/.deepclaude/next-proxy.port` signal file
-4. Starts new proxy detached with correct `--routes`, `--overrides`, `--providers` flags
-5. Waits up to 10s for new proxy `/health` to respond
-6. Prints: "New proxy on port <N> is ready. Restart CC to pick it up."
+## How it works (for reference)
 
-If you must run manually, the launch args are:
-- `--routes %USERPROFILE%/.deepclaude/current-routes.json`
-- `--overrides %USERPROFILE%/.deepclaude/slot-overrides.json`
-- `--providers C:\OC\deepclaude\proxy\providers.json`
-- `--thinking-overrides %USERPROFILE%/.deepclaude/thinking-overrides.json` (if exists)
+1. The user runs `dc` which starts a fresh proxy on a new port
+2. The old proxy detects it has no active connections and exits
+3. That's it — no script needed, no forwarding, no risk
 
 ## What NOT to do
 
-- **DO NOT kill the old proxy** — it handles the transition
-- **DO NOT kill the new proxy** — that's the one you're switching TO
-- **DO NOT forget `--port`** on the new proxy — the old proxy won't find it
-- **DO NOT** use `$pid` or `$port` as PowerShell variable names (reserved)
+- **DO NOT run `npm run restart-proxy`** from within a CC session — kills the session
+- **DO NOT run `node scripts/restart-proxy.mjs`** — same result
+- **DO NOT kill proxy processes with `taskkill` or `Stop-Process`** — kills the session
+- **DO NOT use `/restart-proxy` command** — invokes this skill, which tells you not to
+
+## Previous incidents
+
+| Date | What | Result |
+|------|------|--------|
+| 2026-06-16 | Killed PID 36472 (user's proxy) | "you fucking idiot. i just had to restart you" |
+| 2026-06-16 | Ran `npm run restart-proxy` from within session | Session killed mid-conversation. "You killed yourself." |
+
+Defenses now in place:
+- PreToolUse hook blocks `restart-proxy`, `taskkill`, `Stop-Process`, `kill` commands
+- `restart-proxy.mjs` refuses to run if `ANTHROPIC_BASE_URL` matches `proxy.port`
+- [[never-kill-proxy]] memory documents why and how to deploy safely

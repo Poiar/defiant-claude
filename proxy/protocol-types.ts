@@ -504,7 +504,7 @@ export const PROVIDER_CONSTRAINTS: Record<string, ProviderConstraints> = {
     requiresThinkingEcho: true,
     thinkingFormat: 'anthropic',
     stripFields: [],
-    noAutoFallback: true,
+    noAutoFallback: false,
   },
 
   // --- OpenRouter ---
@@ -544,7 +544,7 @@ export const PROVIDER_CONSTRAINTS: Record<string, ProviderConstraints> = {
     requiresThinkingEcho: false,
     thinkingFormat: null,
     stripFields: [],
-    noAutoFallback: true,
+    noAutoFallback: false,
   },
 
   // --- Alibaba/DashScope ---
@@ -597,7 +597,7 @@ export const PROVIDER_CONSTRAINTS: Record<string, ProviderConstraints> = {
     requiresThinkingEcho: false,
     thinkingFormat: null,
     stripFields: [],
-    noAutoFallback: true,
+    noAutoFallback: false,
   },
 
   // --- Groq ---

@@ -316,12 +316,7 @@ export function preprocessServerTools(
 // with titles, snippets, and URLs — and is designed to be scraped (no JS,
 // minimal markup). This scraper extracts structured results from that HTML.
 //
-// Two transport methods:
-//   ddgLiteSearch     — POST + cookies + browser UA (current, working)
-//   ddgLiteSearchGet  — GET, minimal headers (legacy, kept for reference;
-//                        DDG now returns empty forms for this. Could be
-//                        revived via Playwright browser automation.)
-//
+// Transport: ddgLiteSearch — POST + cookies + rotating browser UA.
 // HTML parsing is shared via parseDdgLiteHtml().
 
 export interface SearchResult {
@@ -533,69 +528,6 @@ export function ddgLiteSearch(query: string): Promise<SearchResult[]> {
  * distinguish a headful Chromium from a human user. See
  * [[playwright-ddg-search]] for a potential implementation.
  */
-export function ddgLiteSearchGet(query: string): Promise<SearchResult[]> {
-  return new Promise((resolve) => {
-    const shortQuery = query.slice(0, 100);
-    const url = `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`;
-    https
-      .get(
-        url,
-        {
-          headers: { 'User-Agent': 'deepclaude-proxy/1.0' },
-          timeout: 15000,
-        },
-        (res) => {
-          let data = '';
-          let dataSize = 0;
-          res.on('data', (chunk: Buffer) => {
-            dataSize += chunk.length;
-            if (dataSize > 500_000) {
-              log.warn(null, 'ddgLiteSearchGet: response exceeded 500KB limit for: ' + shortQuery);
-              resolve([]);
-              res.destroy();
-              return;
-            }
-            data += chunk.toString();
-          });
-          res.on('end', () => {
-            if (!data) {
-              log.warn(null, 'ddgLiteSearchGet: empty response body for: ' + shortQuery);
-              resolve([]);
-              return;
-            }
-            try {
-              resolve(parseDdgLiteHtml(data));
-            } catch (e) {
-              log.error(
-                null,
-                'ddgLiteSearchGet: HTML parse failure for: ' +
-                  shortQuery +
-                  ' — ' +
-                  ((e as Error).message || ''),
-              );
-              resolve([]);
-            }
-          });
-          res.on('error', (err: Error) => {
-            log.warn(
-              null,
-              'ddgLiteSearchGet: response error for: ' + shortQuery + ' — ' + err.message,
-            );
-            resolve([]);
-          });
-        },
-      )
-      .on('error', (err: Error) => {
-        log.warn(null, 'ddgLiteSearchGet: request error for: ' + shortQuery + ' — ' + err.message);
-        resolve([]);
-      })
-      .on('timeout', () => {
-        log.warn(null, 'ddgLiteSearchGet: request timed out for: ' + shortQuery);
-        resolve([]);
-      });
-  });
-}
-
 // -- Env helper: process.env first, fallback to Windows Registry -----------------
 
 import { execSync } from 'child_process';
@@ -665,11 +597,7 @@ async function searchDDG(query: string): Promise<SearchResult[]> {
   }
   await acquireFetchSlot();
   try {
-    let results = await ddgLiteSearch(query);
-    if (results.length === 0) {
-      results = await ddgLiteSearchGet(query);
-    }
-    return results;
+    return await ddgLiteSearch(query);
   } catch {
     return [];
   } finally {

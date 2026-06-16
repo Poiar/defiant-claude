@@ -1,5 +1,8 @@
 'use strict';
 
+import fs from 'node:fs';
+import path from 'node:path';
+
 import { LruCache } from './lru-cache';
 import { sessionKey } from './session-key';
 
@@ -7,6 +10,15 @@ import { sessionKey } from './session-key';
 // eviction automatically via its shared cleanup timer.
 const TTL_MS = 30 * 60 * 1000;
 const MAX_ENTRIES = 1000;
+
+// Persist to ~/.deepclaude/thinking-cache/ so cached thinking blocks survive
+// proxy restarts. Without this, kill+resume causes DeepSeek prefix cache misses
+// at 120× cost ($0.435/M vs $0.0036/M).
+const CACHE_DIR = path.join(
+  process.env.DEEPCLAUDE_CONFIG_DIR ||
+    path.join(process.env.HOME || process.env.USERPROFILE || '.', '.deepclaude'),
+  'thinking-cache',
+);
 
 const cache = new LruCache<CachedEntry>({ ttlMs: TTL_MS, maxEntries: MAX_ENTRIES });
 
@@ -38,6 +50,85 @@ interface CachedEntry {
   messageCount: number;
 }
 
+// --- Disk persistence ---
+
+function cacheFilePath(key: string): string {
+  // Sanitize the key for filesystem use — hex chars only, safe as-is.
+  return path.join(CACHE_DIR, `${key}.json`);
+}
+
+const isTestEnv = process.env.JEST_WORKER_ID !== undefined || process.env.NODE_ENV === 'test';
+
+function writeToDisk(key: string, entry: CachedEntry): void {
+  if (isTestEnv) return;
+  try {
+    if (!fs.existsSync(CACHE_DIR)) {
+      fs.mkdirSync(CACHE_DIR, { recursive: true });
+    }
+    const data = JSON.stringify({
+      blocks: entry.blocks,
+      messageCount: entry.messageCount,
+      storedAt: Date.now(),
+    });
+    fs.writeFileSync(cacheFilePath(key), data, 'utf-8');
+  } catch {
+    /* non-fatal — cache is best-effort */
+  }
+}
+
+function loadFromDisk(): void {
+  if (isTestEnv) return;
+  try {
+    if (!fs.existsSync(CACHE_DIR)) return;
+    const files = fs.readdirSync(CACHE_DIR);
+    const cutoff = Date.now() - TTL_MS;
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    let _loaded = 0;
+    for (const file of files) {
+      if (!file.endsWith('.json')) continue;
+      const key = file.replace(/\.json$/, '');
+      // Skip if already in memory (from this session)
+      if (cache.get(key)) continue;
+      try {
+        const raw = fs.readFileSync(path.join(CACHE_DIR, file), 'utf-8');
+        const data = JSON.parse(raw);
+        if (data.storedAt && data.storedAt < cutoff) {
+          // Expired — clean up
+          try {
+            fs.unlinkSync(path.join(CACHE_DIR, file));
+          } catch {
+            /* ok */
+          }
+          continue;
+        }
+        if (data.blocks && Array.isArray(data.blocks)) {
+          cache.set(key, {
+            blocks: data.blocks,
+            messageCount: data.messageCount ?? -1,
+          });
+          _loaded++;
+        }
+      } catch {
+        // Corrupt file — delete it
+        try {
+          fs.unlinkSync(path.join(CACHE_DIR, file));
+        } catch {
+          /* ok */
+        }
+      }
+    }
+    // Cache entries hydrated from disk silently — no logging to avoid
+    // circular dependency with start-proxy.ts
+  } catch {
+    /* non-fatal */
+  }
+}
+
+// Hydrate on module load
+loadFromDisk();
+
+// --- Public API ---
+
 export function store(
   sessionKeyParam: string | null,
   firstToolUseId: string | null,
@@ -45,19 +136,17 @@ export function store(
   messageCount: number = -1,
 ): void {
   if (!blocks || blocks.length === 0 || !firstToolUseId) return;
-  // Key on sessionKey + firstToolUseId only. The firstToolUseId is a UUID
-  // (unique per tool call), so we don't need the conversation fingerprint
-  // for disambiguation. Dropping the fingerprint fixes a cache-miss bug
-  // where extraction and injection computed different fingerprints because
-  // the last-3-messages sliding window had shifted between turns.
-  cache.set(`${sessionKeyParam}:${firstToolUseId}`, {
+  const key = `${sessionKeyParam}:${firstToolUseId}`;
+  const entry: CachedEntry = {
     blocks: blocks.map((b) => ({
       type: b.type,
       thinking: b.thinking,
       signature: b.signature || '',
     })),
     messageCount,
-  });
+  };
+  cache.set(key, entry);
+  writeToDisk(key, entry);
 }
 
 function retrieve(

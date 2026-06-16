@@ -1,5 +1,8 @@
 'use strict';
 
+import fs from 'node:fs';
+import path from 'node:path';
+
 import { LruCache } from './lru-cache';
 import { sessionKey } from './session-key';
 
@@ -7,7 +10,90 @@ import { sessionKey } from './session-key';
 const TTL_MS = 30 * 60 * 1000;
 const MAX_ENTRIES = 1000;
 
+// Persist to ~/.deepclaude/reasoning-cache/ so cached reasoning survives proxy
+// restarts. Without this, kill+resume causes OpenAI-format providers to lose
+// reasoning_content between turns → cache misses.
+const CACHE_DIR = path.join(
+  process.env.DEEPCLAUDE_CONFIG_DIR ||
+    path.join(process.env.HOME || process.env.USERPROFILE || '.', '.deepclaude'),
+  'reasoning-cache',
+);
+
 const cache = new LruCache<CachedEntry>({ ttlMs: TTL_MS, maxEntries: MAX_ENTRIES });
+
+// --- Disk persistence ---
+
+function cacheFilePath(key: string): string {
+  return path.join(CACHE_DIR, `${key}.json`);
+}
+
+const isTestEnv = process.env.JEST_WORKER_ID !== undefined || process.env.NODE_ENV === 'test';
+
+function writeToDisk(key: string, entry: CachedEntry): void {
+  if (isTestEnv) return;
+  try {
+    if (!fs.existsSync(CACHE_DIR)) {
+      fs.mkdirSync(CACHE_DIR, { recursive: true });
+    }
+    fs.writeFileSync(
+      cacheFilePath(key),
+      JSON.stringify({
+        reasoningContent: entry.reasoningContent,
+        messageCount: entry.messageCount,
+        storedAt: Date.now(),
+      }),
+      'utf-8',
+    );
+  } catch {
+    /* non-fatal */
+  }
+}
+
+function loadFromDisk(): void {
+  if (isTestEnv) return;
+  try {
+    if (!fs.existsSync(CACHE_DIR)) return;
+    const files = fs.readdirSync(CACHE_DIR);
+    const cutoff = Date.now() - TTL_MS;
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    let _loaded = 0;
+    for (const file of files) {
+      if (!file.endsWith('.json')) continue;
+      const key = file.replace(/\.json$/, '');
+      if (cache.get(key)) continue;
+      try {
+        const raw = fs.readFileSync(path.join(CACHE_DIR, file), 'utf-8');
+        const data = JSON.parse(raw);
+        if (data.storedAt && data.storedAt < cutoff) {
+          try {
+            fs.unlinkSync(path.join(CACHE_DIR, file));
+          } catch {
+            /* ok */
+          }
+          continue;
+        }
+        if (typeof data.reasoningContent === 'string') {
+          cache.set(key, {
+            reasoningContent: data.reasoningContent,
+            messageCount: data.messageCount ?? -1,
+          });
+          _loaded++;
+        }
+      } catch {
+        try {
+          fs.unlinkSync(path.join(CACHE_DIR, file));
+        } catch {
+          /* ok */
+        }
+      }
+    }
+    // Cache entries hydrated from disk silently
+  } catch {
+    /* non-fatal */
+  }
+}
+
+loadFromDisk();
 
 // --- Types ---
 
@@ -82,10 +168,10 @@ export function store(
   messageCount: number = -1,
 ): void {
   if (!sk || !firstToolCallId || !reasoningContent) return;
-  cache.set(`${sk}:${firstToolCallId}`, {
-    reasoningContent,
-    messageCount,
-  });
+  const key = `${sk}:${firstToolCallId}`;
+  const entry: CachedEntry = { reasoningContent, messageCount };
+  cache.set(key, entry);
+  writeToDisk(key, entry);
 }
 
 // Retrieve cached reasoning content.
