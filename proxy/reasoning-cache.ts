@@ -1,5 +1,6 @@
 'use strict';
 
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -21,11 +22,11 @@ const CACHE_DIR = path.join(
 
 const cache = new LruCache<CachedEntry>({ ttlMs: TTL_MS, maxEntries: MAX_ENTRIES });
 
-// --- Disk persistence ---
-
-function cacheFilePath(key: string): string {
-  return path.join(CACHE_DIR, `${key}.json`);
+function hashKey(key: string): string {
+  return crypto.createHash('sha256').update(key).digest('hex').slice(0, 32);
 }
+
+// --- Disk persistence ---
 
 const isTestEnv = process.env.JEST_WORKER_ID !== undefined || process.env.NODE_ENV === 'test';
 
@@ -35,9 +36,11 @@ function writeToDisk(key: string, entry: CachedEntry): void {
     if (!fs.existsSync(CACHE_DIR)) {
       fs.mkdirSync(CACHE_DIR, { recursive: true });
     }
+    const fname = hashKey(key) + '.json';
     fs.writeFileSync(
-      cacheFilePath(key),
+      path.join(CACHE_DIR, fname),
       JSON.stringify({
+        key,
         reasoningContent: entry.reasoningContent,
         messageCount: entry.messageCount,
         storedAt: Date.now(),
@@ -55,39 +58,41 @@ function loadFromDisk(): void {
     if (!fs.existsSync(CACHE_DIR)) return;
     const files = fs.readdirSync(CACHE_DIR);
     const cutoff = Date.now() - TTL_MS;
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    let _loaded = 0;
     for (const file of files) {
       if (!file.endsWith('.json')) continue;
-      const key = file.replace(/\.json$/, '');
-      if (cache.get(key)) continue;
+      const fpath = path.join(CACHE_DIR, file);
       try {
-        const raw = fs.readFileSync(path.join(CACHE_DIR, file), 'utf-8');
+        const raw = fs.readFileSync(fpath, 'utf-8');
         const data = JSON.parse(raw);
-        if (data.storedAt && data.storedAt < cutoff) {
+        if (!data.key || typeof data.reasoningContent !== 'string') {
           try {
-            fs.unlinkSync(path.join(CACHE_DIR, file));
+            fs.unlinkSync(fpath);
           } catch {
             /* ok */
           }
           continue;
         }
-        if (typeof data.reasoningContent === 'string') {
-          cache.set(key, {
-            reasoningContent: data.reasoningContent,
-            messageCount: data.messageCount ?? -1,
-          });
-          _loaded++;
+        if (data.storedAt && data.storedAt < cutoff) {
+          try {
+            fs.unlinkSync(fpath);
+          } catch {
+            /* ok */
+          }
+          continue;
         }
+        if (cache.get(data.key)) continue;
+        cache.set(data.key, {
+          reasoningContent: data.reasoningContent,
+          messageCount: data.messageCount ?? -1,
+        });
       } catch {
         try {
-          fs.unlinkSync(path.join(CACHE_DIR, file));
+          fs.unlinkSync(fpath);
         } catch {
           /* ok */
         }
       }
     }
-    // Cache entries hydrated from disk silently
   } catch {
     /* non-fatal */
   }
@@ -168,7 +173,7 @@ export function store(
   messageCount: number = -1,
 ): void {
   if (!sk || !firstToolCallId || !reasoningContent) return;
-  const key = `${sk}:${firstToolCallId}`;
+  const key = `${sk}|${firstToolCallId}`;
   const entry: CachedEntry = { reasoningContent, messageCount };
   cache.set(key, entry);
   writeToDisk(key, entry);
@@ -181,7 +186,7 @@ function retrieve(
   currentMsgCount: number = -1,
 ): string | undefined {
   if (!sk || !firstToolCallId) return undefined;
-  const entry = cache.get(`${sk}:${firstToolCallId}`);
+  const entry = cache.get(`${sk}|${firstToolCallId}`);
   if (!entry) return undefined;
   if (entry.messageCount > 0 && currentMsgCount >= 0 && entry.messageCount !== currentMsgCount)
     return undefined;

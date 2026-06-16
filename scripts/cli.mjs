@@ -934,7 +934,7 @@ async function cmdProbe(flags, providers, configs) {
 
 async function cmdDryRun(flags, configs) {
   const specs = resolveSpecs(flags, configs);
-  if (!specs.length) specs.push(process.env.DEEPCLAUDE_DEFAULT_BACKEND || 'ds');
+  if (!specs.length) specs.push(process.env.DEEPCLAUDE_DEFAULT_BACKEND || 'ds+oc');
   const key = Object.keys(configs).includes(specs[0]) ? 'name' : 'specs';
   const val = key === 'name' ? specs[0] : specs.join(',');
   const routesJson = launcher('build-routes', `--${key}=${val}`);
@@ -958,9 +958,9 @@ function resolveSpecs(flags, _configs) {
     if (def) specs = [def];
     else {
       warn(
-        'No config specified, defaulting to "ds". Set DEEPCLAUDE_DEFAULT_BACKEND to suppress this.',
+        'No config specified, defaulting to "ds+oc". Set DEEPCLAUDE_DEFAULT_BACKEND to suppress this.',
       );
-      specs = ['ds'];
+      specs = ['ds+oc'];
     }
   }
   return specs;

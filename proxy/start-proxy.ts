@@ -1152,11 +1152,12 @@ if (probeIdx >= 2) {
         const originalSlot = (model || '').match(/^(sonnet|opus|haiku|subagent|fable):/);
         const savedSlot = originalSlot ? originalSlot[1] : null;
 
+        let classification: { tier: string } | null = null;
         if (parsedBody && state.routing?.promptRouter?.enabled) {
           const slotMatch = (model || '').match(/^(sonnet|opus|haiku|subagent|fable):/);
           if (slotMatch) {
             const slot = slotMatch[1];
-            const classification = classifyRequest(parsedBody);
+            classification = classifyRequest(parsedBody);
             const routeOverride = resolvePromptRoute(
               slot,
               classification,
@@ -1176,6 +1177,22 @@ if (probeIdx >= 2) {
                   routeOverride.rewriteModel,
               );
               model = routeOverride.providerKey + ':' + routeOverride.rewriteModel;
+            }
+          }
+        }
+
+        // Cap max_tokens by tier to reduce output costs ($0.87/M).
+        // TRIVIAL requests (<50 chars) don't need more than 1024 tokens.
+        // CHAT requests get 4096. CODE/TOOL/HEAVY are uncapped.
+        if (parsedBody && classification) {
+          const { capMaxTokens } = require('./prompt-router');
+          const raw = parsedBody.max_tokens;
+          const current = typeof raw === 'number' ? raw : parseInt(String(raw), 10);
+          if (!isNaN(current) && current > 0) {
+            const capped = capMaxTokens(current, classification.tier);
+            if (capped !== current) {
+              parsedBody.max_tokens = capped;
+              log.info(reqId, `max_tokens capped: ${current} → ${capped} (${classification.tier})`);
             }
           }
         }
@@ -1455,6 +1472,7 @@ if (probeIdx >= 2) {
 
         // Session momentum: if this conversation has a history of successful
         // responses from a particular provider, prefer it at the front of fallbacks.
+        // When confidence is low (< 0.4), prefer the cheapest healthy fallback.
         const sk = sessionKey(parsedBody as Record<string, unknown>);
         if (sk && chain.length > 1) {
           const momentum = getMomentum(sk);
@@ -1468,6 +1486,18 @@ if (probeIdx >= 2) {
                 const [preferred] = chain.splice(fbIdx, 1);
                 chain.splice(1, 0, preferred);
               }
+            }
+          } else if (chain.length > 1) {
+            // Low confidence or no momentum: move cheapest healthy fallback first.
+            // Free providers (oc, um, lo) cost $0/M; prefer them over paid fallbacks.
+            const FREE_PROVIDERS = new Set(['oc', 'um', 'lo']);
+            const cheapIdx = chain.findIndex(
+              (t, i) =>
+                i > 0 && FREE_PROVIDERS.has(t.providerKey) && isProviderHealthy(t.providerKey),
+            );
+            if (cheapIdx > 1) {
+              const [cheap] = chain.splice(cheapIdx, 1);
+              chain.splice(1, 0, cheap);
             }
           }
         }
@@ -1523,7 +1553,7 @@ if (probeIdx >= 2) {
             try {
               const p = JSON.parse(forwardedBody.toString());
               const thinkingCfg = matchThinkingModel(upstreamModel, effectiveThinking);
-              const tier = parsedBody ? classifyRequest(parsedBody).tier : undefined;
+              const tier = classification?.tier;
               if (
                 applyThinkingConfig(p, hasWebTools, constraints, thinkingCfg, upstreamModel, tier)
               ) {

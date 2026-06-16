@@ -53,10 +53,10 @@ describe('resolve-config (CLI)', () => {
 
   test('resolves ds config (default)', () => {
     const cfg = runLauncherJson('resolve-config', '--name=ds');
-    expect(cfg.slots.haiku.provider).toBe('oc');
-    expect(cfg.slots.haiku.model).toBe('big-pickle');
-    expect(cfg.slots.subagent.provider).toBe('oc');
-    expect(cfg.slots.subagent.model).toBe('big-pickle');
+    expect(cfg.slots.haiku.provider).toBe('ds');
+    expect(cfg.slots.haiku.model).toBe('deepseek-v4-flash');
+    expect(cfg.slots.subagent.provider).toBe('ds');
+    expect(cfg.slots.subagent.model).toBe('deepseek-v4-flash');
   });
 
   test('resolves ds+oc config', () => {
@@ -94,10 +94,22 @@ describe('build-routes (CLI)', () => {
     expect(routes.providers.an.format).toBe('anthropic');
   });
 
-  test('builds routes for ds config with free sub slots', () => {
+  test('builds routes for ds config with all-DS slots', () => {
     const routes = runLauncherJson('build-routes', '--name=ds');
-    expect(routes.slots.haiku).toBe('haiku:oc:big-pickle');
-    expect(routes.slots.subagent).toBe('subagent:oc:big-pickle');
+    expect(routes.slots.haiku).toBe('haiku:ds:deepseek-v4-flash');
+    expect(routes.slots.subagent).toBe('subagent:ds:deepseek-v4-flash');
+  });
+
+  test('builds routes includes promptRouter config', () => {
+    const routes = runLauncherJson('build-routes', '--name=ds+oc');
+    expect(routes.promptRouter).toBeDefined();
+    expect(routes.promptRouter.enabled).toBe(true);
+    const haikuRoutes = routes.promptRouter.routes.haiku;
+    expect(Array.isArray(haikuRoutes)).toBe(true);
+    expect(haikuRoutes.length).toBeGreaterThan(0);
+    expect(haikuRoutes[0].tier).toBe('TRIVIAL');
+    expect(haikuRoutes[0].provider).toBe('oc');
+    expect(haikuRoutes[0].model).toBe('big-pickle');
   });
 });
 
@@ -212,8 +224,8 @@ describe('init-overrides (CLI)', () => {
 
   test('init-overrides for ds sets correct _defaults', () => {
     const result = runLauncherJson('init-overrides', '--name=ds');
-    expect(result._defaults.haiku).toBe('oc:big-pickle');
-    expect(result._defaults.subagent).toBe('oc:big-pickle');
+    expect(result._defaults.haiku).toBe('ds:deepseek-v4-flash');
+    expect(result._defaults.subagent).toBe('ds:deepseek-v4-flash');
   });
 
   test('existing user overrides survive init-overrides', () => {
@@ -281,10 +293,10 @@ describe('init-overrides (CLI)', () => {
   });
 
   // --- Config switching: ds ↔ ds+an ↔ ds+oc ---
-  test('init-overrides ds sets direct haiku key to opencode big-pickle', () => {
+  test('init-overrides ds sets direct haiku key to deepseek flash', () => {
     const result = runLauncherJson('init-overrides', '--name=ds');
-    expect(result.haiku).toBe('oc:big-pickle');
-    expect(result.subagent).toBe('oc:big-pickle');
+    expect(result.haiku).toBe('ds:deepseek-v4-flash');
+    expect(result.subagent).toBe('ds:deepseek-v4-flash');
   });
 
   test('init-overrides ds+oc sets direct haiku key to opencode big-pickle', () => {
@@ -303,8 +315,8 @@ describe('init-overrides (CLI)', () => {
   test('init-overrides switches ds+an → ds correctly', () => {
     runLauncherJson('init-overrides', '--name=ds+an');
     const result = runLauncherJson('init-overrides', '--name=ds');
-    expect(result.haiku).toBe('oc:big-pickle');
-    expect(result.subagent).toBe('oc:big-pickle');
+    expect(result.haiku).toBe('ds:deepseek-v4-flash');
+    expect(result.subagent).toBe('ds:deepseek-v4-flash');
   });
 });
 
@@ -1085,8 +1097,8 @@ describe('resolve→routes→env-vars consistency', () => {
     const cfgSlots = cfg.slots as Record<string, { provider: string; model: string }>;
 
     expect(routeSlots.opus).toBe(`opus:ds:${cfgSlots.opus.model}`);
-    expect(routeSlots.haiku).toBe(`haiku:oc:${cfgSlots.haiku.model}`);
-    expect(routeSlots.subagent).toBe(`subagent:oc:${cfgSlots.subagent.model}`);
+    expect(routeSlots.haiku).toBe(`haiku:ds:${cfgSlots.haiku.model}`);
+    expect(routeSlots.subagent).toBe(`subagent:ds:${cfgSlots.subagent.model}`);
   });
 });
 // ---------------------------------------------------------------------------
@@ -1303,9 +1315,9 @@ describe('REGRESSION: initOverrides missing _defaults stale config', () => {
 
     const result = runLauncherJson('init-overrides', '--name=ds');
 
-    // All slots must switch to ds config (haiku/sub now use oc:big-pickle)
-    expect(result.haiku).toBe('oc:big-pickle');
-    expect(result.subagent).toBe('oc:big-pickle');
+    // All slots must switch to ds config
+    expect(result.haiku).toBe('ds:deepseek-v4-flash');
+    expect(result.subagent).toBe('ds:deepseek-v4-flash');
     expect(result.opus).toBe('ds:deepseek-v4-pro');
     expect(result._configName).toBe('ds');
   });
@@ -1429,8 +1441,8 @@ describe('REGRESSION: initOverrides cross-contamination prevention', () => {
     ds: {
       opus: 'ds:deepseek-v4-pro',
       sonnet: 'ds:deepseek-v4-pro',
-      haiku: 'oc:big-pickle',
-      subagent: 'oc:big-pickle',
+      haiku: 'ds:deepseek-v4-flash',
+      subagent: 'ds:deepseek-v4-flash',
       fable: 'ds:deepseek-v4-pro',
     },
     'ds+an': {
@@ -1609,7 +1621,7 @@ describe('REGRESSION: env-vars correctly reflect resolved config', () => {
     expect(env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('subagent:claude-haiku-4-5-20251001');
   });
 
-  test('ds: haiku env var is OpenCode big-pickle', () => {
+  test('ds: haiku env var is DeepSeek flash', () => {
     const cfg = runLauncherJson('resolve-config', '--name=ds');
     const env = runLauncherJson(
       'env-vars',
@@ -1620,8 +1632,8 @@ describe('REGRESSION: env-vars correctly reflect resolved config', () => {
       `--subagent=${cfg.slots.subagent.model}`,
       `--fable=${cfg.slots.fable.model}`,
     );
-    expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('haiku:big-pickle');
-    expect(env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('subagent:big-pickle');
+    expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('haiku:deepseek-v4-flash[1m]');
+    expect(env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('subagent:deepseek-v4-flash[1m]');
   });
 
   test('ds+oc: haiku env var is OpenCode big-pickle', () => {
@@ -1655,6 +1667,32 @@ describe('REGRESSION: provider fallback chains', () => {
     if (routes.providers.or.fallback) {
       expect(Array.isArray(routes.providers.or.fallback)).toBe(true);
     }
+  });
+
+  // --- Free fallback chain: ds→oc→um→or ---
+  test('ds provider has free fallback chain oc→um in providers.json', () => {
+    const providersJson = JSON.parse(
+      readFileSync(join(__dirname, '..', 'providers.json'), 'utf-8'),
+    );
+    const dsFallback = providersJson.providers.ds.fallback;
+    expect(Array.isArray(dsFallback)).toBe(true);
+    expect(dsFallback).toContain('oc');
+    expect(dsFallback).toContain('um');
+    // oc fallback also chains to um
+    expect(providersJson.providers.oc.fallback).toContain('um');
+    // um fallback chains to or
+    expect(providersJson.providers.um.fallback).toContain('or');
+  });
+
+  // --- Cheapest-provider preference in momentum ---
+  test('ds+oc routes include oc as free haiku/subagent provider', () => {
+    const routes = runLauncherJson('build-routes', '--name=ds+oc');
+    // oc provider must exist with its endpoint
+    expect(routes.providers.oc).toBeDefined();
+    expect(routes.providers.oc.url).toContain('opencode');
+    // haiku and subagent slots route to oc
+    expect(routes.slots.haiku).toContain('oc:');
+    expect(routes.slots.subagent).toContain('oc:');
   });
 });
 
@@ -2177,14 +2215,14 @@ describe('scripts/cli.mjs end-to-end', () => {
 
   // --- --dry-run routing tables ---
 
-  test('--dry-run -b ds shows hybrid routing with free haiku/subagent', () => {
+  test('--dry-run -b ds shows all-DeepSeek routing', () => {
     const { stdout, stderr } = runCli('--dry-run', '-b', 'ds');
     expect(stderr).not.toMatch(/Error|Invalid model spec|Unknown provider/i);
-    // Heavy slots route to ds, light slots to oc
-    expect(stdout).toMatch(/haiku\s+oc\s+\(OpenCode/);
-    expect(stdout).toMatch(/subagent\s+oc\s+\(OpenCode/);
+    // All slots route to ds
+    expect(stdout).toMatch(/haiku\s+ds\s+\(DeepSeek/);
+    expect(stdout).toMatch(/subagent\s+ds\s+\(DeepSeek/);
     expect(stdout).toMatch(/opus\s+ds\s+\(DeepSeek/);
-    expect(stdout).toMatch(/big-pickle/);
+    expect(stdout).toMatch(/deepseek-v4-flash/);
   });
 
   test('--dry-run -b ds+an routes haiku/subagent to Anthropic', () => {
@@ -2201,6 +2239,25 @@ describe('scripts/cli.mjs end-to-end', () => {
     expect(stderr).not.toMatch(/Error|Invalid model spec|Unknown provider/i);
     expect(stdout).toMatch(/haiku\s+oc\s+\(OpenCode/);
     expect(stdout).toMatch(/subagent\s+oc\s+\(OpenCode/);
+    expect(stdout).toMatch(/big-pickle/);
+  });
+
+  // --- Default config (no -b flag, no env var) ---
+
+  test('--dry-run with no -b flag defaults to ds+oc', () => {
+    // Clear DEEPCLAUDE_DEFAULT_BACKEND so the built-in default kicks in
+    const r = spawnSync('node', [CLI_SCRIPT, '--dry-run'], {
+      encoding: 'utf-8',
+      timeout: 30000,
+      env: { ...process.env, DEEPCLAUDE_DEFAULT_BACKEND: '' },
+    });
+    const stdout = (r.stdout || '').trim();
+    const stderr = (r.stderr || '').trim();
+    expect(stderr).not.toMatch(/Error|Invalid model spec|Unknown provider/i);
+    // ds+oc defaults: haiku/subagent → oc, opus/sonnet/fable → ds
+    expect(stdout).toMatch(/haiku\s+oc\s+\(OpenCode/);
+    expect(stdout).toMatch(/subagent\s+oc\s+\(OpenCode/);
+    expect(stdout).toMatch(/opus\s+ds\s+\(DeepSeek/);
     expect(stdout).toMatch(/big-pickle/);
   });
 
@@ -2341,5 +2398,23 @@ describe('scripts/cli.mjs smoke tests', () => {
       env: { ...process.env, DEEPCLAUDE_DEFAULT_BACKEND: 'ds' },
     });
     expect(r.status).toBe(0);
+  });
+
+  // --- Default backend is ds+oc ---
+  test('--cost with no -b flag defaults to ds+oc', () => {
+    const r = spawnSync('node', [CLI_SCRIPT, '--cost'], {
+      encoding: 'utf-8',
+      timeout: 15000,
+      env: { ...process.env, DEEPCLAUDE_DEFAULT_BACKEND: '' },
+    });
+    // Should not error with "Unknown config" — ds+oc is the default
+    expect((r.stderr || '') + (r.stdout || '')).not.toMatch(/Unknown config/i);
+  });
+
+  // --- Default daily budget ---
+  test('DEEPCLAUDE_DAILY_BUDGET defaults to $25 when unset', () => {
+    // The default budget var DEFAULT_DAILY_BUDGET = 25 is defined in start-proxy.ts
+    const proxySrc = readFileSync(join(__dirname, '..', 'start-proxy.ts'), 'utf-8');
+    expect(proxySrc).toContain('DEFAULT_DAILY_BUDGET = 25');
   });
 });

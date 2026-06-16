@@ -275,15 +275,7 @@
   },
   "configs": {
     "ds": {
-      "name": "DeepSeek V4 Pro + free subs",
-      "opus": "ds:deepseek-v4-pro",
-      "sonnet": "ds:deepseek-v4-pro",
-      "haiku": "oc:big-pickle",
-      "sub": "oc:big-pickle",
-      "fable": "ds:deepseek-v4-pro"
-    },
-    "ds-full": {
-      "name": "DeepSeek V4 Pro (all slots)",
+      "name": "DeepSeek V4 Pro",
       "opus": "ds:deepseek-v4-pro",
       "sonnet": "ds:deepseek-v4-pro",
       "haiku": "ds:deepseek-v4-flash",

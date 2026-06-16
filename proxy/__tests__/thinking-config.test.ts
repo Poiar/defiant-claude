@@ -281,4 +281,66 @@ describe('applyThinkingConfig', () => {
     expect(body.thinking).toBeUndefined();
     expect(body.tool_choice).toBeUndefined();
   });
+
+  // --- Tier-based thinking budget ---
+
+  test('TRIVIAL tier: skips thinking injection entirely', () => {
+    const body: Record<string, unknown> = {
+      model: 'deepseek-v4-pro',
+      messages: [],
+    };
+    const modified = applyThinkingConfig(body, false, ds, thinkingCfg, undefined, 'TRIVIAL');
+    expect(modified).toBe(false);
+    expect(body.thinking).toBeUndefined();
+  });
+
+  test('CHAT tier: uses reduced budget (4096)', () => {
+    const body: Record<string, unknown> = {
+      model: 'deepseek-v4-pro',
+      messages: [],
+    };
+    const modified = applyThinkingConfig(body, false, ds, thinkingCfg, undefined, 'CHAT');
+    expect(modified).toBe(true);
+    expect((body.thinking as any).budget_tokens).toBe(4096);
+  });
+
+  test('CODE tier: uses full thinking budget', () => {
+    const body: Record<string, unknown> = {
+      model: 'deepseek-v4-pro',
+      messages: [],
+    };
+    const modified = applyThinkingConfig(body, false, ds, thinkingCfg, undefined, 'CODE');
+    expect(modified).toBe(true);
+    expect((body.thinking as any).budget_tokens).toBe(16000);
+  });
+
+  test('TOOL tier: uses full thinking budget', () => {
+    const body: Record<string, unknown> = {
+      model: 'deepseek-v4-pro',
+      messages: [],
+    };
+    const modified = applyThinkingConfig(body, false, ds, thinkingCfg, undefined, 'TOOL');
+    expect(modified).toBe(true);
+    expect((body.thinking as any).budget_tokens).toBe(16000);
+  });
+
+  test('no tier specified: uses full budget (backward compatible)', () => {
+    const body: Record<string, unknown> = {
+      model: 'deepseek-v4-pro',
+      messages: [],
+    };
+    const modified = applyThinkingConfig(body, false, ds, thinkingCfg);
+    expect(modified).toBe(true);
+    expect((body.thinking as any).budget_tokens).toBe(16000);
+  });
+
+  test('CHAT with existing thinking: does not override', () => {
+    const body: Record<string, unknown> = {
+      model: 'deepseek-v4-pro',
+      thinking: { type: 'enabled', budget_tokens: 32000 },
+    };
+    const modified = applyThinkingConfig(body, false, ds, thinkingCfg, undefined, 'CHAT');
+    expect(modified).toBe(false);
+    expect((body.thinking as any).budget_tokens).toBe(32000);
+  });
 });
