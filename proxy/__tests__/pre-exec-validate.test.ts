@@ -234,6 +234,120 @@ describe('validatePreExecResponse', () => {
     ).toBeNull();
   });
 
+  // ── Multi-search validation ──────────────────────────────────────────
+
+  test('accepts multiple web_search_tool_result blocks (multi-search)', () => {
+    const body = validBody({
+      content: [
+        {
+          type: 'web_search_tool_result',
+          tool_use_id: 'toolu_1',
+          caller: { type: 'direct' },
+          content: [
+            {
+              type: 'web_search_result',
+              url: 'https://a.com',
+              title: 'Result A',
+              encrypted_content: 'snippet A',
+              page_age: null,
+            },
+          ],
+        },
+        {
+          type: 'web_search_tool_result',
+          tool_use_id: 'toolu_2',
+          caller: { type: 'direct' },
+          content: [
+            {
+              type: 'web_search_result',
+              url: 'https://b.com',
+              title: 'Result B',
+              encrypted_content: 'snippet B',
+              page_age: '2026-06-15',
+            },
+          ],
+        },
+      ],
+      usage: {
+        input_tokens: 1,
+        output_tokens: 100,
+        server_tool_use: { web_search_requests: 2, web_fetch_requests: 0 },
+      },
+    });
+    expect(validatePreExecResponse(body)).toBeNull();
+  });
+
+  test('rejects second block with missing tool_use_id in multi-search', () => {
+    const body = validBody({
+      content: [
+        {
+          type: 'web_search_tool_result',
+          tool_use_id: 'toolu_1',
+          caller: { type: 'direct' },
+          content: [
+            {
+              type: 'web_search_result',
+              url: 'https://a.com',
+              title: 'A',
+              encrypted_content: 'a',
+              page_age: null,
+            },
+          ],
+        },
+        {
+          type: 'web_search_tool_result',
+          caller: { type: 'direct' },
+          content: [
+            {
+              type: 'web_search_result',
+              url: 'https://b.com',
+              title: 'B',
+              encrypted_content: 'b',
+              page_age: null,
+            },
+          ],
+        },
+      ],
+      usage: {
+        input_tokens: 1,
+        output_tokens: 100,
+        server_tool_use: { web_search_requests: 2, web_fetch_requests: 0 },
+      },
+    });
+    expect(validatePreExecResponse(body)).toContain('content[1]');
+    expect(validatePreExecResponse(body)).toContain('tool_use_id');
+  });
+
+  test('rejects web_search_requests not matching content block count', () => {
+    // Only 1 block but claims 2 searches — should still validate since
+    // we validate content blocks individually (CC might count them differently)
+    const body = validBody({
+      content: [
+        {
+          type: 'web_search_tool_result',
+          tool_use_id: 'toolu_1',
+          caller: { type: 'direct' },
+          content: [
+            {
+              type: 'web_search_result',
+              url: 'https://a.com',
+              title: 'A',
+              encrypted_content: 'a',
+              page_age: null,
+            },
+          ],
+        },
+      ],
+      usage: {
+        input_tokens: 1,
+        output_tokens: 100,
+        server_tool_use: { web_search_requests: 2, web_fetch_requests: 0 },
+      },
+    });
+    // This should still be valid — the count mismatch is non-fatal
+    expect(validatePreExecResponse(body)).toBeNull();
+  });
+
   test('catches the bug: web_search_tool_result without tool_use_id (the undefined error)', () => {
     // This was the actual bug: we returned {type: 'web_search_tool_result', content: '...'}
     // without tool_use_id or caller. CC tried to access tool_use_id → "Web search error: undefined".

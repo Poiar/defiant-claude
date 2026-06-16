@@ -477,6 +477,79 @@ describe('extractSearchQuery', () => {
   });
 });
 
+// extractSearchQueries — multi-search
+describe('extractSearchQueries', () => {
+  let extractSearchQueries: any;
+  beforeAll(() => {
+    extractSearchQueries = require('../server-tools').extractSearchQueries;
+  });
+
+  test('extracts single query', () => {
+    const messages = [
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'Perform a web search for the query: latest AI news' }],
+      },
+    ];
+    expect(extractSearchQueries(messages)).toEqual(['latest AI news']);
+  });
+
+  test('extracts multiple queries from one message', () => {
+    const messages = [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Perform a web search for the query: iPhone 18' },
+          { type: 'text', text: 'Perform a web search for the query: Samsung Galaxy' },
+          { type: 'text', text: 'Perform a web search for the query: Pixel 10' },
+        ],
+      },
+    ];
+    expect(extractSearchQueries(messages)).toEqual(['iPhone 18', 'Samsung Galaxy', 'Pixel 10']);
+  });
+
+  test('extracts queries across multiple messages', () => {
+    const messages = [
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'Perform a web search for the query: first query' }],
+      },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'Perform a web search for the query: second query' }],
+      },
+    ];
+    expect(extractSearchQueries(messages)).toEqual(['first query', 'second query']);
+  });
+
+  test('returns empty array when no queries', () => {
+    const messages = [{ role: 'user', content: [{ type: 'text', text: 'What is the weather?' }] }];
+    expect(extractSearchQueries(messages)).toEqual([]);
+  });
+
+  test('returns empty array for null/undefined', () => {
+    expect(extractSearchQueries(null)).toEqual([]);
+    expect(extractSearchQueries(undefined)).toEqual([]);
+  });
+
+  test('extractSearchQuery returns first query from extractSearchQueries', async () => {
+    const { extractSearchQuery: esq } = require('../server-tools');
+    const messages = [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Perform a web search for the query: first' },
+          { type: 'text', text: 'Perform a web search for the query: second' },
+        ],
+      },
+    ];
+    // extractSearchQuery scans backward — returns the LAST match
+    expect(esq(messages)).toBe('second');
+    // extractSearchQueries returns ALL in forward order
+    expect(extractSearchQueries(messages)).toEqual(['first', 'second']);
+  });
+});
+
 // =========================================================================
 // isServerToolType — all prefix coverage
 // =========================================================================

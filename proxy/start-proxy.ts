@@ -41,9 +41,9 @@ import type { ProbeSlot } from './probe';
 import {
   populateToolResults,
   preprocessServerTools,
-  webSearch,
   webSearchStructured,
   extractSearchQuery,
+  extractSearchQueries,
 } from './server-tools';
 import { buildHotSwapHeaders } from './hot-swap-headers';
 import { getConstraints, validateResponseConformance } from './protocol-types';
@@ -420,22 +420,22 @@ if (probeIdx >= 2) {
   }
 
   /**
-   * Pre-execute a web search request — run DDG locally and return results
-   * inline, bypassing the model entirely. Returns true if the request was
-   * handled (response sent), false to fall through to normal routing.
+   * Pre-execute web search requests — run DDG locally and return results
+   * inline, bypassing the model entirely. Returns true if handled, false
+   * to fall through to normal routing.
    *
-   * Returns a proper web_search_tool_result content block that CC recognizes
-   * for "Did N searches" display. Uses structured search results (SearchResult[])
-   * to build individual web_search_result sub-blocks with url, title,
-   * encrypted_content, and page_age fields.
+   * Multi-search: extracts ALL queries from the request, runs them in parallel
+   * via Promise.all, and returns N web_search_tool_result blocks — one per query.
+   * CC shows "Did N searches" for N queries.
    *
    * Guardrails:
-   * - 100KB response cap (prevents OOM from unbounded search results)
-   * - 15 result max (realistic limit — DDG rarely returns more)
-   * - Query length limit (800 chars, prevents abuse)
-   * - Concurrent fetch slotting (shared with webSearch's own limiter)
-   * - Error fallthrough (returns false → normal model routing)
-   * - Response validation (validatePreExecResponse)
+   * - 5 query max (prevents DDG abuse via query stuffing)
+   * - 100KB response cap across all blocks
+   * - 15 result max per query
+   * - 800 char query limit per individual query
+   * - Parallel execution (all queries fire concurrently)
+   * - Partial success: failed queries don't block successful ones
+   * - Response validation on every content block (validatePreExecResponse)
    */
   async function tryPreExecuteWebSearch(
     body: Record<string, unknown>,
@@ -447,94 +447,114 @@ if (probeIdx >= 2) {
     if (response.headersSent || response.destroyed) return false;
 
     const messages = body.messages as Array<Record<string, unknown>> | undefined;
-    const query = messages ? extractSearchQuery(messages as any[]) : null;
+    const queries = messages ? extractSearchQueries(messages as any[]) : [];
 
-    // Guard: no extractable query — let the model handle it
-    if (!query) return false;
+    // Guard: no extractable queries — let the model handle it
+    if (queries.length === 0) return false;
 
-    // Guard: query too long (800 chars — CC typically sends normal-length queries)
-    if (query.length > 800) {
+    // Guard: too many queries (DDG abuse prevention)
+    if (queries.length > 5) {
       log.warn(
         null,
-        'WEB_SEARCH_PREX: query too long (' + query.length + ' chars) — falling through to model',
+        'WEB_SEARCH_PREX: too many queries (' + queries.length + ') — falling through to model',
       );
       return false;
     }
 
+    // Guard: any individual query too long
+    for (const q of queries) {
+      if (q.length > 800) {
+        log.warn(
+          null,
+          'WEB_SEARCH_PREX: query too long (' + q.length + ' chars) — falling through to model',
+        );
+        return false;
+      }
+    }
+
     try {
-      // Use structured search to get individual result objects
-      const structured = await webSearchStructured(query);
       const MAX_RESULT_BYTES = 100_000;
-      const MAX_RESULTS = 15;
+      const MAX_RESULTS_PER_QUERY = 15;
       const isStream = body.stream === true;
       const trustModel = getTrustedModel(modelName || (body.model as string) || null);
       const msgId = 'msg_search_' + reqId;
-      const toolUseId = 'toolu_SEARCH_' + reqId;
 
-      // Build web_search_result blocks from SearchResult[]
-      const webSearchResultBlocks: Array<Record<string, unknown>> = [];
+      // Run all queries in parallel
+      const structuredResults = await Promise.all(
+        queries.map((q) =>
+          webSearchStructured(q).catch((err) => {
+            log.error(null, 'WEB_SEARCH_PREX query failed: ' + truncateForLog(err.message));
+            return null;
+          }),
+        ),
+      );
+
+      // Build one web_search_tool_result block per query
+      const searchBlocks: Array<Record<string, unknown>> = [];
       let totalBytes = 0;
       let truncated = false;
+      let successfulSearches = 0;
 
-      for (let i = 0; i < structured.length && webSearchResultBlocks.length < MAX_RESULTS; i++) {
-        const r = structured[i];
-        const snippet = (r.snippet || '')
-          .replace(/[\uD800-\uDFFF]/g, '')
-          .replace(/[\x00-\x1F\x7F]/g, '');
-        const blockBytes =
-          Buffer.byteLength(r.url, 'utf-8') +
-          Buffer.byteLength(r.title, 'utf-8') +
-          Buffer.byteLength(snippet, 'utf-8');
+      for (let qi = 0; qi < queries.length; qi++) {
+        const structured = structuredResults[qi];
+        const toolUseId = 'toolu_SEARCH_' + reqId + '_' + qi;
 
-        if (totalBytes + blockBytes > MAX_RESULT_BYTES) {
-          truncated = true;
-          break;
+        const webSearchResultBlocks: Array<Record<string, unknown>> = [];
+
+        if (structured && structured.length > 0) {
+          successfulSearches++;
+          for (
+            let i = 0;
+            i < structured.length && webSearchResultBlocks.length < MAX_RESULTS_PER_QUERY;
+            i++
+          ) {
+            const r = structured[i];
+            const snippet = (r.snippet || '')
+              .replace(/[\uD800-\uDFFF]/g, '')
+              .replace(/[\x00-\x1F\x7F]/g, '');
+            const blockBytes =
+              Buffer.byteLength(r.url, 'utf-8') +
+              Buffer.byteLength(r.title, 'utf-8') +
+              Buffer.byteLength(snippet, 'utf-8');
+
+            if (totalBytes + blockBytes > MAX_RESULT_BYTES) {
+              truncated = true;
+              break;
+            }
+            totalBytes += blockBytes;
+
+            webSearchResultBlocks.push({
+              type: 'web_search_result',
+              url: r.url,
+              title: r.title,
+              encrypted_content: snippet,
+              page_age: null,
+            });
+          }
         }
-        totalBytes += blockBytes;
 
-        webSearchResultBlocks.push({
-          type: 'web_search_result',
-          url: r.url,
-          title: r.title,
-          encrypted_content: snippet,
-          page_age: null,
-        });
-      }
-
-      // Fallback: if no structured results, build a single block from text search
-      if (webSearchResultBlocks.length === 0) {
-        const fallbackText = await webSearch(query);
-        if (!fallbackText || fallbackText.startsWith('No results found')) {
+        // Fallback: if this query returned nothing, build a text-based fallback
+        if (webSearchResultBlocks.length === 0) {
           webSearchResultBlocks.push({
             type: 'web_search_result',
             url: '',
             title: 'No results found',
-            encrypted_content: fallbackText || 'No results found for query: "' + query + '"',
-            page_age: null,
-          });
-        } else {
-          webSearchResultBlocks.push({
-            type: 'web_search_result',
-            url: '',
-            title: 'Search results for: ' + query.slice(0, 100),
-            encrypted_content: fallbackText.slice(0, MAX_RESULT_BYTES),
+            encrypted_content: 'No results found for query: "' + queries[qi] + '"',
             page_age: null,
           });
         }
+
+        searchBlocks.push({
+          type: 'web_search_tool_result',
+          tool_use_id: toolUseId,
+          caller: { type: 'direct' },
+          content: webSearchResultBlocks,
+        });
       }
 
-      // Build the web_search_tool_result content block
-      const searchBlock: Record<string, unknown> = {
-        type: 'web_search_tool_result',
-        tool_use_id: toolUseId,
-        caller: { type: 'direct' },
-        content: webSearchResultBlocks,
-      };
-
       if (isStream) {
-        // Streaming: emit full content in content_block_start (no deltas needed
-        // for web_search_tool_result — Anthropic delivers these as complete blocks)
-        const sse =
+        // Streaming: emit one content_block_start/stop pair per query
+        let sse =
           'event: message_start\ndata: ' +
           JSON.stringify({
             type: 'message_start',
@@ -549,41 +569,56 @@ if (probeIdx >= 2) {
               usage: { input_tokens: 1, output_tokens: 0 },
             },
           }) +
-          '\n\nevent: content_block_start\ndata: ' +
-          JSON.stringify({
-            type: 'content_block_start',
-            index: 0,
-            content_block: searchBlock,
-          }) +
-          '\n\nevent: content_block_stop\ndata: ' +
-          JSON.stringify({ type: 'content_block_stop', index: 0 }) +
-          '\n\nevent: message_delta\ndata: ' +
+          '\n\n';
+
+        for (let i = 0; i < searchBlocks.length; i++) {
+          sse +=
+            'event: content_block_start\ndata: ' +
+            JSON.stringify({
+              type: 'content_block_start',
+              index: i,
+              content_block: searchBlocks[i],
+            }) +
+            '\n\nevent: content_block_stop\ndata: ' +
+            JSON.stringify({ type: 'content_block_stop', index: i }) +
+            '\n\n';
+        }
+
+        sse +=
+          'event: message_delta\ndata: ' +
           JSON.stringify({
             type: 'message_delta',
             delta: { stop_reason: 'end_turn', stop_sequence: null },
             usage: {
               input_tokens: 1,
               output_tokens: Math.ceil(totalBytes / 4) || 50,
-              server_tool_use: { web_search_requests: 1, web_fetch_requests: 0 },
+              server_tool_use: {
+                web_search_requests: searchBlocks.length,
+                web_fetch_requests: 0,
+              },
             },
           }) +
           '\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\n';
-        // Validate streaming pre-exec block before sending
-        {
-          const fakeBody: Record<string, unknown> = {
+
+        // Validate each search block before sending
+        for (const block of searchBlocks) {
+          const valErr = validatePreExecResponse({
             model: trustModel,
-            content: [searchBlock],
+            content: [block],
             usage: {
               input_tokens: 1,
               output_tokens: 50,
-              server_tool_use: { web_search_requests: 1, web_fetch_requests: 0 },
+              server_tool_use: {
+                web_search_requests: searchBlocks.length,
+                web_fetch_requests: 0,
+              },
             },
-          };
-          const valErr = validatePreExecResponse(fakeBody);
+          });
           if (valErr) {
             log.error(null, 'PREX_STREAM_VALIDATION: ' + valErr);
           }
         }
+
         response.writeHead(200, sseHeaders({}) as Record<string, string | number>);
         response.end(sse);
       } else {
@@ -592,13 +627,16 @@ if (probeIdx >= 2) {
           type: 'message' as const,
           role: 'assistant' as const,
           model: trustModel,
-          content: [searchBlock],
+          content: searchBlocks,
           stop_reason: 'end_turn' as const,
           stop_sequence: null,
           usage: {
             input_tokens: 1,
             output_tokens: Math.ceil(totalBytes / 4) || 50,
-            server_tool_use: { web_search_requests: 1, web_fetch_requests: 0 },
+            server_tool_use: {
+              web_search_requests: searchBlocks.length,
+              web_fetch_requests: 0,
+            },
           },
         };
         // Guard: validate before sending
@@ -612,10 +650,12 @@ if (probeIdx >= 2) {
 
       log.info(
         null,
-        'WEB_SEARCH_PREX: query="' +
-          query.slice(0, 80) +
-          '" results=' +
-          webSearchResultBlocks.length +
+        'WEB_SEARCH_PREX: queries=' +
+          queries.length +
+          ' successful=' +
+          successfulSearches +
+          ' blocks=' +
+          searchBlocks.length +
           (truncated ? ' TRUNCATED' : '') +
           ' stream=' +
           isStream,
