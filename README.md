@@ -162,10 +162,11 @@ npm test               # Run test suite
 
 ```
 <!-- AUTO:named-configs -->
-deepclaude                  # ds (default) — DeepSeek V4 Pro
+deepclaude                  # ds (default) — DeepSeek V4 Pro + free subs
 deepclaude -b bp              # BytePlus Doubao 1.5 Pro
 deepclaude -b ds+an           # DeepSeek + Anthropic Haiku
 deepclaude -b ds+oc           # DeepSeek + OpenCode subs
+deepclaude -b ds-full         # DeepSeek V4 Pro (all slots)
 deepclaude -b fw              # Fireworks AI
 deepclaude -b gr              # Groq (Llama 4 Maverick)
 deepclaude -b km              # Kimi K2.6
@@ -280,9 +281,12 @@ Providers can specify a `fallback` list — if the primary provider fails (500, 
 
 ```
 <!-- AUTO:fallback-list -->
+ds → fallback: oc, um                    # DeepSeek (direct) fails → oc/um
+oc → fallback: um                        # OpenCode Zen fails → um
 al → fallback: ds                        # Alibaba/DashScope fails → ds
 km → fallback: ds                        # Kimi/Moonshot fails → ds
 mm → fallback: oc                        # Xiaomi Mimo fails → oc
+um → fallback: or                        # Umans AI fails → or
 gr → fallback: ds                        # Groq fails → ds
 mt → fallback: ds                        # Mistral fails → ds
 mx → fallback: ds                        # MiniMax fails → ds
@@ -300,6 +304,7 @@ Fallbacks are configured per-provider and transparent to Claude Code. Max 3 atte
 
 ```
 <!-- AUTO:configs-reference -->
+ds-full opus=ds:deepseek-v4-pro  sonnet=ds:deepseek-v4-pro  haiku=ds:deepseek-v4-flash  sub=ds:deepseek-v4-flash  fable=ds:deepseek-v4-pro
 or      opus=or:deepseek/deepseek-v4-pro  sonnet=or:deepseek/deepseek-v4-pro  haiku=or:deepseek/deepseek-v4-flash  sub=or:deepseek/deepseek-v4-flash  fable=or:deepseek/deepseek-v4-pro
 fw      opus=fw:accounts/fireworks/models/deepseek-v4-pro  sonnet=fw:accounts/fireworks/models/deepseek-v4-pro  haiku=fw:accounts/fireworks/models/deepseek-v4-pro  sub=fw:accounts/fireworks/models/deepseek-v4-pro  fable=fw:accounts/fireworks/models/deepseek-v4-pro  (all slots same)
 oc      opus=oc:big-pickle  sonnet=oc:big-pickle  haiku=oc:big-pickle  sub=oc:big-pickle  fable=oc:big-pickle  (all slots same)
