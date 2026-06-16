@@ -950,10 +950,15 @@ describe('web search pre-execution', () => {
     const stu = usage.server_tool_use as Record<string, number>;
     expect(stu.web_search_requests).toBeGreaterThanOrEqual(1);
 
-    // Content must contain search results
+    // Content must contain web_search_tool_result block — CC counts
+    // these blocks to determine "Did N searches" display
     const content = body.content as Array<Record<string, unknown>>;
     expect(Array.isArray(content)).toBe(true);
     expect(content.length).toBeGreaterThan(0);
+    const searchBlock = content[0] as Record<string, unknown>;
+    expect(searchBlock.type).toBe('web_search_tool_result');
+    expect(typeof searchBlock.content).toBe('string');
+    expect(searchBlock.content!.toString().length).toBeGreaterThan(100);
   });
 
   test('returns streaming SSE response for stream:true', async () => {

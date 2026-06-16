@@ -47,6 +47,7 @@ import {
 import { buildHotSwapHeaders } from './hot-swap-headers';
 import { getConstraints, validateResponseConformance } from './protocol-types';
 import { getTrustedModel } from './model-trust';
+import { validatePreExecResponse } from './pre-exec-validate';
 import {
   isProviderHealthy,
   recordSpend,
@@ -418,6 +419,10 @@ if (probeIdx >= 2) {
   }
 
   /**
+   * Validate a pre-execution response body has the fields CC requires
+   * to display "Did N searches" correctly.
+   *
+  /**
    * Pre-execute a web search request — run DDG locally and return results
    * inline, bypassing the model entirely. Returns true if the request was
    * handled (response sent), false to fall through to normal routing.
@@ -428,6 +433,7 @@ if (probeIdx >= 2) {
    * - Query length limit (800 chars, prevents abuse)
    * - Concurrent fetch slotting (shared with webSearch's own limiter)
    * - Error fallthrough (returns false → normal model routing)
+   * - Response validation (validatePreExecResponse)
    */
   async function tryPreExecuteWebSearch(
     body: Record<string, unknown>,
@@ -504,7 +510,7 @@ if (probeIdx >= 2) {
           JSON.stringify({
             type: 'content_block_start',
             index: 0,
-            content_block: { type: 'text', text: '' },
+            content_block: { type: 'web_search_tool_result' },
           }) +
           '\n\nevent: content_block_delta\ndata: ' +
           JSON.stringify({
@@ -528,23 +534,27 @@ if (probeIdx >= 2) {
         response.writeHead(200, sseHeaders({}) as Record<string, string | number>);
         response.end(sse);
       } else {
+        const respBody = {
+          id: msgId,
+          type: 'message' as const,
+          role: 'assistant' as const,
+          model: trustModel,
+          content: [{ type: 'web_search_tool_result' as const, content: displayText }],
+          stop_reason: 'end_turn' as const,
+          stop_sequence: null,
+          usage: {
+            input_tokens: 1,
+            output_tokens: Math.ceil(Buffer.byteLength(displayText, 'utf-8') / 4),
+            server_tool_use: { web_search_requests: 1, web_fetch_requests: 0 },
+          },
+        };
+        // Guard: validate before sending
+        const valErr = validatePreExecResponse(respBody as unknown as Record<string, unknown>);
+        if (valErr) {
+          log.error(null, 'PREX_RESP_VALIDATION: ' + valErr);
+        }
         response.writeHead(200, { 'content-type': 'application/json' });
-        response.end(
-          JSON.stringify({
-            id: msgId,
-            type: 'message',
-            role: 'assistant',
-            model: trustModel,
-            content: [{ type: 'text', text: displayText }],
-            stop_reason: 'end_turn',
-            stop_sequence: null,
-            usage: {
-              input_tokens: 1,
-              output_tokens: Math.ceil(Buffer.byteLength(displayText, 'utf-8') / 4),
-              server_tool_use: { web_search_requests: 1, web_fetch_requests: 0 },
-            },
-          }),
-        );
+        response.end(JSON.stringify(respBody));
       }
 
       log.info(
