@@ -611,6 +611,22 @@ export function tryForward(
                         blockAccumulator.id = cb.id;
                         blockAccumulator.name = cb.name;
                         blockAccumulator.input = cb.input || {};
+                      } else if (cb.type === 'search_result') {
+                        blockAccumulator.source = cb.source;
+                        blockAccumulator.title = cb.title;
+                        blockAccumulator._contentBlocks = [];
+                      } else if (cb.type === 'compaction') {
+                        blockAccumulator.content = (cb.content as string) || '';
+                        blockAccumulator.encrypted_content = (cb.encrypted_content as string) || '';
+                      } else if (
+                        cb.type === 'fallback' ||
+                        cb.type === 'mid_conv_system' ||
+                        cb.type === 'web_search_tool_result' ||
+                        cb.type === 'web_fetch_tool_result'
+                      ) {
+                        // Pass-through block types (no accumulation needed for thinking cache).
+                        // fallback marks provider transitions. mid_conv_system carries system
+                        // instructions. web_*_tool_result blocks are response-only metadata.
                       } else {
                         // Unrecognized content block type — log so operators
                         // know when Anthropic adds a new block type.
@@ -628,6 +644,9 @@ export function tryForward(
                       if (delta.type === 'thinking_delta' && typeof delta.thinking === 'string') {
                         blockAccumulator.thinking =
                           ((blockAccumulator.thinking as string) || '') + delta.thinking;
+                        if (typeof delta.estimated_tokens === 'number') {
+                          blockAccumulator._estimatedTokens = delta.estimated_tokens;
+                        }
                       } else if (
                         delta.type === 'signature_delta' &&
                         typeof delta.signature === 'string'
@@ -642,6 +661,19 @@ export function tryForward(
                       ) {
                         blockAccumulator._partialInput =
                           (blockAccumulator._partialInput || '') + delta.partial_json;
+                      } else if (delta.type === 'compaction_delta') {
+                        if (typeof delta.content === 'string') {
+                          blockAccumulator.content =
+                            ((blockAccumulator.content as string) || '') + delta.content;
+                        }
+                        if (typeof delta.encrypted_content === 'string') {
+                          blockAccumulator.encrypted_content = delta.encrypted_content;
+                        }
+                      } else if (delta.type === 'citations_delta') {
+                        // Citations land as full objects (not incremental), so store them.
+                        (blockAccumulator._citations = blockAccumulator._citations || []).push(
+                          delta.citation,
+                        );
                       }
                     } else if (parsedPayload.type === 'content_block_stop') {
                       pushAccumulatedBlock();

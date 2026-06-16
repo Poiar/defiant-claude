@@ -77,7 +77,7 @@ import { createLogger } from './log';
 import { buildFriendlyResponse, buildFriendlyStreamEvents } from './friendly-error';
 import { describe as describeTransportError } from './transport-errors';
 import { createRateLimiter } from './rate-limiter';
-import { sanitizeHeaders } from './header-sanitizer';
+import { sanitizeHeaders, stripEffortBetaHeader } from './header-sanitizer';
 import { sessionKey, getMomentum, record as recordMomentum } from './momentum';
 import { validateUrl } from './ssrf';
 import { finalizeMetrics } from './stream-metrics';
@@ -1314,20 +1314,11 @@ if (probeIdx >= 2) {
           //   1. Haiku models on Anthropic — returns 400 "model does not support effort"
           //   2. Non-Anthropic providers (DeepSeek, Fireworks, etc.) — don't
           //      implement Anthropic beta headers at all, returns 400
-          const rewriteModel = target.rewriteModel || model || '';
-          const isNative = getConstraints(target.providerKey).nativeServerTools;
-          if (rewriteModel.includes('haiku') || !isNative) {
-            const beta = options.headers['anthropic-beta'];
-            if (typeof beta === 'string') {
-              options.headers['anthropic-beta'] = beta
-                .split(',')
-                .map((s) => s.trim())
-                .filter((s) => s !== 'effort-2025-11-24')
-                .join(',');
-            } else if (Array.isArray(beta)) {
-              options.headers['anthropic-beta'] = beta.filter((s) => s !== 'effort-2025-11-24');
-            }
-          }
+          stripEffortBetaHeader(
+            options.headers,
+            target.rewriteModel || model || '',
+            getConstraints(target.providerKey).nativeServerTools,
+          );
 
           if (!target.key) {
             // No API key configured — skip auth headers (e.g. Ollama local)
