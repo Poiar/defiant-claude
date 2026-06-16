@@ -362,10 +362,13 @@ export function translateResponse(
   const usageAny = usage as ExtendedOpenAIUsage;
   const hasCache = typeof usageAny.prompt_cache_hit_tokens === 'number';
 
+  // Use getTrustedModel so CC trusts server_tool_use even when the
+  // slot-override maps to a non-claude model (e.g. haiku:deepseek-v4-flash).
+  const trustedModel = getTrustedModel(model) || model;
   return {
     id: openaiBody.id || `msg_${crypto.randomUUID()}`,
     type: 'message',
-    model,
+    model: trustedModel,
     role: 'assistant',
     content,
     stop_reason: mapFinishReason(finishReason),
@@ -1036,7 +1039,7 @@ export function translateRequestToGemini(anthropicBody: AnthropicRequestBody): {
  * Gemini streams accumulate content in each event — the transform diffs against
  * the previous state to produce clean Anthropic deltas.
  */
-export function createGeminiToAnthropicStream(): Transform {
+export function createGeminiToAnthropicStream(trustedModel?: string | null): Transform {
   let started = false;
   let finished = false;
   let blockIndex = 0;
@@ -1044,8 +1047,12 @@ export function createGeminiToAnthropicStream(): Transform {
   let prevText = '';
   let toolCallName = '';
   let toolCallId = '';
+  let wsCount = 0; // web_search requests
+  let wfCount = 0; // web_fetch requests
   let usage = { input_tokens: 0, output_tokens: 0 };
   const messageId = `msg_${crypto.randomUUID()}`;
+  // Map to a claude-* model so CC trusts server_tool_use
+  const ccModel = trustedModel || 'claude-haiku-4-5-20251001';
 
   function emit(eventType: string, data: Record<string, unknown>): string {
     return `event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -1096,7 +1103,7 @@ export function createGeminiToAnthropicStream(): Transform {
           type: 'message',
           role: 'assistant',
           content: [],
-          model: null,
+          model: ccModel,
           stop_reason: null,
           stop_sequence: null,
           usage: { input_tokens: 0, output_tokens: 0 },
@@ -1107,11 +1114,22 @@ export function createGeminiToAnthropicStream(): Transform {
 
   function finishStream(stopReason: string, output: string[]): void {
     closeBlock(output);
+    const injectedUsage: Record<string, unknown> = {
+      input_tokens: usage.input_tokens,
+      output_tokens: usage.output_tokens,
+    };
+    // Inject server_tool_use so CC shows "Did N searches"
+    if (wsCount > 0 || wfCount > 0) {
+      injectedUsage.server_tool_use = {
+        web_search_requests: wsCount,
+        web_fetch_requests: wfCount,
+      };
+    }
     output.push(
       emit('message_delta', {
         type: 'message_delta',
         delta: { stop_reason: stopReason, stop_sequence: null },
-        usage: { input_tokens: usage.input_tokens, output_tokens: usage.output_tokens },
+        usage: injectedUsage,
       }),
     );
     output.push(emit('message_stop', { type: 'message_stop' }));
@@ -1173,18 +1191,64 @@ export function createGeminiToAnthropicStream(): Transform {
           const candidate = event.candidates[0];
           const content = candidate.content;
 
-          // Handle finish reason
+          // Process content parts FIRST — need to count web_search/web_fetch
+          // tool calls for server_tool_use before finishStream fires.
+          // Gemini sends both finishReason and content.parts in the same SSE
+          // event when a tool call completes the response.
+          if (content && Array.isArray(content.parts)) {
+            for (const part of content.parts) {
+              if (part.text !== undefined) {
+                if (!started) startStream(output);
+
+                // Gemini streams the FULL accumulated text each event, not deltas.
+                // Diff against prevText to produce clean deltas.
+                const fullText = part.text;
+                const delta = fullText.slice(prevText.length);
+                prevText = fullText;
+
+                if (delta.length > 0) {
+                  if (currentBlockType !== 'text') {
+                    closeBlock(output);
+                    openBlock('text', { type: 'text', text: '' }, output);
+                  }
+                  appendDelta('text_delta', { text: delta }, output);
+                }
+              } else if (part.functionCall) {
+                if (!started) startStream(output);
+                closeBlock(output);
+
+                toolCallName = part.functionCall.name;
+                toolCallId = `toolu_${crypto.randomUUID().replace(/-/g, '').slice(0, 24)}`;
+                // Count web tool calls for server_tool_use injection
+                if (toolCallName === 'web_search') wsCount++;
+                else if (toolCallName === 'web_fetch') wfCount++;
+
+                openBlock(
+                  'tool_use',
+                  {
+                    type: 'tool_use',
+                    id: toolCallId,
+                    name: toolCallName,
+                    input: {},
+                  },
+                  output,
+                );
+                // Gemini sends the complete functionCall at once — emit full JSON
+                const argsJson = JSON.stringify(part.functionCall.args || {});
+                appendDelta('input_json_delta', { partial_json: argsJson }, output);
+                closeBlock(output);
+                prevText = '';
+              }
+            }
+          }
+
+          // Handle finish reason AFTER parts processing — web tool
+          // counts (wsCount/wfCount) must be incremented before
+          // finishStream emits message_delta with server_tool_use.
           if (candidate.finishReason && !finished) {
             if (!started) startStream(output);
             const stopReason = mapGeminiStopReason(candidate.finishReason);
             finishStream(stopReason, output);
-            if (event.usageMetadata) {
-              usage = {
-                input_tokens: event.usageMetadata.promptTokenCount || 0,
-                output_tokens: event.usageMetadata.candidatesTokenCount || 0,
-              };
-            }
-            continue;
           }
 
           if (event.usageMetadata) {
@@ -1192,50 +1256,6 @@ export function createGeminiToAnthropicStream(): Transform {
               input_tokens: event.usageMetadata.promptTokenCount || 0,
               output_tokens: event.usageMetadata.candidatesTokenCount || 0,
             };
-          }
-
-          if (!content || !Array.isArray(content.parts)) continue;
-
-          for (const part of content.parts) {
-            if (part.text !== undefined) {
-              if (!started) startStream(output);
-
-              // Gemini streams the FULL accumulated text each event, not deltas.
-              // Diff against prevText to produce clean deltas.
-              const fullText = part.text;
-              const delta = fullText.slice(prevText.length);
-              prevText = fullText;
-
-              if (delta.length > 0) {
-                if (currentBlockType !== 'text') {
-                  closeBlock(output);
-                  openBlock('text', { type: 'text', text: '' }, output);
-                }
-                appendDelta('text_delta', { text: delta }, output);
-              }
-            } else if (part.functionCall) {
-              if (!started) startStream(output);
-              closeBlock(output);
-
-              toolCallName = part.functionCall.name;
-              toolCallId = `toolu_${crypto.randomUUID().replace(/-/g, '').slice(0, 24)}`;
-
-              openBlock(
-                'tool_use',
-                {
-                  type: 'tool_use',
-                  id: toolCallId,
-                  name: toolCallName,
-                  input: {},
-                },
-                output,
-              );
-              // Gemini sends the complete functionCall at once — emit full JSON
-              const argsJson = JSON.stringify(part.functionCall.args || {});
-              appendDelta('input_json_delta', { partial_json: argsJson }, output);
-              closeBlock(output);
-              prevText = '';
-            }
           }
         } catch (_e) {
           // Skip malformed events

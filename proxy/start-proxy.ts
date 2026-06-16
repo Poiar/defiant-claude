@@ -1257,7 +1257,9 @@ if (probeIdx >= 2) {
               forwardedBody = Buffer.from(JSON.stringify(geminiBody));
               geminiModelName = gmModel;
               if (reqParsed.stream) {
-                streamTransformer = createGeminiToAnthropicStream();
+                streamTransformer = createGeminiToAnthropicStream(
+                  getTrustedModel(reqParsed.model || model || null),
+                );
               }
             } catch (e) {
               log.error(
