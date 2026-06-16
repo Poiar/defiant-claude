@@ -51,6 +51,19 @@ jest.mock('../ssrf', () => ({
   validateUrl: (...args: any[]) => mockValidateUrl(...args),
 }));
 
+// Fetch mock — used by Brave search. Returns a Response-like object.
+const mockFetch = jest.fn();
+global.fetch = mockFetch;
+
+function makeMockFetchResponse(json: unknown, status = 200): Partial<Response> {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    text: jest.fn().mockResolvedValue(JSON.stringify(json)),
+    json: jest.fn().mockResolvedValue(json),
+  };
+}
+
 // --- Shared test data ---
 
 // Old format: DDG used uddg= redirect wrapper URLs
@@ -1252,6 +1265,12 @@ describe('webSearch', () => {
     _resetFetchSlots();
     mockHttpsRequest.mockReset();
     mockHttpsGet.mockReset();
+    mockFetch.mockReset();
+    process.env.DEEPCLAUDE_SEARCH_ENGINES = 'ddg';
+  });
+
+  afterEach(() => {
+    delete process.env.DEEPCLAUDE_SEARCH_ENGINES;
   });
 
   test('returns formatted results from DDG Lite POST (Tier 1)', async () => {
@@ -1339,6 +1358,12 @@ describe('webSearchStructured', () => {
     _resetFetchSlots();
     mockHttpsRequest.mockReset();
     mockHttpsGet.mockReset();
+    mockFetch.mockReset();
+    process.env.DEEPCLAUDE_SEARCH_ENGINES = 'ddg';
+  });
+
+  afterEach(() => {
+    delete process.env.DEEPCLAUDE_SEARCH_ENGINES;
   });
 
   test('returns SearchResult[] from DDG Lite POST (Tier 1)', async () => {
@@ -1430,6 +1455,7 @@ describe('search engine backends', () => {
     _resetFetchSlots();
     mockHttpsRequest.mockReset();
     mockHttpsGet.mockReset();
+    mockFetch.mockReset();
   });
 
   afterEach(() => {
@@ -1520,29 +1546,16 @@ describe('search engine backends', () => {
     process.env.DEEPCLAUDE_BRAVE_API_KEY = 'test-key-123';
     process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
 
-    mockHttpsGet.mockImplementation((_url: string, _opts: any, cb: any) => {
-      const res = makeMockResponse({ contentType: 'application/json' });
-      setTimeout(() => {
-        cb(res);
-        fireDataEnd(
-          res,
-          JSON.stringify({
-            web: {
-              results: [
-                {
-                  url: 'https://brave-result.com',
-                  title: 'Brave Result',
-                  description: 'From Brave',
-                },
-                { url: 'https://brave2.com', title: 'Brave 2', description: 'Second' },
-              ],
-            },
-          }),
-        );
-      }, 0);
-      const req = { on: jest.fn().mockReturnThis(), destroy: jest.fn() };
-      return req as any;
-    });
+    mockFetch.mockResolvedValue(
+      makeMockFetchResponse({
+        web: {
+          results: [
+            { url: 'https://brave-result.com', title: 'Brave Result', description: 'From Brave' },
+            { url: 'https://brave2.com', title: 'Brave 2', description: 'Second' },
+          ],
+        },
+      }),
+    );
 
     const results = await webSearchStructured('test brave');
     expect(results.length).toBe(2);
@@ -1555,6 +1568,8 @@ describe('search engine backends', () => {
     process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
     const results = await webSearchStructured('test no key');
     expect(results.length).toBe(0);
+    // fetch should not have been called (key check comes first)
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 
   test('Brave: returns empty on malformed JSON', async () => {
@@ -1562,15 +1577,7 @@ describe('search engine backends', () => {
     process.env.DEEPCLAUDE_BRAVE_API_KEY = 'test-key';
     process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
 
-    mockHttpsGet.mockImplementation((_url: string, _opts: any, cb: any) => {
-      const res = makeMockResponse({ contentType: 'application/json' });
-      setTimeout(() => {
-        cb(res);
-        fireDataEnd(res, 'garbage {{{');
-      }, 0);
-      const req = { on: jest.fn().mockReturnThis(), destroy: jest.fn() };
-      return req as any;
-    });
+    mockFetch.mockRejectedValue(new Error('network error'));
 
     const results = await webSearchStructured('test brave error');
     expect(results.length).toBe(0);
@@ -1583,33 +1590,28 @@ describe('search engine backends', () => {
 
     setupMockRequestHtml(SAMPLE_HTML);
 
-    // SearXNG
+    // SearXNG uses mockHttpsGet
     mockHttpsGet.mockImplementation((_url: string, _opts: any, cb: any) => {
       const res = makeMockResponse({ contentType: 'application/json' });
       setTimeout(() => {
         cb(res);
-        const isBrave = _url.includes('brave.com');
-        if (isBrave) {
-          fireDataEnd(
-            res,
-            JSON.stringify({
-              web: {
-                results: [{ url: 'https://brave-x.com', title: 'Brave X', description: 'b' }],
-              },
-            }),
-          );
-        } else {
-          fireDataEnd(
-            res,
-            JSON.stringify({
-              results: [{ url: 'https://searx-x.com', title: 'SearX X', content: 'sx' }],
-            }),
-          );
-        }
+        fireDataEnd(
+          res,
+          JSON.stringify({
+            results: [{ url: 'https://searx-x.com', title: 'SearX X', content: 'sx' }],
+          }),
+        );
       }, 0);
       const req = { on: jest.fn().mockReturnThis(), destroy: jest.fn() };
       return req as any;
     });
+
+    // Brave uses mockFetch
+    mockFetch.mockResolvedValue(
+      makeMockFetchResponse({
+        web: { results: [{ url: 'https://brave-x.com', title: 'Brave X', description: 'b' }] },
+      }),
+    );
 
     const results = await webSearchStructured('test all');
     expect(results.length).toBe(4); // 2 DDG + 1 SearXNG + 1 Brave
@@ -1923,6 +1925,12 @@ describe('populateToolResults', () => {
     _resetDdgCookies();
     mockHttpsRequest.mockReset();
     mockHttpsGet.mockReset();
+    mockFetch.mockReset();
+    process.env.DEEPCLAUDE_SEARCH_ENGINES = 'ddg';
+  });
+
+  afterEach(() => {
+    delete process.env.DEEPCLAUDE_SEARCH_ENGINES;
   });
 
   test('populates empty web_search tool_result', async () => {
