@@ -8,6 +8,7 @@ import zlib from 'zlib';
 import { pipeline, Transform } from 'stream';
 import { buildSafeHeaders } from './util';
 import { translateResponse } from './protocol-translate';
+import { validateStreamEventConformance, validateResponseConformance } from './protocol-types';
 import { extractThinkingBlocks, store } from './thinking-cache';
 import type { Message as ThinkingMessage, MessageBlock } from './thinking-cache';
 import { extractReasoningContent, store as storeReasoning } from './reasoning-cache';
@@ -590,7 +591,14 @@ export function tryForward(
                   try {
                     parsedPayload = JSON.parse(payload) as Record<string, unknown>;
                   } catch {
-                    continue; // non-JSON payload — skip block reconstruction
+                    continue;
+                  }
+                  // Runtime protocol conformance: detect new Anthropic SSE types
+                  if (typeof parsedPayload.type === 'string') {
+                    const conf = validateStreamEventConformance(parsedPayload.type, parsedPayload);
+                    if (!conf.valid) {
+                      log.warn(reqId, 'STREAM_PROTOCOL_GAP: ' + JSON.stringify(conf));
+                    }
                   }
                   // Accumulate content blocks from SSE content_block_* events for
                   // thinking-block extraction at stream end.
@@ -813,6 +821,14 @@ export function tryForward(
               } else {
                 const resp = parsedResponse;
                 let respModified = false;
+
+                // Runtime non-streaming conformance: detect new response fields
+                {
+                  const conf = validateResponseConformance(resp);
+                  if (!conf.valid) {
+                    log.warn(reqId, 'RESPONSE_PROTOCOL_GAP: ' + JSON.stringify(conf));
+                  }
+                }
 
                 // Extract and cache thinking blocks
                 if (resp.content && Array.isArray(resp.content)) {

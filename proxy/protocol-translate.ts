@@ -25,7 +25,11 @@ import type {
   GeminiResponseBody,
   GeminiSSEEvent,
 } from './protocol-types';
-import { mapFinishReason, translateToolChoice } from './protocol-types';
+import {
+  mapFinishReason,
+  translateToolChoice,
+  validateStreamEventConformance,
+} from './protocol-types';
 
 const log = createLogger('protocol-translate');
 
@@ -736,6 +740,11 @@ export function createAnthropicStreamInterceptor(originalModel?: string | null):
         if (cbMatch) {
           try {
             const d = JSON.parse(cbMatch[1]);
+            // Stream conformance: detect new content block types
+            if (d.type === 'content_block_start') {
+              const sc = validateStreamEventConformance('content_block_start', d);
+              if (!sc.valid) log.warn(null, 'STREAM_PROTOCOL_GAP: ' + JSON.stringify(sc));
+            }
             const cb = d.content_block;
             if (cb) {
               if (cb.name === 'web_search') wsCount++;
