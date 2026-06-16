@@ -164,6 +164,8 @@ export interface AnthropicUsage {
   cache_read_input_tokens?: number;
   /** Anthropic-only: cache creation token count. */
   cache_creation_input_tokens?: number;
+  /** Service tier that processed the request (auto, standard, scaled). */
+  service_tier?: 'auto' | 'standard' | 'scaled' | string;
   /** CC reads this to show "Did N searches" in the UI. Must be injected for non-Anthropic providers. */
   server_tool_use?: {
     web_search_requests: number;
