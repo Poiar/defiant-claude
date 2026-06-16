@@ -690,7 +690,14 @@ export function recordStreamMetrics(providerKey: string, metrics: StreamMetrics)
 
 // --- Spend tracking ---
 
-let spendFile = path.join(os.homedir(), '.deepclaude', 'spend.json');
+// Respect DEEPCLAUDE_DIR / DEEPCLAUDE_CONFIG_DIR so the proxy and statusline
+// agree on the config directory. Mutable for testing (setSpendFilePath).
+let ccSessionDir =
+  process.env.DEEPCLAUDE_CONFIG_DIR ||
+  process.env.DEEPCLAUDE_DIR ||
+  path.join(os.homedir(), '.deepclaude');
+
+let spendFile = path.join(ccSessionDir, 'spend.json');
 const spendJournalFile = spendFile + '.journal';
 let lastSpendWrite = 0;
 let spendWriteLock = false;
@@ -699,14 +706,12 @@ const SPEND_WRITE_THROTTLE_MS = 1000;
 // --- Per-CC-session spend tracking ---
 // Each CC window heartbeats its session ID to cc-active.json.
 // The proxy attributes accumulated spend to the active session on every flush.
-const ccActiveFile = path.join(os.homedir(), '.deepclaude', 'cc-active.json');
-const ccSpendDir = path.join(os.homedir(), '.deepclaude');
 let ccPendingSpend = 0;
 const CC_SESSION_TTL_MS = 120_000; // 2 min — don't attribute to stale windows
 let ccSessionInitialized: string | null = null; // tracks which session's file was last reset
 
 function ccSpendFilePath(sessionId: string): string {
-  return path.join(ccSpendDir, `cc-spend-${sessionId}.json`);
+  return path.join(ccSessionDir, `cc-spend-${sessionId}.json`);
 }
 
 let runningTotal = 0;
@@ -766,17 +771,16 @@ function repairDailySpend(): void {
     const data = JSON.parse(raw);
     const daily = (data.daily as Record<string, unknown>) || {};
     const today = todayISO();
-    const ccSpendDir = path.join(os.homedir(), '.deepclaude');
 
     // Sum cc-spend files created/modified today
     let ccSum = 0;
-    if (fs.existsSync(ccSpendDir)) {
-      for (const f of fs.readdirSync(ccSpendDir)) {
+    if (fs.existsSync(ccSessionDir)) {
+      for (const f of fs.readdirSync(ccSessionDir)) {
         if (!f.startsWith('cc-spend-') || !f.endsWith('.json')) continue;
         try {
-          const stat = fs.statSync(path.join(ccSpendDir, f));
+          const stat = fs.statSync(path.join(ccSessionDir, f));
           if (stat.mtime.toISOString().slice(0, 10) !== today) continue;
-          ccSum += parseFloat(fs.readFileSync(path.join(ccSpendDir, f), 'utf-8').trim()) || 0;
+          ccSum += parseFloat(fs.readFileSync(path.join(ccSessionDir, f), 'utf-8').trim()) || 0;
         } catch (_) {}
       }
     }
@@ -821,14 +825,13 @@ const sessionStarted = new Date().toISOString();
 // and clean up cc-spend files older than 3 days (already accounted for).
 function cleanupStaleSpendFiles(): void {
   try {
-    const ccSpendDir = path.join(os.homedir(), '.deepclaude');
-    if (!fs.existsSync(ccSpendDir)) return;
+    if (!fs.existsSync(ccSessionDir)) return;
     const cutoffMs = Date.now() - 3 * 86400_000;
     let cleaned = 0;
-    for (const f of fs.readdirSync(ccSpendDir)) {
+    for (const f of fs.readdirSync(ccSessionDir)) {
       if (!f.startsWith('cc-spend-') || !f.endsWith('.json')) continue;
       try {
-        const filePath = path.join(ccSpendDir, f);
+        const filePath = path.join(ccSessionDir, f);
         if (fs.statSync(filePath).mtimeMs < cutoffMs) {
           fs.unlinkSync(filePath);
           cleaned++;
@@ -918,6 +921,7 @@ export function recordProviderSpend(providerKey: string, amount: number, modelNa
 // Read the currently active CC session ID from the heartbeat file.
 // Sessions are considered active for CC_SESSION_TTL_MS after their last heartbeat.
 function readActiveCcSession(): string | null {
+  const ccActiveFile = path.join(ccSessionDir, 'cc-active.json');
   try {
     if (fs.existsSync(ccActiveFile)) {
       const raw = fs.readFileSync(ccActiveFile, 'utf-8');
@@ -937,16 +941,46 @@ function readActiveCcSession(): string | null {
   return null;
 }
 
+// Bootstrap cc-active.json from env var when the statusline hasn't written it
+// yet (e.g. before the first statusline render). Ensures writeCcSpend() can
+// attribute spend from the very first request instead of silently losing it.
+function bootstrapCcActiveFromEnv(): void {
+  const ccActiveFile = path.join(ccSessionDir, 'cc-active.json');
+  try {
+    if (fs.existsSync(ccActiveFile)) return;
+    const sessId = process.env.CLAUDE_CODE_SESSION_ID;
+    if (sessId && sessId.length > 0) {
+      const tmpFile = ccActiveFile + '.tmp';
+      const data = JSON.stringify({ sessionId: sessId, timestamp: Date.now() });
+      fs.writeFileSync(tmpFile, data);
+      fs.renameSync(tmpFile, ccActiveFile);
+    }
+  } catch (_) {
+    /* non-fatal — statusline will write it later */
+  }
+}
+
 // Flush pending spend to the active CC session's spend file.
 // One file per session: cc-spend-<sessionId>.json contains a single number.
 // Called alongside the main spend.json write in the throttled flush path.
 function writeCcSpend(): void {
+  if (ccPendingSpend <= 0) return;
+
   try {
-    const activeId = readActiveCcSession();
-    if (!activeId || ccPendingSpend <= 0) {
-      ccPendingSpend = 0;
-      return;
+    let activeId = readActiveCcSession();
+
+    // If no active session is registered yet (statusline hasn't run), try
+    // bootstrapping from the CLAUDE_CODE_SESSION_ID env var so we don't
+    // silently lose the first request's spend.
+    if (!activeId) {
+      bootstrapCcActiveFromEnv();
+      activeId = readActiveCcSession();
     }
+
+    // Still no active session — keep the pending spend for the next flush.
+    // Never reset ccPendingSpend here; that would silently lose money.
+    if (!activeId) return;
+
     const amt = parseFloat(ccPendingSpend.toFixed(6));
     ccPendingSpend = 0;
 
@@ -1290,13 +1324,12 @@ export function getSpendHistory(): Array<{ date: string; total: number; sessions
 export function getModelBreakdown(): Array<{ model: string; tokens: number; cost: number }> {
   const map = new Map<string, { tokens: number; cost: number }>();
   try {
-    const ccSpendDir = path.join(os.homedir(), '.deepclaude');
-    if (!fs.existsSync(ccSpendDir)) return [];
-    const files = fs.readdirSync(ccSpendDir);
+    if (!fs.existsSync(ccSessionDir)) return [];
+    const files = fs.readdirSync(ccSessionDir);
     for (const f of files) {
       if (!f.startsWith('cc-spend-') || !f.endsWith('.json')) continue;
       try {
-        const raw = fs.readFileSync(path.join(ccSpendDir, f), 'utf-8');
+        const raw = fs.readFileSync(path.join(ccSessionDir, f), 'utf-8');
         const data = JSON.parse(raw);
         if (data.byModel && typeof data.byModel === 'object') {
           for (const [model, entry] of Object.entries(
@@ -1320,9 +1353,10 @@ export function getModelBreakdown(): Array<{ model: string; tokens: number; cost
     .sort((a, b) => b.cost - a.cost);
 }
 
-// Testing support
+// Testing support — redirects all spend/cc-active/cc-spend paths to a tmp dir.
 export function setSpendFilePath(p: string): void {
   spendFile = p;
+  ccSessionDir = path.dirname(p);
 }
 
 // Get the monthly budget for a provider.
