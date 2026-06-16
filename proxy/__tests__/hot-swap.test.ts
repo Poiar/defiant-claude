@@ -247,8 +247,10 @@ describe('Hot-swap mechanism', () => {
         await portPromise;
         await new Promise((r) => setTimeout(r, 500));
 
-        // Signal file should be deleted because this proxy IS the replacement
-        expect(fs.existsSync(NEXT_PORT_FILE)).toBe(false);
+        // Signal file is left for the old proxy to pick up and delete.
+        // The new proxy no longer deletes it — the old proxy deletes it
+        // after entering forwarding mode.
+        expect(fs.existsSync(NEXT_PORT_FILE)).toBe(true);
       } finally {
         killProxy(proxyProc);
       }

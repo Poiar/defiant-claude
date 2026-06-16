@@ -2025,10 +2025,11 @@ if (probeIdx >= 2) {
           if (fs.existsSync(nextPortFile)) {
             const nextPort = parseInt(fs.readFileSync(nextPortFile, 'utf-8').trim(), 10);
             if (nextPort === port) {
-              fs.unlinkSync(nextPortFile);
               log.info(
                 null,
-                'Hot-swap: running as replacement on port ' + port + ' — signal file removed',
+                'Hot-swap: running as replacement on port ' +
+                  port +
+                  ' (signal file left for old proxy)',
               );
             }
           }
@@ -2062,6 +2063,11 @@ if (probeIdx >= 2) {
                       null,
                       'Hot-swap: superseded by port ' + targetPort + ' — entering forwarding mode',
                     );
+
+                    // Clean up signal file now that we've acknowledged it
+                    try {
+                      if (fs.existsSync(nextPortFile)) fs.unlinkSync(nextPortFile);
+                    } catch (_) {}
 
                     // Forward all requests to the new proxy
                     server.removeAllListeners('request');
