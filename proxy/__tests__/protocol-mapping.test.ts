@@ -617,8 +617,8 @@ describe('Scenario 5: DeepSeek forwarded body matches Haiku structure', () => {
     // --- Assertions: DeepSeek body = Haiku body ---
     // Neither path has thinking in body
     expect(body.thinking).toBeUndefined();
-    // Both paths keep tool_choice to force model to invoke the tool
-    expect((body as any).tool_choice).toBeDefined();
+    // tool_choice stripped — DeepSeek invokes tool from system prompt
+    expect((body as any).tool_choice).toBeUndefined();
     // Both have tools
     expect(body.tools).toBeDefined();
     // Both have messages

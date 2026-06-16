@@ -66,7 +66,7 @@ describe('applyThinkingConfig', () => {
 
     expect(modified).toBe(true);
     expect(body.thinking).toBeUndefined();
-    expect(body.tool_choice).toBeDefined(); // Kept — beta strip handles the rest
+    expect(body.tool_choice).toBeUndefined();
   });
 
   test('DeepSeek forwarded body matches Haiku structure for web search', () => {
@@ -88,7 +88,7 @@ describe('applyThinkingConfig', () => {
     expect(modified).toBe(true);
     // thinking stripped from body, tool_choice preserved for web tools
     expect(body.thinking).toBeUndefined();
-    expect(body.tool_choice).toBeDefined();
+    expect(body.tool_choice).toBeUndefined();
     // Non-thinking fields preserved
     expect(body.messages).toBeDefined();
     expect(body.tools).toBeDefined();
@@ -103,8 +103,8 @@ describe('applyThinkingConfig', () => {
     };
     const modified = applyThinkingConfig(body, true, ds, thinkingCfg);
 
-    expect(modified).toBe(false); // No thinking, no tool_choice to strip
-    expect(body.tool_choice).toBeDefined(); // Kept to force tool invocation
+    expect(modified).toBe(true); // tool_choice stripped for non-native web tools
+    expect(body.tool_choice).toBeUndefined(); // Stripped for non-native
   });
 
   test('web tools present, thinkingCfg is null: still strips thinking', () => {
@@ -119,7 +119,7 @@ describe('applyThinkingConfig', () => {
 
     expect(modified).toBe(true);
     expect(body.thinking).toBeUndefined();
-    expect(body.tool_choice).toBeDefined(); // Kept to force tool invocation
+    expect(body.tool_choice).toBeUndefined(); // Stripped for non-native
   });
 
   // --- Rule 2: No web tools → strip tool_choice ---
@@ -199,7 +199,7 @@ describe('applyThinkingConfig', () => {
     const modified = applyThinkingConfig(body, false, an, null, 'claude-opus-4-7');
 
     expect(modified).toBe(false);
-    expect(body.tool_choice).toBeDefined();
+    expect(body.tool_choice).toBeDefined(); // an.forbidsToolChoiceWithThinking=false
     expect(body.thinking).toBeUndefined();
   });
 
@@ -230,7 +230,7 @@ describe('applyThinkingConfig', () => {
 
     expect(modified).toBe(true);
     expect(body.thinking).toBeUndefined();
-    expect(body.tool_choice).toBeDefined();
+    expect(body.tool_choice).toBeDefined(); // an.forbidsToolChoiceWithThinking=false
   });
 
   test('Non-haiku on Anthropic: thinking passes through untouched', () => {
@@ -256,7 +256,7 @@ describe('applyThinkingConfig', () => {
     // an.forbidsToolChoiceWithThinking is false, so no stripping
     expect(modified).toBe(false);
     expect(body.thinking).toBeDefined();
-    expect(body.tool_choice).toBeDefined();
+    expect(body.tool_choice).toBeDefined(); // an.forbidsToolChoiceWithThinking=false
   });
 
   // --- Edge cases ---
@@ -279,6 +279,6 @@ describe('applyThinkingConfig', () => {
     applyThinkingConfig(body, true, ds, thinkingCfg);
 
     expect(body.thinking).toBeUndefined();
-    expect(body.tool_choice).toBeDefined(); // Web tools keep tool_choice
+    expect(body.tool_choice).toBeUndefined();
   });
 });

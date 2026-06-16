@@ -53,16 +53,20 @@ export function applyThinkingConfig(
 ): boolean {
   let modified = false;
 
-  // Rule 1: Web tools present → strip thinking, preserve tool_choice.
-  // DeepSeek rejects tool_choice when thinking-mode beta values are in
-  // anthopic-beta header — stripEffortBetaHeader handles that by deleting
-  // ALL beta values for non-native providers.
+  // Rule 1: Web tools present → strip thinking AND tool_choice for
+  // providers that reject the combination (DeepSeek). DeepSeek's /anthropic
+  // endpoint rejects tool_choice when any thinking-related feature is
+  // detected. stripEffortBetaHeader handles beta values — we strip both
+  // from the body so DeepSeek invokes the tool from system prompt alone.
   if (hasWebTools && constraints.forbidsToolChoiceWithThinking) {
     if (body.thinking) {
       delete body.thinking;
       modified = true;
     }
-    // tool_choice is preserved — model needs it to force tool invocation.
+    if (body.tool_choice !== undefined) {
+      delete body.tool_choice;
+      modified = true;
+    }
   }
   // Rule 2: No web tools, but provider forbids the combo → strip tool_choice
   else if (constraints.forbidsToolChoiceWithThinking && body.tool_choice !== undefined) {
