@@ -6,7 +6,17 @@
 // (status, stats, doctor, models, cost, etc.), proxy launch, and CC launch.
 
 import { spawn, spawnSync, execSync } from 'child_process';
-import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, chmodSync } from 'fs';
+import {
+  existsSync,
+  readFileSync,
+  writeFileSync,
+  mkdirSync,
+  rmSync,
+  chmodSync,
+  readdirSync,
+  statSync,
+  unlinkSync,
+} from 'fs';
 import { join, dirname, resolve } from 'path';
 import { homedir, platform } from 'os';
 import { fileURLToPath } from 'url';
@@ -239,6 +249,7 @@ function parseArgs(argv) {
       '--no-thinking',
       '--install-statusline',
       '--remote',
+      '--cleanup',
       '-r',
     ];
     if (boolFlags.includes(a)) {
@@ -277,6 +288,16 @@ function parseArgs(argv) {
     if (a === '--max-spend') {
       flags.maxSpend = parseFloat(argv[i + 1]) || 0;
       i += 2;
+      continue;
+    }
+    if (a === '--cleanup-days') {
+      flags.cleanupDays = parseInt(argv[i + 1], 10) || 7;
+      i += 2;
+      continue;
+    }
+    if (a.startsWith('--cleanup-days=')) {
+      flags.cleanupDays = parseInt(a.split('=')[1], 10) || 7;
+      i++;
       continue;
     }
     if (a === '--persist' || a === '--switch' || a === '--stop-proxy') {
@@ -399,6 +420,104 @@ async function cmdHealth() {
       .join(', ');
     console.log(`  down: ${open}`);
   }
+}
+
+function cmdCleanup(flags) {
+  const days = flags.cleanupDays || 7;
+  const cutoffMs = Date.now() - days * 86400_000;
+  const todayISO = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`;
+
+  console.log(`\n  deepclaude - Spend Cleanup (>${days} days old)`);
+  console.log(`  ${'='.repeat(45)}\n`);
+
+  // ── Per-model spend summary (from spend.json) ─────────────────
+  const spendFile = join(DEEPCLAUDE_DIR, 'spend.json');
+  if (existsSync(spendFile)) {
+    try {
+      const spend = JSON.parse(readFileSync(spendFile, 'utf-8'));
+      const daily = spend.daily || {};
+
+      // Aggregate per-provider spend from all daily entries
+      const byProvider = {};
+      let grandTotal = 0;
+      for (const [date, entry] of Object.entries(daily)) {
+        const e = entry || {};
+        grandTotal += e.total || 0;
+        for (const [pk, amt] of Object.entries(e.byProvider || {})) {
+          byProvider[pk] = (byProvider[pk] || 0) + amt;
+        }
+      }
+
+      console.log(`  ${'All-time spend by provider'.padEnd(45)}`);
+      console.log(`  ${'-'.repeat(45)}`);
+      if (Object.keys(byProvider).length === 0) {
+        console.log(`  (no provider breakdown data)\n`);
+      } else {
+        for (const [pk, amt] of Object.entries(byProvider).sort((a, b) => b[1] - a[1])) {
+          const bar = '█'.repeat(Math.min(20, Math.round((amt / grandTotal) * 20 || 0)));
+          console.log(`  ${pk.padEnd(12)} $${amt.toFixed(2).padStart(8)}  ${bar}`);
+        }
+        console.log(`  ${'─'.repeat(45)}`);
+        console.log(`  ${'TOTAL'.padEnd(12)} $${grandTotal.toFixed(2).padStart(8)}\n`);
+      }
+
+      // Show today
+      const today = daily[todayISO];
+      if (today && today.total > 0) {
+        console.log(`  Today (${todayISO}): $${today.total.toFixed(2)}`);
+        if (today.byProvider) {
+          for (const [pk, amt] of Object.entries(today.byProvider).sort((a, b) => b[1] - a[1])) {
+            console.log(`    ${pk}: $${amt.toFixed(2)}`);
+          }
+        }
+        console.log();
+      }
+    } catch (_) {
+      console.log(`  (spend.json unreadable)\n`);
+    }
+  } else {
+    console.log(`  (no spend.json found)\n`);
+  }
+
+  // ── Purge stale cc-spend files ────────────────────────────────
+  let purged = 0;
+  let purgedBytes = 0;
+  let kept = 0;
+  let staleTotal = 0;
+  try {
+    for (const f of readdirSync(DEEPCLAUDE_DIR)) {
+      if (!f.startsWith('cc-spend-') || !f.endsWith('.json')) continue;
+      const filePath = join(DEEPCLAUDE_DIR, f);
+      try {
+        const stat = statSync(filePath);
+        if (stat.mtimeMs < cutoffMs) {
+          try {
+            staleTotal += parseFloat(readFileSync(filePath, 'utf-8').trim()) || 0;
+          } catch (_) {}
+          purgedBytes += stat.size;
+          unlinkSync(filePath);
+          purged++;
+        } else {
+          kept++;
+        }
+      } catch (_) {}
+    }
+  } catch (_) {}
+
+  if (purged > 0) {
+    console.log(
+      `  Purged ${purged} cc-spend files (>${days} days, ${(purgedBytes / 1024).toFixed(1)} KB)`,
+    );
+    if (staleTotal > 0) {
+      console.log(`  Stale sessions accounted for: $${staleTotal.toFixed(2)}`);
+    }
+  } else {
+    console.log(`  No stale cc-spend files to purge (cutoff: >${days} days)`);
+  }
+  if (kept > 0) {
+    console.log(`  Kept ${kept} recent cc-spend files (≤${days} days)`);
+  }
+  console.log();
 }
 
 async function cmdStats() {
@@ -795,6 +914,10 @@ async function launchCC(flags, configs) {
   }
   if (flags.health) {
     await cmdHealth();
+    return;
+  }
+  if (flags.cleanup) {
+    cmdCleanup(flags);
     return;
   }
   if (flags.stats) {
@@ -1230,6 +1353,8 @@ Usage: deepclaude [spec1] [spec2] [spec3] [spec4] [spec5]   (positional mode)
   --thinking-budget N   Set thinking budget in tokens
   --logs, --tail   Tail proxy log
   --health         Quick health check
+  --cleanup        Purge old cc-spend files and show provider spend
+  --cleanup-days N Days to keep (default: 7)
   --version       Print version
   --effort LEVEL  Set CC effort level (default: max)
   --fix-av        Print AV exclusion commands
