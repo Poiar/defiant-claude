@@ -510,7 +510,7 @@ if (probeIdx >= 2) {
           JSON.stringify({
             type: 'content_block_start',
             index: 0,
-            content_block: { type: 'web_search_tool_result' },
+            content_block: { type: 'text', text: '' },
           }) +
           '\n\nevent: content_block_delta\ndata: ' +
           JSON.stringify({
@@ -539,7 +539,7 @@ if (probeIdx >= 2) {
           type: 'message' as const,
           role: 'assistant' as const,
           model: trustModel,
-          content: [{ type: 'web_search_tool_result' as const, content: displayText }],
+          content: [{ type: 'text' as const, text: displayText }],
           stop_reason: 'end_turn' as const,
           stop_sequence: null,
           usage: {
