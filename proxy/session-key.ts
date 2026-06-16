@@ -2,38 +2,41 @@
 
 import crypto from 'node:crypto';
 
-// Per-startup random salt scopes momentum/cache entries to a single proxy
-// process lifetime, preventing cross-contamination between independent
-// conversations that happen to share the same first user message + system prompt.
-const STARTUP_SALT = crypto.randomBytes(8).toString('hex');
-
-// Session key -- same algorithm used across thinking-cache, reasoning-cache,
+// Session key — same algorithm used across thinking-cache, reasoning-cache,
 // and momentum modules. Hashes the first user message content plus a truncated
-// system prompt hint via SHA-256, salted with a per-process random value.
+// system prompt hint via SHA-256.
+//
+// Stable across proxy restarts so cached thinking/reasoning blocks survive
+// kill+resume cycles. The tool_use.id UUID half of the cache key provides
+// global uniqueness — no per-process salt needed.
 export function sessionKey(reqBody: Record<string, unknown> | null | undefined): string | null {
-    if (!reqBody || !reqBody.messages) return null;
-    const messages = reqBody.messages as Array<Record<string, unknown>>;
-    const firstUserMsg = messages.find(m => m.role === 'user');
-    if (!firstUserMsg) return null;
-    const content = typeof firstUserMsg.content === 'string'
-        ? firstUserMsg.content
-        : Array.isArray(firstUserMsg.content)
-            ? (firstUserMsg.content as Array<Record<string, unknown>>).map(b => String(b.text || '')).join('')
-            : '';
-    const systemHint = reqBody.system
-        ? (typeof reqBody.system === 'string'
-            ? reqBody.system
-            : Array.isArray(reqBody.system)
-                ? (reqBody.system as Array<Record<string, unknown>>).map(b => String(b.text || '')).join('')
-                : ''
-          ).slice(0, 500)
+  if (!reqBody || !reqBody.messages) return null;
+  const messages = reqBody.messages as Array<Record<string, unknown>>;
+  const firstUserMsg = messages.find((m) => m.role === 'user');
+  if (!firstUserMsg) return null;
+  const content =
+    typeof firstUserMsg.content === 'string'
+      ? firstUserMsg.content
+      : Array.isArray(firstUserMsg.content)
+        ? (firstUserMsg.content as Array<Record<string, unknown>>)
+            .map((b) => String(b.text || ''))
+            .join('')
         : '';
-    return crypto.createHash('sha256')
-        .update(STARTUP_SALT)
-        .update('\x00')
-        .update(content)
-        .update('\x00')
-        .update(systemHint)
-        .digest('hex')
-        .slice(0, 32);
+  const systemHint = reqBody.system
+    ? (typeof reqBody.system === 'string'
+        ? reqBody.system
+        : Array.isArray(reqBody.system)
+          ? (reqBody.system as Array<Record<string, unknown>>)
+              .map((b) => String(b.text || ''))
+              .join('')
+          : ''
+      ).slice(0, 500)
+    : '';
+  return crypto
+    .createHash('sha256')
+    .update(content)
+    .update('\x00')
+    .update(systemHint)
+    .digest('hex')
+    .slice(0, 32);
 }

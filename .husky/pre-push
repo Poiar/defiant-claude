@@ -9,6 +9,35 @@ echo ""
 
 echo ""
 
+echo ""
+
+# Block Co-Authored-By trailers — catch any that slip past commit-msg.
+echo "  Co-Authored-By check..."
+while read -r local_ref local_sha remote_ref remote_sha; do
+  if [ "$local_sha" = "0000000000000000000000000000000000000000" ]; then
+    continue
+  fi
+  if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
+    range="$local_sha"
+  else
+    range="$remote_sha..$local_sha"
+  fi
+  BAD=$(git -C "$DIR" log --format="%h %s" "$range" --grep="^Co-Authored-By:" 2>/dev/null | head -10)
+  if [ -n "$BAD" ]; then
+    echo ""
+    echo "  ✗ Co-Authored-By: found in commits:"
+    echo "$BAD" | sed 's/^/      /'
+    FAIL=1
+  fi
+done
+if [ $FAIL -ne 0 ]; then
+  echo ""
+  echo "Push blocked — fix the above and retry."
+  exit 1
+fi
+echo "  OK"
+
+
 # README — ensure template and data sources haven't drifted from README.md
 echo "  README.md up to date..."
 npx tsx "$DIR/scripts/build-readme.ts" 2>/dev/null

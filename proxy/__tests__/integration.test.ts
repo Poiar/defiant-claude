@@ -92,6 +92,7 @@ beforeAll(async () => {
         DEEPCLAUDE_NO_PID_LOCK: '1',
         DEEPCLAUDE_SEARCH_ENGINES: 'ddg',
         DEEPCLAUDE_SEARCH_NO_NETWORK: '1',
+        DEEPCLAUDE_SKIP_STARTUP_CHECK: 'true',
       },
       ...(IS_WIN ? { shell: true } : {}),
     },
@@ -99,7 +100,7 @@ beforeAll(async () => {
 
   const portStr = await new Promise<string>((resolve, reject) => {
     let out = '';
-    const timer = setTimeout(() => reject(new Error('Proxy did not start within 25s')), 25000);
+    const timer = setTimeout(() => reject(new Error('Proxy did not start within 15s')), 15000);
     proxyProcess.stdout!.on('data', (chunk: Buffer) => {
       out += chunk.toString();
       const m = out.match(/PORT:(\d+)/);
@@ -111,7 +112,7 @@ beforeAll(async () => {
     proxyProcess.stderr!.on('data', () => {});
   });
   proxyPort = parseInt(portStr, 10);
-}, 30000);
+}, 20000);
 
 afterAll(async () => {
   if (proxyProcess) {

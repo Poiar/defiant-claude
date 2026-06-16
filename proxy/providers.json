@@ -8,7 +8,7 @@
       "wireFormat": "anthropic",
       "setupUrl": "https://platform.deepseek.com/api-keys",
       "streamUsageReporting": null,
-      "noAutoFallback": true
+      "fallback": ["oc", "um"]
     },
     "or": {
       "displayName": "OpenRouter",
@@ -41,7 +41,7 @@
       "wireFormat": "anthropic",
       "setupUrl": "https://opencode.ai/keys",
       "streamUsageReporting": null,
-      "noAutoFallback": true
+      "fallback": ["um"]
     },
     "al": {
       "displayName": "Alibaba/DashScope",
@@ -77,7 +77,7 @@
       "authHeader": "x-api-key",
       "wireFormat": "anthropic",
       "streamUsageReporting": null,
-      "noAutoFallback": true
+      "fallback": ["or"]
     },
     "gr": {
       "displayName": "Groq",
@@ -275,7 +275,15 @@
   },
   "configs": {
     "ds": {
-      "name": "DeepSeek V4 Pro",
+      "name": "DeepSeek V4 Pro + free subs",
+      "opus": "ds:deepseek-v4-pro",
+      "sonnet": "ds:deepseek-v4-pro",
+      "haiku": "oc:big-pickle",
+      "sub": "oc:big-pickle",
+      "fable": "ds:deepseek-v4-pro"
+    },
+    "ds-full": {
+      "name": "DeepSeek V4 Pro (all slots)",
       "opus": "ds:deepseek-v4-pro",
       "sonnet": "ds:deepseek-v4-pro",
       "haiku": "ds:deepseek-v4-flash",

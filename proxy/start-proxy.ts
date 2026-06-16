@@ -146,14 +146,21 @@ if (maxSpendIdx >= 2 && process.argv[maxSpendIdx + 1]) {
   }
 }
 const dailyBudgetEnv = process.env.DEEPCLAUDE_DAILY_BUDGET || '';
-let dailyBudget: number | null = null;
-if (dailyBudgetEnv) {
-  dailyBudget = parseFloat(dailyBudgetEnv);
-  if (isNaN(dailyBudget) || dailyBudget < 0) {
-    console.error('DEEPCLAUDE_DAILY_BUDGET must be a non-negative number');
-    process.exit(1);
+const DEFAULT_DAILY_BUDGET = 25;
+const dailyBudget: number | null = (() => {
+  if (dailyBudgetEnv === '0') return 0; // Explicitly disabled
+  if (dailyBudgetEnv) {
+    const v = parseFloat(dailyBudgetEnv);
+    if (isNaN(v) || v < 0) {
+      console.error('DEEPCLAUDE_DAILY_BUDGET must be a non-negative number');
+      process.exit(1);
+    }
+    return v;
   }
-}
+  // Default to $25/day to protect against surprise runaway costs.
+  // Set DEEPCLAUDE_DAILY_BUDGET=0 to disable.
+  return DEFAULT_DAILY_BUDGET;
+})();
 
 if (probeIdx >= 2) {
   const nextArg = process.argv[probeIdx + 1];
@@ -1516,7 +1523,10 @@ if (probeIdx >= 2) {
             try {
               const p = JSON.parse(forwardedBody.toString());
               const thinkingCfg = matchThinkingModel(upstreamModel, effectiveThinking);
-              if (applyThinkingConfig(p, hasWebTools, constraints, thinkingCfg, upstreamModel)) {
+              const tier = parsedBody ? classifyRequest(parsedBody).tier : undefined;
+              if (
+                applyThinkingConfig(p, hasWebTools, constraints, thinkingCfg, upstreamModel, tier)
+              ) {
                 forwardedBody = Buffer.from(JSON.stringify(p));
               }
             } catch (e) {

@@ -207,7 +207,7 @@ All providers produce identical search responses through these layers:
 - `proxy/pre-exec-validate.ts` — validatePreExecResponse() — checks ALL required fields
 - `proxy/model-trust.ts` — getTrustedModel()
 - `proxy/protocol-types.ts` — web_search_tool_result, web_search_result, caller type definitions
-- `proxy/ddg-playwright.ts` — Playwright reference (currently non-functional due to DDG TLS fingerprinting)
+- `proxy/ddg-playwright.ts` — (removed — non-functional, DDG TLS fingerprinting prevents headless browser scraping)
 - `proxy/__tests__/server-tools.test.ts` — 141 scraper + webSearchStructured tests
 - `proxy/__tests__/integration.test.ts` — 4 pre-execution tests with format assertions
 - `proxy/__tests__/pre-exec-validate.test.ts` — 25 validation tests
