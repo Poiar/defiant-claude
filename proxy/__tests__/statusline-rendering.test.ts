@@ -5,7 +5,7 @@
 
 import { spawnSync } from 'child_process';
 import { join } from 'path';
-import { mkdirSync, writeFileSync, rmSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 
 const STATUSLINE = join(__dirname, '..', '..', 'statusline', 'statusline.mjs');
@@ -2159,5 +2159,92 @@ describe('statusline main() error suppression', () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout).toBe('');
+  });
+});
+
+describe('statusline current-routes.json without contextLimits', () => {
+  test('ctxMap stays empty when routes file exists but has no contextLimits key', () => {
+    writeFileSync(join(tmpDir, 'current-routes.json'), JSON.stringify({ somethingElse: true }));
+
+    const ccJson = JSON.stringify({
+      workspace: { current_dir: '/home/user/proj' },
+      model: { id: 'ds:deepseek-v4-pro' },
+      effort: { level: 'medium' },
+      context_window: { total_input_tokens: 450000 },
+    });
+
+    const result = runStatusline({
+      stdin: ccJson,
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const plain = stripAnsi(result.stdout);
+    // maxTokens resolves as undefined (not in CC JSON, not in ctxMap) → no percentage
+    expect(plain).not.toMatch(/\d+%/);
+    // No milestone tags since ctxMap[modelLookup] is undefined
+    expect(plain).not.toContain('FBR');
+    expect(plain).not.toContain('SR');
+  });
+});
+
+describe('statusline subagent-model.json malformed', () => {
+  test('malformed subagent-model.json does not crash — falls back gracefully', () => {
+    writeFileSync(
+      join(tmpDir, 'slot-overrides.json'),
+      JSON.stringify({ sonnet: 'ds:deepseek-v4-pro' }),
+    );
+    writeFileSync(join(tmpDir, 'subagent-model.json'), 'not valid {{{ json');
+
+    const ccJson = JSON.stringify({
+      workspace: { current_dir: '/home/user/proj' },
+      model: { id: 'sub:claude-haiku-4-5' },
+      effort: { level: 'low' },
+      context_window: { total_input_tokens: 500, max_input_tokens: 200000 },
+    });
+
+    const result = runStatusline({
+      stdin: ccJson,
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const plain = stripAnsi(result.stdout);
+    expect(plain).toContain('claude-haiku-4-5');
+  });
+});
+
+describe('statusline locationGroup: branch without dir', () => {
+  test('shows branch when dir is empty but branch is set', () => {
+    const ccJson = JSON.stringify({
+      model: { id: 'sonnet:claude-sonnet-4-6' },
+      effort: { level: 'medium' },
+      context_window: { total_input_tokens: 500, max_input_tokens: 200000 },
+    });
+
+    const result = runStatusline({
+      stdin: ccJson,
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'standalone-branch',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const plain = stripAnsi(result.stdout);
+    expect(plain).toContain('standalone-branch');
+    expect(plain.startsWith('standalone-branch')).toBe(true);
   });
 });
