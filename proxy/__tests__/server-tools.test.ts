@@ -19,6 +19,7 @@ import {
   setCachedSearch,
   _resetFetchSlots,
   _resetSearchCache,
+  _resetDdgCookies,
 } from '../server-tools';
 
 // --- Module-scope mocks for network-dependent executor functions ---
@@ -50,12 +51,24 @@ jest.mock('../ssrf', () => ({
 
 // --- Shared test data ---
 
-const SAMPLE_HTML = `
+// Old format: DDG used uddg= redirect wrapper URLs
+const SAMPLE_HTML_LEGACY = `
 <html>
 <body>
 <a class='result-link' href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com&amp;rut=abc">Example Title</a>
 <td class='result-snippet'>This is a sample snippet about the example domain.</td>
 <a class='result-link' href="//duckduckgo.com/l/?uddg=https%3A%2F%2Ftest.org&amp;rut=def">Test Org</a>
+<td class='result-snippet'>Another snippet for <b>testing</b> purposes.</td>
+</body>
+</html>`;
+
+// Current format: DDG uses direct URLs in result-link hrefs
+const SAMPLE_HTML = `
+<html>
+<body>
+<a rel="nofollow" href="https://example.com" class='result-link'>Example Title</a>
+<td class='result-snippet'>This is a sample snippet about the example domain.</td>
+<a rel="nofollow" href="https://test.org" class='result-link'>Test Org</a>
 <td class='result-snippet'>Another snippet for <b>testing</b> purposes.</td>
 </body>
 </html>`;
@@ -92,15 +105,19 @@ function fireDataEnd(res: MockResponse, data: string): void {
   }
 }
 
-function setupMockGetHtml(html: string): void {
-  mockHttpsGet.mockImplementation((_url: string, _opts: any, cb: any) => {
+function setupMockRequestHtml(html: string): void {
+  mockHttpsRequest.mockImplementation((_url: string, _opts: any, cb: any) => {
     const res = makeMockResponse();
+    // ddgLiteSearch uses POST — it reads headers and Set-Cookie
+    res.headers = { 'set-cookie': undefined };
     setTimeout(() => {
       cb(res);
       fireDataEnd(res, html);
     }, 0);
     const req = {
       on: jest.fn().mockReturnThis(),
+      write: jest.fn(),
+      end: jest.fn(),
       destroy: jest.fn(),
     };
     return req as any;
@@ -995,11 +1012,21 @@ describe('isPrivateIPv4', () => {
 
 describe('ddgLiteSearch', () => {
   beforeEach(() => {
-    mockHttpsGet.mockReset();
+    mockHttpsRequest.mockReset();
   });
 
-  test('extracts titles and URLs from result-link anchors', async () => {
-    setupMockGetHtml(SAMPLE_HTML);
+  test('extracts titles and URLs from result-link anchors (direct URL format)', async () => {
+    setupMockRequestHtml(SAMPLE_HTML);
+    const results = await ddgLiteSearch('test query');
+    expect(results.length).toBeGreaterThanOrEqual(2);
+    expect(results[0].title).toBe('Example Title');
+    expect(results[0].url).toBe('https://example.com');
+    expect(results[1].title).toBe('Test Org');
+    expect(results[1].url).toBe('https://test.org');
+  });
+
+  test('extracts titles and URLs from legacy uddg= redirect format', async () => {
+    setupMockRequestHtml(SAMPLE_HTML_LEGACY);
     const results = await ddgLiteSearch('test query');
     expect(results.length).toBeGreaterThanOrEqual(2);
     expect(results[0].title).toBe('Example Title');
@@ -1009,21 +1036,21 @@ describe('ddgLiteSearch', () => {
   });
 
   test('extracts snippets from result-snippet cells', async () => {
-    setupMockGetHtml(SAMPLE_HTML);
+    setupMockRequestHtml(SAMPLE_HTML);
     const results = await ddgLiteSearch('test query');
     expect(results[0].snippet).toContain('sample snippet');
     expect(results[1].snippet).toContain('testing');
   });
 
   test('returns empty array when HTML has no results', async () => {
-    setupMockGetHtml('<html><body>No results found.</body></html>');
+    setupMockRequestHtml('<html><body>No results found.</body></html>');
     const results = await ddgLiteSearch('xyznonexistent123');
     expect(results).toEqual([]);
   });
 
   test('returns empty array on network error', async () => {
-    mockHttpsGet.mockImplementation((_url: string, _opts: any) => {
-      const req = { on: jest.fn(), destroy: jest.fn() } as any;
+    mockHttpsRequest.mockImplementation((_url: string, _opts: any) => {
+      const req = { on: jest.fn(), write: jest.fn(), end: jest.fn(), destroy: jest.fn() } as any;
       req.on.mockImplementation((event: string, cb: any) => {
         if (event === 'error') setTimeout(() => cb(new Error('connection refused')), 5);
         return req;
@@ -1037,7 +1064,8 @@ describe('ddgLiteSearch', () => {
 
   test('respects 500KB data limit', async () => {
     const res = makeMockResponse();
-    mockHttpsGet.mockImplementation((_url: string, _opts: any, cb: any) => {
+    res.headers = {};
+    mockHttpsRequest.mockImplementation((_url: string, _opts: any, cb: any) => {
       setTimeout(() => {
         cb(res);
         if (res.listeners['data']) {
@@ -1046,6 +1074,8 @@ describe('ddgLiteSearch', () => {
       }, 0);
       const req = {
         on: jest.fn().mockReturnThis(),
+        write: jest.fn(),
+        end: jest.fn(),
         destroy: jest.fn(),
       };
       return req as any;
@@ -1056,7 +1086,8 @@ describe('ddgLiteSearch', () => {
 
   test('handles empty response body', async () => {
     const res = makeMockResponse();
-    mockHttpsGet.mockImplementation((_url: string, _opts: any, cb: any) => {
+    res.headers = {};
+    mockHttpsRequest.mockImplementation((_url: string, _opts: any, cb: any) => {
       setTimeout(() => {
         cb(res);
         if (res.listeners['end']) {
@@ -1065,6 +1096,8 @@ describe('ddgLiteSearch', () => {
       }, 0);
       const req = {
         on: jest.fn().mockReturnThis(),
+        write: jest.fn(),
+        end: jest.fn(),
         destroy: jest.fn(),
       };
       return req as any;
@@ -1082,11 +1115,12 @@ describe('webSearch', () => {
   beforeEach(() => {
     _resetSearchCache();
     _resetFetchSlots();
+    mockHttpsRequest.mockReset();
     mockHttpsGet.mockReset();
   });
 
   test('returns formatted results from DDG Lite', async () => {
-    setupMockGetHtml(SAMPLE_HTML);
+    setupMockRequestHtml(SAMPLE_HTML);
     const result = await webSearch('test');
     expect(result).toContain('Example Title');
     expect(result).toContain('https://example.com');
@@ -1094,40 +1128,44 @@ describe('webSearch', () => {
   });
 
   test('deduplicates identical queries via cache', async () => {
-    setupMockGetHtml(SAMPLE_HTML);
+    setupMockRequestHtml(SAMPLE_HTML);
     const r1 = await webSearch('cached-query');
     const r2 = await webSearch('cached-query');
     expect(r1).toBe(r2);
   });
 
   test('returns fallback message when DDG Lite and JSON both empty', async () => {
-    // First call: DDG Lite returns empty
-    // Second call: DDG JSON API — return empty JSON
-    let callCount = 0;
-    mockHttpsGet.mockImplementation((url: string, _opts: any, cb: any) => {
-      callCount++;
+    // DDG Lite uses https.request (POST) → mockHttpsRequest
+    // DDG JSON API uses https.get → mockHttpsGet
+    mockHttpsRequest.mockImplementation((_url: string, _opts: any, cb: any) => {
       const res = makeMockResponse();
+      res.headers = {};
       setTimeout(() => {
         cb(res);
-        if ((url as string).includes('lite.duckduckgo.com')) {
-          // Empty Lite response — fire end without data so ddgLiteSearch resolves
-          if (res.listeners['end']) {
-            res.listeners['end'].forEach((fn: any) => fn());
-          }
-        } else {
-          // JSON API: return empty object
-          fireDataEnd(res, '{}');
+        // Empty Lite response — fire end without data so ddgLiteSearch resolves
+        if (res.listeners['end']) {
+          res.listeners['end'].forEach((fn: any) => fn());
         }
       }, 0);
       const req = {
         on: jest.fn().mockReturnThis(),
+        write: jest.fn(),
+        end: jest.fn(),
         destroy: jest.fn(),
       };
       return req as any;
     });
+    mockHttpsGet.mockImplementation((_url: string, _opts: any, cb: any) => {
+      const res = makeMockResponse();
+      setTimeout(() => {
+        cb(res);
+        fireDataEnd(res, '{}');
+      }, 0);
+      const req = { on: jest.fn().mockReturnThis(), destroy: jest.fn() };
+      return req as any;
+    });
     const result = await webSearch('completely-nonexistent-xyz-999');
     expect(result).toContain('No results found');
-    expect(callCount).toBe(2); // DDG Lite + JSON fallback
   });
 });
 
@@ -1337,11 +1375,13 @@ describe('populateToolResults', () => {
   beforeEach(() => {
     _resetSearchCache();
     _resetFetchSlots();
+    _resetDdgCookies();
+    mockHttpsRequest.mockReset();
     mockHttpsGet.mockReset();
   });
 
   test('populates empty web_search tool_result', async () => {
-    setupMockGetHtml(SAMPLE_HTML);
+    setupMockRequestHtml(SAMPLE_HTML);
 
     const messages: any[] = [
       {
