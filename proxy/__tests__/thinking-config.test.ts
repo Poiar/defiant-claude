@@ -161,16 +161,59 @@ describe('applyThinkingConfig', () => {
   });
 
   test('Anthropic native: no stripping, no injection needed', () => {
-    // an.forbidsToolChoiceWithThinking is false, so neither strip fires
+    // an.forbidsToolChoiceWithThinking is false, so neither strip fires.
+    // Not a haiku model, so Rule 3 doesn't fire either.
     const body: Record<string, unknown> = {
-      model: 'claude-haiku-4-5-20251001',
+      model: 'claude-opus-4-7',
       tool_choice: 'auto',
     };
-    const modified = applyThinkingConfig(body, false, an, null);
+    const modified = applyThinkingConfig(body, false, an, null, 'claude-opus-4-7');
 
     expect(modified).toBe(false);
     expect(body.tool_choice).toBeDefined();
     expect(body.thinking).toBeUndefined();
+  });
+
+  // --- Rule 3: Haiku on Anthropic strips thinking ---
+
+  test('Haiku on Anthropic: strips thinking from body', () => {
+    // Haiku doesn't support thinking/effort. CC sends it anyway from
+    // the user's effort level — we must strip it.
+    const body: Record<string, unknown> = {
+      model: 'claude-haiku-4-5-20251001',
+      thinking: { type: 'enabled', budget_tokens: 32000 },
+    };
+    const modified = applyThinkingConfig(body, false, an, null, 'claude-haiku-4-5-20251001');
+
+    expect(modified).toBe(true);
+    expect(body.thinking).toBeUndefined();
+  });
+
+  test('Haiku on Anthropic with web tools: strips thinking, keeps tool_choice', () => {
+    // Even though an.forbidsToolChoiceWithThinking is false, Rule 3
+    // still strips thinking for haiku models.
+    const body: Record<string, unknown> = {
+      model: 'claude-haiku-4-5-20251001',
+      thinking: { type: 'enabled', budget_tokens: 32000 },
+      tool_choice: { type: 'tool', name: 'web_search' },
+    };
+    const modified = applyThinkingConfig(body, true, an, null, 'claude-haiku-4-5-20251001');
+
+    expect(modified).toBe(true);
+    expect(body.thinking).toBeUndefined();
+    expect(body.tool_choice).toBeDefined();
+  });
+
+  test('Non-haiku on Anthropic: thinking passes through untouched', () => {
+    // Sonnet supports thinking, so no stripping
+    const body: Record<string, unknown> = {
+      model: 'claude-sonnet-4-6',
+      thinking: { type: 'enabled', budget_tokens: 32000 },
+    };
+    const modified = applyThinkingConfig(body, false, an, null, 'claude-sonnet-4-6');
+
+    expect(modified).toBe(false);
+    expect(body.thinking).toBeDefined();
   });
 
   test('Anthropic native with web tools: no stripping (native handles it)', () => {

@@ -1187,7 +1187,7 @@ if (probeIdx >= 2) {
             try {
               const p = JSON.parse(forwardedBody.toString());
               const thinkingCfg = matchThinkingModel(upstreamModel, effectiveThinking);
-              if (applyThinkingConfig(p, hasWebTools, constraints, thinkingCfg)) {
+              if (applyThinkingConfig(p, hasWebTools, constraints, thinkingCfg, upstreamModel)) {
                 forwardedBody = Buffer.from(JSON.stringify(p));
               }
             } catch (e) {
