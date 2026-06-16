@@ -10,6 +10,8 @@ import {
   parseSSEEventRaw,
   mapFinishReason,
   translateToolChoice,
+  validateResponseConformance,
+  validateStreamEventConformance,
 } from '../protocol-types';
 import type {
   AnthropicSSEEvent,
@@ -918,3 +920,167 @@ function parseSSEEvent(expectedType: string, wire: string): AnthropicSSEEvent | 
   }
   return parseSSEEventData(expectedType, dataStr);
 }
+
+// =========================================================================
+// Runtime Protocol Conformance — validateResponseConformance / validateStreamEventConformance
+// =========================================================================
+
+describe('validateResponseConformance', () => {
+  test('valid Anthropic response passes conformance check', () => {
+    const resp = {
+      id: 'msg_123',
+      type: 'message',
+      role: 'assistant',
+      model: 'claude-haiku-4-5-20251001',
+      content: [{ type: 'text', text: 'Hello' }],
+      stop_reason: 'end_turn',
+      stop_sequence: null,
+      stop_details: null,
+      usage: { input_tokens: 10, output_tokens: 5 },
+    };
+    const result = validateResponseConformance(resp);
+    expect(result.valid).toBe(true);
+    expect(result.unrecognizedFields.length).toBe(0);
+  });
+
+  test('unrecognized top-level field is reported', () => {
+    const resp: Record<string, unknown> = {
+      id: 'msg_123',
+      type: 'message',
+      role: 'assistant',
+      model: 'claude-haiku-4-5-20251001',
+      content: [],
+      stop_reason: 'end_turn',
+      stop_sequence: null,
+      stop_details: null,
+      usage: { input_tokens: 10, output_tokens: 5 },
+      brand_new_field: 'unexpected!',
+    };
+    const result = validateResponseConformance(resp);
+    expect(result.valid).toBe(false);
+    expect(result.unrecognizedFields).toContain('response.brand_new_field');
+  });
+
+  test('unrecognized content block type is reported', () => {
+    const resp: Record<string, unknown> = {
+      id: 'msg_123',
+      type: 'message',
+      role: 'assistant',
+      model: 'claude-test',
+      content: [{ type: 'future_block_type', data: 'xyz' }],
+      stop_reason: 'end_turn',
+      stop_sequence: null,
+      stop_details: null,
+      usage: { input_tokens: 10, output_tokens: 5 },
+    };
+    const result = validateResponseConformance(resp);
+    expect(result.valid).toBe(false);
+    expect(result.unrecognizedContentBlockTypes).toContain('content[0].type=future_block_type');
+  });
+
+  test('unrecognized usage field is reported', () => {
+    const resp: Record<string, unknown> = {
+      id: 'msg_123',
+      type: 'message',
+      role: 'assistant',
+      model: 'claude-test',
+      content: [],
+      stop_reason: 'end_turn',
+      stop_sequence: null,
+      stop_details: null,
+      usage: { input_tokens: 10, output_tokens: 5, new_metric: 42 },
+    };
+    const result = validateResponseConformance(resp);
+    expect(result.valid).toBe(false);
+    expect(result.unrecognizedUsageFields).toContain('usage.new_metric');
+  });
+
+  test('all 14 known content block types are recognized', () => {
+    const knownTypes = [
+      'text',
+      'thinking',
+      'redacted_thinking',
+      'tool_use',
+      'tool_result',
+      'image',
+      'document',
+      'server_tool_use',
+      'web_search_tool_result',
+      'web_fetch_tool_result',
+      'search_result',
+      'compaction',
+      'mid_conv_system',
+      'fallback',
+    ];
+    for (const type of knownTypes) {
+      const resp: Record<string, unknown> = {
+        id: 'msg_123',
+        type: 'message',
+        role: 'assistant',
+        model: 'test',
+        content: [{ type }],
+        stop_reason: 'end_turn',
+        stop_sequence: null,
+        stop_details: null,
+        usage: { input_tokens: 0, output_tokens: 0 },
+      };
+      const result = validateResponseConformance(resp);
+      expect(result.valid).toBe(true);
+    }
+  });
+});
+
+describe('validateStreamEventConformance', () => {
+  test('valid message_delta passes', () => {
+    const data = {
+      delta: { stop_reason: 'end_turn', stop_sequence: null },
+      usage: { output_tokens: 42 },
+    };
+    const result = validateStreamEventConformance('message_delta', data);
+    expect(result.valid).toBe(true);
+  });
+
+  test('unrecognized event type is reported', () => {
+    const result = validateStreamEventConformance('new_event_type_2027', {});
+    expect(result.valid).toBe(false);
+    expect(result.unrecognizedFields).toContain('event.type=new_event_type_2027');
+  });
+
+  test('unrecognized delta type is reported', () => {
+    const data = {
+      delta: { type: 'video_delta', frames: 30 },
+      index: 0,
+    };
+    const result = validateStreamEventConformance('content_block_delta', data);
+    expect(result.valid).toBe(false);
+    expect(result.unrecognizedDeltaTypes).toContain('delta.type=video_delta');
+  });
+
+  test('all 6 known delta types are recognized', () => {
+    const deltaTypes = [
+      'text_delta',
+      'thinking_delta',
+      'signature_delta',
+      'input_json_delta',
+      'citations_delta',
+      'compaction_delta',
+    ];
+    for (const type of deltaTypes) {
+      const result = validateStreamEventConformance('content_block_delta', {
+        delta: { type },
+        index: 0,
+      });
+      expect(result.valid).toBe(true);
+    }
+  });
+
+  test('unrecognized usage field in stream is reported', () => {
+    const data = {
+      delta: { stop_reason: 'end_turn', stop_sequence: null },
+      usage: { output_tokens: 42, stream_tier: 'platinum' },
+    };
+    const result = validateStreamEventConformance('message_delta', data);
+    expect(result.valid).toBe(false);
+    expect(result.unrecognizedUsageFields).toContain('usage.stream_tier');
+  });
+});

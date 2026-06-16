@@ -39,7 +39,7 @@ import { tryForward, addFallbackHeaders, sseHeaders, type ForwardResult } from '
 import { sendProbe } from './probe';
 import type { ProbeSlot } from './probe';
 import { populateToolResults, preprocessServerTools } from './server-tools';
-import { getConstraints } from './protocol-types';
+import { getConstraints, validateResponseConformance } from './protocol-types';
 import {
   isProviderHealthy,
   recordSpend,
@@ -1613,13 +1613,22 @@ if (probeIdx >= 2) {
                     );
                   }
                   if (result.body) {
-                    log.info(
-                      reqId,
-                      'WEB_SEARCH_PROXY_RESP body=' +
-                        truncateForLog(
-                          result.body.toString('utf-8', 0, Math.min(result.body.length, 4096)),
-                        ),
+                    const respStr = result.body.toString(
+                      'utf-8',
+                      0,
+                      Math.min(result.body.length, 4096),
                     );
+                    log.info(reqId, 'WEB_SEARCH_PROXY_RESP body=' + truncateForLog(respStr));
+                    // Runtime protocol conformance check
+                    try {
+                      const respJson = JSON.parse(respStr);
+                      const conf = validateResponseConformance(respJson);
+                      if (!conf.valid) {
+                        log.warn(reqId, 'PROTOCOL_GAP: ' + JSON.stringify(conf));
+                      }
+                    } catch (_) {
+                      /* not JSON */
+                    }
                   }
                 }
               } catch (_) {
