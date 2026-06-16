@@ -5,6 +5,7 @@ import {
   getConstraints,
   isAnthropicProvider,
   isPassthroughProvider,
+  stripProviderFields,
   serializeSSEEvent,
   parseSSEEventData,
   parseSSEEventRaw,
@@ -1089,5 +1090,87 @@ describe('validateStreamEventConformance', () => {
     const result = validateStreamEventConformance('message_delta', data);
     expect(result.valid).toBe(false);
     expect(result.unrecognizedUsageFields).toContain('usage.stream_tier');
+  });
+});
+
+// =========================================================================
+// stripProviderFields — removes metadata to preserve disk cache prefix
+// =========================================================================
+
+describe('stripProviderFields', () => {
+  const ds = getConstraints('ds');
+  const oc = getConstraints('oc');
+  const an = getConstraints('an');
+
+  test('strips metadata from body for ds (DeepSeek)', () => {
+    const body: Record<string, unknown> = {
+      model: 'claude-sonnet-4-6',
+      max_tokens: 500,
+      metadata: { user_id: 'session-abc-123' },
+      messages: [{ role: 'user', content: 'hello' }],
+    };
+    const stripped = stripProviderFields(body, ds);
+    expect(stripped).toBe(true);
+    expect(body).not.toHaveProperty('metadata');
+    expect(body.model).toBe('claude-sonnet-4-6'); // other fields preserved
+    expect(body.max_tokens).toBe(500);
+    expect(body.messages).toBeDefined();
+  });
+
+  test('strips metadata from body for oc (OpenCode)', () => {
+    const body: Record<string, unknown> = {
+      model: 'claude-haiku-4-5-20251001',
+      metadata: { user_id: 'session-xyz-789' },
+    };
+    const stripped = stripProviderFields(body, oc);
+    expect(stripped).toBe(true);
+    expect(body).not.toHaveProperty('metadata');
+  });
+
+  test('no stripFields → no-op (Anthropic native)', () => {
+    const body: Record<string, unknown> = {
+      model: 'claude-opus-4-7',
+      metadata: { user_id: 'keep-me' },
+    };
+    const stripped = stripProviderFields(body, an);
+    expect(stripped).toBe(false);
+    expect(body.metadata).toBeDefined(); // an has no stripFields
+  });
+
+  test('returns false when no fields present to strip', () => {
+    const body: Record<string, unknown> = {
+      model: 'deepseek-v4-pro',
+      messages: [],
+    };
+    const stripped = stripProviderFields(body, ds);
+    expect(stripped).toBe(false);
+  });
+
+  test('empty body — no-op', () => {
+    const body: Record<string, unknown> = {};
+    const stripped = stripProviderFields(body, ds);
+    expect(stripped).toBe(false);
+  });
+
+  test('multiple fields stripped when multiple in stripFields', () => {
+    const or = getConstraints('or');
+    const body: Record<string, unknown> = {
+      top_k: 40,
+      metadata: { user_id: 'test' },
+      model: 'deepseek-v4-pro',
+    };
+    const stripped = stripProviderFields(body, or);
+    expect(stripped).toBe(true);
+    expect(body).not.toHaveProperty('top_k');
+    expect(body).not.toHaveProperty('metadata');
+    expect(body.model).toBe('deepseek-v4-pro'); // preserved
+  });
+
+  test('identical bodies with different metadata become identical after strip', () => {
+    const bodyA = { model: 'x', metadata: { user_id: 'aaa' }, messages: [] };
+    const bodyB = { model: 'x', metadata: { user_id: 'bbb' }, messages: [] };
+    stripProviderFields(bodyA as Record<string, unknown>, ds);
+    stripProviderFields(bodyB as Record<string, unknown>, ds);
+    expect(JSON.stringify(bodyA)).toBe(JSON.stringify(bodyB));
   });
 });

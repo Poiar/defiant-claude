@@ -788,6 +788,27 @@ export function isAnthropicProvider(constraints: ProviderConstraints): boolean {
   return constraints.nativeServerTools;
 }
 
+/**
+ * Strip provider-unsupported fields from the request body.
+ * Keeps the request body identical across sessions so disk caches
+ * recognize the prefix regardless of session-specific metadata.
+ * Returns true if any fields were stripped.
+ */
+export function stripProviderFields(
+  body: Record<string, unknown>,
+  constraints: ProviderConstraints,
+): boolean {
+  if (!constraints.stripFields || constraints.stripFields.length === 0) return false;
+  let stripped = false;
+  for (const field of constraints.stripFields) {
+    if (field in body) {
+      delete body[field];
+      stripped = true;
+    }
+  }
+  return stripped;
+}
+
 // --- SSE Serialization Helpers ---------------------------------------------
 
 function sseLine(event: string, data: unknown): string {

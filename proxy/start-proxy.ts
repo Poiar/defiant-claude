@@ -1542,15 +1542,9 @@ if (probeIdx >= 2) {
           // → cache hit at $0.0036/M instead of miss at $0.435/M.
           if (constraints.stripFields && constraints.stripFields.length > 0) {
             try {
+              const { stripProviderFields } = require('./protocol-types');
               const p = JSON.parse(forwardedBody.toString());
-              let stripped = false;
-              for (const field of constraints.stripFields) {
-                if (field in p) {
-                  delete (p as Record<string, unknown>)[field];
-                  stripped = true;
-                }
-              }
-              if (stripped) {
+              if (stripProviderFields(p, constraints)) {
                 forwardedBody = Buffer.from(JSON.stringify(p));
               }
             } catch (_) {
