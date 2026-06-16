@@ -3,6 +3,7 @@
 import { Transform, TransformCallback } from 'stream';
 import crypto from 'crypto';
 import { createLogger } from './log';
+import { getTrustedModel } from './model-trust';
 import type {
   AnthropicMessage,
   AnthropicContentBlock,
@@ -687,10 +688,8 @@ export function createAnthropicStreamInterceptor(originalModel?: string | null):
   // Hold back the message_delta event so we can inject server_tool_use
   // into its usage field after we've counted all tool_use blocks.
   let heldDelta: string | null = null;
-  // Strip slot prefix (haiku:claude-haiku-4-5-20251001 -> claude-haiku-4-5-20251001)
-  const ccModel = originalModel
-    ? (originalModel.match(/^[a-z]+:(.+)$/) || [null, originalModel])[1]
-    : null;
+  // ccModel must start with "claude-" for CC to trust server_tool_use.
+  const ccModel = getTrustedModel(originalModel || null);
   let modelRewritten = false;
 
   class Interceptor extends Transform {
