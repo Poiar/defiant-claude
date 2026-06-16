@@ -23,6 +23,7 @@ DeepClaude runs a local HTTP routing proxy that intercepts Claude Code's Anthrop
 | `config.ts` | CLI argument parsing, JSON config loading with mtime-based hot reload, key resolution with AES-256-GCM decryption |
 | `crypto.ts` | AES-256-GCM encryption/decryption for provider API keys with async scrypt (N=131072) key derivation and fingerprint-based key caching |
 | `dashboard.ts` | Health dashboard HTML page with live SSE metrics stream |
+| `ddg-playwright.ts` | (undocumented) |
 | `dry-run.ts` | Resolved routing table display without starting the proxy (used by `--dry-run`) |
 | `encrypt-key.ts` | CLI tool for encrypting API keys |
 | `error-codes.ts` | Structured error codes with template interpolation, dev/production mode, credential scrubbing via data-driven pattern list |
