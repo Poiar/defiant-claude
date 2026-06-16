@@ -16,6 +16,7 @@ import {
   readdirSync,
   statSync,
   unlinkSync,
+  renameSync,
 } from 'fs';
 import { join, dirname, resolve } from 'path';
 import { homedir, platform } from 'os';
@@ -255,6 +256,13 @@ function parseArgs(argv) {
     if (boolFlags.includes(a)) {
       flags[a.replace(/^-+/, '').replace(/-/g, '')] = true;
       i++;
+      continue;
+    }
+    if (a === '--import-csv') {
+      const val = argv[i + 1];
+      if (!val || val.startsWith('-')) fail('--import-csv requires a file path');
+      flags.importcsv = val;
+      i += 2;
       continue;
     }
     if (a === '--set-slot' || a === '--subagent-model') {
@@ -518,6 +526,174 @@ function cmdCleanup(flags) {
     console.log(`  Kept ${kept} recent cc-spend files (≤${days} days)`);
   }
   console.log();
+}
+
+function cmdImportCsv(filePath) {
+  if (!existsSync(filePath)) fail(`File not found: ${filePath}`);
+
+  // Known model → provider key mapping for billing CSV model names.
+  // DeepSeek billing uses "deepseek-v4-pro", "deepseek-v4-flash" etc.
+  // OpenRouter uses "deepseek/deepseek-v4-pro", "openai/gpt-5" etc.
+  const MODEL_TO_PROVIDER = {
+    'deepseek-v4-pro': 'ds',
+    'deepseek-v4-flash': 'ds',
+    'deepseek-chat': 'ds',
+    'deepseek-reasoner': 'ds',
+    'claude-opus-4': 'an',
+    'claude-opus-4-7': 'an',
+    'claude-sonnet-4': 'an',
+    'claude-sonnet-4-6': 'an',
+    'claude-haiku-4-5': 'an',
+    'gpt-5': 'oa',
+    'gpt-5-mini': 'oa',
+    o4: 'oa',
+    'o4-mini': 'oa',
+    'gemini-2.5-flash': 'gm',
+    'gemini-2.5-pro': 'gm',
+  };
+
+  const raw = readFileSync(filePath, 'utf-8');
+  const lines = raw.trim().split('\n');
+
+  // Detect format from header
+  const header = lines[0];
+  const isOpenRouter = header.includes('provider') && header.includes('model');
+  const isDeepSeek = header.includes('wallet_type') && header.includes('utc_date');
+
+  // Parse: aggregate { date -> { providerKey:model -> cost } }
+  const daily = {};
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    const cols = line.split(',');
+    if (cols.length < 4) continue;
+
+    let date, model, cost;
+    if (isDeepSeek) {
+      // user_id, utc_date, model, wallet_type, cost, currency
+      date = cols[1];
+      model = cols[2];
+      cost = parseFloat(cols[4]) || 0;
+    } else if (isOpenRouter) {
+      // provider, model, date, cost, tokens_prompt, tokens_completion, ...
+      date = cols[2];
+      model = cols[0] + '/' + cols[1]; // "deepseek/deepseek-v4-pro"
+      cost = parseFloat(cols[3]) || 0;
+    } else {
+      // Generic: try date in col[0] and cost/grandchild columns
+      date = cols[0];
+      model = cols[1] || 'unknown';
+      cost = parseFloat(cols[4] || cols[3] || '0') || 0;
+    }
+
+    if (!date || !model || cost <= 0) continue;
+
+    // Map model to provider key prefix
+    let pk = '??';
+    for (const [name, prov] of Object.entries(MODEL_TO_PROVIDER)) {
+      if (model.includes(name)) {
+        pk = prov;
+        break;
+      }
+    }
+
+    const key = pk + ':' + model;
+    if (!daily[date]) daily[date] = {};
+    daily[date][key] = parseFloat(((daily[date][key] || 0) + cost).toFixed(4));
+  }
+
+  if (Object.keys(daily).length === 0) fail('No data found in CSV — check format.');
+
+  // Compute CSV totals for reporting
+  let csvTotal = 0;
+  const byModel = {};
+  for (const [date, models] of Object.entries(daily)) {
+    for (const [key, cost] of Object.entries(models)) {
+      csvTotal += cost;
+      byModel[key] = (byModel[key] || 0) + cost;
+    }
+  }
+
+  console.log(`\n  Importing billing CSV`);
+  console.log(`  ${'='.repeat(50)}\n`);
+  console.log(`  Format: ${isDeepSeek ? 'DeepSeek' : isOpenRouter ? 'OpenRouter' : 'generic'}`);
+  console.log(
+    `  Date range: ${Object.keys(daily).sort()[0]} → ${Object.keys(daily).sort().slice(-1)[0]}`,
+  );
+  console.log(`  Total from CSV: $${csvTotal.toFixed(2)}\n`);
+
+  console.log(`  ${'By model (CSV)'.padEnd(40)}`);
+  console.log(`  ${'-'.repeat(40)}`);
+  for (const [key, cost] of Object.entries(byModel).sort((a, b) => b[1] - a[1])) {
+    console.log(`  ${key.padEnd(35)} $${cost.toFixed(2)}`);
+  }
+  console.log();
+
+  // Merge into spend.json
+  const spendFile = join(DEEPCLAUDE_DIR, 'spend.json');
+  let existing = {};
+  if (existsSync(spendFile)) {
+    try {
+      existing = JSON.parse(readFileSync(spendFile, 'utf-8'));
+    } catch (_) {}
+  }
+  const existingDaily = existing.daily || {};
+
+  // For each date in the CSV, wipe matching provider prefixes and replace
+  for (const [date, models] of Object.entries(daily)) {
+    const oldEntry = existingDaily[date] || { total: 0, byProvider: {} };
+
+    // Build set of provider prefixes present in this CSV date
+    const csvProviders = new Set();
+    for (const key of Object.keys(models)) {
+      const prefix = key.split(':')[0];
+      csvProviders.add(prefix);
+    }
+
+    // Keep non-matching provider entries from old data
+    const cleaned = {};
+    for (const [pk, amt] of Object.entries(oldEntry.byProvider || {})) {
+      const prefix = pk.split(':')[0];
+      if (!csvProviders.has(prefix)) cleaned[pk] = amt;
+    }
+
+    // Add CSV ground truth
+    for (const [key, cost] of Object.entries(models)) {
+      cleaned[key] = cost;
+    }
+
+    // Recompute total
+    let total = 0;
+    for (const amt of Object.values(cleaned)) total += amt;
+    existingDaily[date] = { total: parseFloat(total.toFixed(4)), byProvider: cleaned };
+  }
+
+  // Recompute grand total
+  let grandTotal = 0;
+  for (const entry of Object.values(existingDaily)) {
+    grandTotal += entry.total || 0;
+  }
+
+  const output = {
+    total: parseFloat(grandTotal.toFixed(4)),
+    daily: existingDaily,
+    sessions: existing.sessions || [],
+    current_model: existing.current_model || 'deepseek-v4-pro',
+  };
+
+  const tmpFile = spendFile + '.tmp';
+  writeFileSync(tmpFile, JSON.stringify(output) + '\n');
+  renameSync(tmpFile, spendFile);
+
+  // Show before/after delta
+  const oldTotal = existing.total || 0;
+  const delta = grandTotal - oldTotal;
+  console.log(`  Previous spend.json total: $${oldTotal.toFixed(2)}`);
+  console.log(`  New spend.json total:      $${grandTotal.toFixed(2)}`);
+  if (delta !== 0) {
+    console.log(`  Delta:                     ${delta > 0 ? '+' : ''}$${delta.toFixed(2)}`);
+  }
+  console.log(`\n  Written to ${spendFile}\n`);
 }
 
 async function cmdStats() {
@@ -918,6 +1094,10 @@ async function launchCC(flags, configs) {
   }
   if (flags.cleanup) {
     cmdCleanup(flags);
+    return;
+  }
+  if (flags.importcsv) {
+    cmdImportCsv(flags.importcsv);
     return;
   }
   if (flags.stats) {
@@ -1355,6 +1535,7 @@ Usage: deepclaude [spec1] [spec2] [spec3] [spec4] [spec5]   (positional mode)
   --health         Quick health check
   --cleanup        Purge old cc-spend files and show provider spend
   --cleanup-days N Days to keep (default: 7)
+  --import-csv FILE  Import billing CSV (DeepSeek/OpenRouter) into spend.json
   --version       Print version
   --effort LEVEL  Set CC effort level (default: max)
   --fix-av        Print AV exclusion commands
