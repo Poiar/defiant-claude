@@ -596,13 +596,37 @@ export function ddgLiteSearchGet(query: string): Promise<SearchResult[]> {
   });
 }
 
+// -- Env helper: process.env first, fallback to Windows Registry -----------------
+
+import { execSync } from 'child_process';
+
+function envWithRegistry(name: string): string | undefined {
+  if (process.env[name]) return process.env[name];
+  // Fallback: read Windows Registry (HKCU\Environment) for detached proxy starts
+  if (process.platform === 'win32') {
+    try {
+      const out = execSync(`reg query "HKCU\\Environment" /v ${name}`, {
+        encoding: 'utf8',
+        windowsHide: true,
+        timeout: 2000,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      const m = out.match(new RegExp(name + '\\s+REG_\\w+\\s+(.+)'));
+      if (m) return m[1].trim();
+    } catch {
+      // Key not in registry — return undefined
+    }
+  }
+  return undefined;
+}
+
 export async function webSearchStructured(query: string): Promise<SearchResult[]> {
   // Check structured cache (LruCache.get returns T|undefined)
   const cached = structuredSearchCache.get(query);
   if (cached) return cached;
 
   // Env-controlled engine selection. Default: all three.
-  const engines = (process.env.DEEPCLAUDE_SEARCH_ENGINES || 'brave')
+  const engines = (envWithRegistry('DEEPCLAUDE_SEARCH_ENGINES') || 'brave')
     .toLowerCase()
     .split(',')
     .map((s) => s.trim());
@@ -667,7 +691,7 @@ async function searchDDG(query: string): Promise<SearchResult[]> {
 async function searchSearXNG(query: string): Promise<SearchResult[]> {
   if (process.env.DEEPCLAUDE_SEARCH_NO_NETWORK) return [];
 
-  const selfHosted = process.env.DEEPCLAUDE_SEARXNG_URL;
+  const selfHosted = envWithRegistry('DEEPCLAUDE_SEARXNG_URL');
   const fallbackEnv = process.env.XNG_SEARXNG_INSTANCES;
 
   // Build instance list: self-hosted first, then env overrides, then hardcoded.
@@ -765,7 +789,7 @@ async function searchSearXNG(query: string): Promise<SearchResult[]> {
 /** Brave Search API — requires DEEPCLAUDE_BRAVE_API_KEY env var, 2000 free calls/month. */
 async function searchBrave(query: string): Promise<SearchResult[]> {
   if (process.env.DEEPCLAUDE_SEARCH_NO_NETWORK) return [];
-  const apiKey = process.env.DEEPCLAUDE_BRAVE_API_KEY;
+  const apiKey = envWithRegistry('DEEPCLAUDE_BRAVE_API_KEY');
   if (!apiKey) return [];
 
   try {
