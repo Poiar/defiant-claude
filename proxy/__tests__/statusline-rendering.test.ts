@@ -1521,3 +1521,643 @@ describe('statusline missing optional fields in CC JSON', () => {
     expect(plain).not.toContain('low');
   });
 });
+
+describe('statusline cc-active.json heartbeat', () => {
+  const todayKey = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`;
+
+  test('writes cc-active.json with sessionId and timestamp when CLAUDE_CODE_SESSION_ID is set', () => {
+    const spendJson = { daily: { [todayKey]: { total: 0.01 } } };
+    writeFileSync(join(tmpDir, 'spend.json'), JSON.stringify(spendJson));
+
+    const ccActivePath = join(tmpDir, 'cc-active.json');
+    expect(existsSync(ccActivePath)).toBe(false);
+
+    const result = runStatusline({
+      stdin: makeCcJson(),
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        CLAUDE_CODE_SESSION_ID: 'test-heartbeat-write',
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    // cc-active.json must have been created
+    expect(existsSync(ccActivePath)).toBe(true);
+    const raw = readFileSync(ccActivePath, 'utf-8');
+    const data = JSON.parse(raw);
+    expect(data.sessionId).toBe('test-heartbeat-write');
+    // Timestamp should be within last 5 seconds
+    expect(typeof data.timestamp).toBe('number');
+    expect(Date.now() - data.timestamp).toBeLessThan(5000);
+  });
+
+  test('does NOT write cc-active.json when CLAUDE_CODE_SESSION_ID is absent', () => {
+    const spendJson = { daily: { [todayKey]: { total: 0.01 } } };
+    writeFileSync(join(tmpDir, 'spend.json'), JSON.stringify(spendJson));
+
+    const ccActivePath = join(tmpDir, 'cc-active.json');
+    // Remove any existing cc-active.json
+    try {
+      rmSync(ccActivePath);
+    } catch (_) {}
+
+    const result = runStatusline({
+      stdin: makeCcJson(),
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        CLAUDE_CODE_SESSION_ID: '',
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(existsSync(ccActivePath)).toBe(false);
+  });
+});
+
+describe('statusline DEEPCLAUDE_PROXY_PORT precedence', () => {
+  test('DEEPCLAUDE_PROXY_PORT overrides ANTHROPIC_BASE_URL when both are set', () => {
+    writeFileSync(join(tmpDir, 'spend.json'), JSON.stringify({}));
+
+    const result = runStatusline({
+      stdin: makeCcJson(),
+      env: {
+        ...process.env,
+        ANTHROPIC_BASE_URL: 'http://127.0.0.1:50999',
+        DEEPCLAUDE_PROXY_PORT: '50998',
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const plain = stripAnsi(result.stdout);
+    // Explicit port wins, not the one from ANTHROPIC_BASE_URL
+    expect(plain).toContain('50998');
+    expect(plain).not.toContain('50999');
+  });
+
+  test('DEEPCLAUDE_PROXY_PORT with non-numeric value is ignored gracefully', () => {
+    writeFileSync(join(tmpDir, 'spend.json'), JSON.stringify({}));
+
+    const result = runStatusline({
+      stdin: makeCcJson(),
+      env: {
+        ...process.env,
+        DEEPCLAUDE_PROXY_PORT: 'not-a-port',
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const plain = stripAnsi(result.stdout);
+    // parseInt('not-a-port') → NaN → no port shown
+    expect(plain).not.toMatch(/\s\d{5}\b/);
+  });
+});
+
+describe('statusline context window: zero-token edge case', () => {
+  test('shows 0/0% when total_input_tokens is 0', () => {
+    const ccJson = JSON.stringify({
+      workspace: { current_dir: '/home/user/proj' },
+      model: { id: 'sonnet:claude-sonnet-4-6' },
+      effort: { level: 'medium' },
+      context_window: { total_input_tokens: 0, max_input_tokens: 200000 },
+    });
+
+    const result = runStatusline({
+      stdin: ccJson,
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const plain = stripAnsi(result.stdout);
+    // 0 tokens, 0% — Math.round(0/200000 * 100) = 0, which is ≤100, so pct=0
+    expect(plain).toContain('0/0%');
+  });
+});
+
+describe('statusline model key: hex stripping edge cases', () => {
+  test('modelKey that is entirely hex (≥6 chars) is hidden from output', () => {
+    const ccJson = JSON.stringify({
+      workspace: { current_dir: '/home/user/proj' },
+      model: { id: 'a1b2c3d4e5f6' },
+      effort: { level: 'medium' },
+      context_window: { total_input_tokens: 500, max_input_tokens: 200000 },
+    });
+
+    const result = runStatusline({
+      stdin: ccJson,
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const plain = stripAnsi(result.stdout);
+    // The hex key should be stripped — modelGroup should be empty of model
+    expect(plain).not.toMatch(/\ba1b2c3d4e5f6\b/);
+  });
+
+  test('modelKey with hex prefix of exactly 6 chars strips the prefix', () => {
+    const ccJson = JSON.stringify({
+      workspace: { current_dir: '/home/user/proj' },
+      model: { id: 'abcdef:real-model-name' },
+      effort: { level: 'medium' },
+      context_window: { total_input_tokens: 500, max_input_tokens: 200000 },
+    });
+
+    const result = runStatusline({
+      stdin: ccJson,
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const plain = stripAnsi(result.stdout);
+    // The hex prefix 'abcdef' is stripped (6 hex chars, ≥6 threshold)
+    expect(plain).not.toMatch(/\babcdef\b/);
+    // But the real model name IS shown
+    expect(plain).toContain('real-model-name');
+  });
+});
+
+describe('statusline modelLookup suffix stripping', () => {
+  test('strips [500k] suffix from modelLookup', () => {
+    // modelLookup is used for ctxMap lookup and milestone matching.
+    // "[500k]" should be stripped just like "[1m]".
+    writeFileSync(
+      join(tmpDir, 'current-routes.json'),
+      JSON.stringify({ contextLimits: { 'deepseek-v4-pro': 1048576 } }),
+    );
+    const ccJson = JSON.stringify({
+      workspace: { current_dir: '/home/user/proj' },
+      model: { id: 'ds:deepseek-v4-pro[500k]' },
+      effort: { level: 'medium' },
+      context_window: { total_input_tokens: 350000, max_input_tokens: 500000 },
+    });
+
+    const result = runStatusline({
+      stdin: ccJson,
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const plain = stripAnsi(result.stdout);
+    // With [500k] stripped, modelLookup = 'deepseek-v4-pro' which has 1048576 ctx limit
+    // → ≥1M → milestone active → SR at 350K
+    expect(plain).toContain('SR');
+  });
+
+  test('strips [64k] suffix from modelLookup', () => {
+    writeFileSync(
+      join(tmpDir, 'current-routes.json'),
+      JSON.stringify({ contextLimits: { 'deepseek-v4-pro': 1048576 } }),
+    );
+    const ccJson = JSON.stringify({
+      workspace: { current_dir: '/home/user/proj' },
+      model: { id: 'ds:deepseek-v4-pro[64k]' },
+      effort: { level: 'medium' },
+      context_window: { total_input_tokens: 450000, max_input_tokens: 65536 },
+    });
+
+    const result = runStatusline({
+      stdin: ccJson,
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const plain = stripAnsi(result.stdout);
+    // modelLookup after stripping [64k] = 'deepseek-v4-pro', ctxMap has 1048576 ≥ 1M
+    // 450K tokens → FBR
+    expect(plain).toContain('FBR');
+  });
+});
+
+describe('statusline empty output edge case', () => {
+  test('produces empty string when all groups are empty', () => {
+    // No location (no cwd), no model, no effort, no context, no spend, no port.
+    const {
+      ANTHROPIC_BASE_URL: _u1,
+      ANTHROPIC_DEFAULT_OPUS_MODEL: _u2,
+      CLAUDE_CODE_SUBAGENT_MODEL: _u3,
+      ANTHROPIC_AUTH_TOKEN: _u4,
+      ANTHROPIC_MODEL: _u5,
+      ...cleanEnv
+    } = process.env;
+    const result = runStatusline({
+      stdin: JSON.stringify({}),
+      env: {
+        ...cleanEnv,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: '',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe('');
+  });
+});
+
+describe('statusline branch detection edge cases', () => {
+  test('shows no branch when GIT_BRANCH is empty and cwd is not a repo', () => {
+    const ccJson = JSON.stringify({
+      workspace: { current_dir: '/tmp/nonexistent-dir-12345' },
+      model: { id: 'sonnet:claude-sonnet-4-6' },
+      effort: { level: 'medium' },
+      context_window: { total_input_tokens: 500, max_input_tokens: 200000 },
+    });
+
+    const result = runStatusline({
+      stdin: ccJson,
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: '',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const plain = stripAnsi(result.stdout);
+    // Should contain dir name but no branch part
+    expect(plain).toContain('nonexistent-dir-12345');
+    // No branch text between the colored spans
+    expect(plain).not.toMatch(/nonexistent-dir-12345\s{2,}\w/);
+  });
+
+  test('GIT_BRANCH env var takes precedence over git command', () => {
+    // The cwd points to the actual repo (which has a real branch), but
+    // GIT_BRANCH is explicitly set — it should win.
+    const ccJson = JSON.stringify({
+      workspace: { current_dir: join(__dirname, '..', '..').replace(/\\/g, '/') },
+      model: { id: 'sonnet:claude-sonnet-4-6' },
+      effort: { level: 'medium' },
+      context_window: { total_input_tokens: 500, max_input_tokens: 200000 },
+    });
+
+    const result = runStatusline({
+      stdin: ccJson,
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'explicit-env-branch',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const plain = stripAnsi(result.stdout);
+    expect(plain).toContain('explicit-env-branch');
+    // Should NOT contain the actual repo branch
+    expect(plain).not.toMatch(/\bmain\b/);
+  });
+
+  test('shows dirName from Windows-style path with backslashes', () => {
+    const ccJson = JSON.stringify({
+      workspace: { current_dir: 'C:\\Users\\dev\\projects\\my-win-project' },
+      model: { id: 'sonnet:claude-sonnet-4-6' },
+      effort: { level: 'medium' },
+      context_window: { total_input_tokens: 500, max_input_tokens: 200000 },
+    });
+
+    const result = runStatusline({
+      stdin: ccJson,
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const plain = stripAnsi(result.stdout);
+    expect(plain).toContain('my-win-project');
+  });
+});
+
+describe('statusline cc-spend file whitespace resilience', () => {
+  const todayKey = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`;
+
+  test('cc-spend file with leading/trailing whitespace parses correctly', () => {
+    const spendJson = { daily: { [todayKey]: { total: 0.05 } } };
+    writeFileSync(join(tmpDir, 'spend.json'), JSON.stringify(spendJson));
+    // Write cc-spend with whitespace — parseFloat + trim handles this
+    writeFileSync(join(tmpDir, 'cc-spend-test-whitespace.json'), '  0.42\n  ');
+
+    const result = runStatusline({
+      stdin: makeCcJson(),
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        CLAUDE_CODE_SESSION_ID: 'test-whitespace',
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const dollars = allDollars(stripAnsi(result.stdout));
+    // parseFloat('  0.42\n  '.trim()) → 0.42
+    expect(dollars).toContain(0.42);
+    expect(dollars).toContain(0.05); // today
+  });
+
+  test('cc-spend file with trailing newline parses correctly', () => {
+    const spendJson = { daily: { [todayKey]: { total: 0.05 } } };
+    writeFileSync(join(tmpDir, 'spend.json'), JSON.stringify(spendJson));
+    writeFileSync(join(tmpDir, 'cc-spend-test-newline.json'), '0.37\n');
+
+    const result = runStatusline({
+      stdin: makeCcJson(),
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        CLAUDE_CODE_SESSION_ID: 'test-newline',
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const dollars = allDollars(stripAnsi(result.stdout));
+    expect(dollars).toContain(0.37);
+  });
+});
+
+describe('statusline spend.json edge-case structures', () => {
+  const _todayKey = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`;
+
+  test('todaySpend is 0 when daily key exists but todayKey entry is missing', () => {
+    // daily has a different date but not today
+    const spendJson = { daily: { '2026-01-01': { total: 5.0 } } };
+    writeFileSync(join(tmpDir, 'spend.json'), JSON.stringify(spendJson));
+
+    const result = runStatusline({
+      stdin: makeCcJson(),
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        CLAUDE_CODE_SESSION_ID: 'test-missing-today',
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const dollars = allDollars(stripAnsi(result.stdout));
+    // Only session $0.00, no today spend (missing entry → 0, and 0 is suppressed)
+    expect(dollars).toEqual([0.0]);
+  });
+
+  test('survives spend.json with total and sessions but no daily key', () => {
+    const spendJson = { total: 1.5, sessions: [{ total: 0.75 }] };
+    writeFileSync(join(tmpDir, 'spend.json'), JSON.stringify(spendJson));
+
+    const result = runStatusline({
+      stdin: makeCcJson(),
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        CLAUDE_CODE_SESSION_ID: 'test-no-daily-key',
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const dollars = allDollars(stripAnsi(result.stdout));
+    // Session $0.00, no today (daily is undefined → 0, suppressed)
+    expect(dollars).toEqual([0.0]);
+  });
+
+  test('survives spend.json that is an empty object', () => {
+    writeFileSync(join(tmpDir, 'spend.json'), JSON.stringify({}));
+
+    const result = runStatusline({
+      stdin: makeCcJson(),
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        CLAUDE_CODE_SESSION_ID: 'test-empty-object',
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const dollars = allDollars(stripAnsi(result.stdout));
+    // Session $0.00 (ccSessId set, no cc-spend file), no today
+    expect(dollars).toEqual([0.0]);
+  });
+});
+
+describe('statusline proxy port boundary values', () => {
+  test('port 65535 is valid and shown', () => {
+    writeFileSync(join(tmpDir, 'spend.json'), JSON.stringify({}));
+
+    const result = runStatusline({
+      stdin: makeCcJson(),
+      env: {
+        ...process.env,
+        ANTHROPIC_BASE_URL: 'http://127.0.0.1:65535',
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const plain = stripAnsi(result.stdout);
+    expect(plain).toContain('65535');
+  });
+
+  test('port 65536 is out of range and ignored', () => {
+    writeFileSync(join(tmpDir, 'spend.json'), JSON.stringify({}));
+
+    const result = runStatusline({
+      stdin: makeCcJson(),
+      env: {
+        ...process.env,
+        ANTHROPIC_BASE_URL: 'http://127.0.0.1:65536',
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const plain = stripAnsi(result.stdout);
+    expect(plain).not.toMatch(/\b65536\b/);
+  });
+
+  test('port -1 is out of range and ignored', () => {
+    writeFileSync(join(tmpDir, 'spend.json'), JSON.stringify({}));
+
+    const result = runStatusline({
+      stdin: makeCcJson(),
+      env: {
+        ...process.env,
+        ANTHROPIC_BASE_URL: 'http://127.0.0.1:-1',
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const plain = stripAnsi(result.stdout);
+    // parseInt('-1') = -1, isFinite but not > 0 → ignored
+    expect(plain).not.toMatch(/\s-\d/);
+  });
+});
+
+describe('statusline subagent: slot prefix variant', () => {
+  test('"subagent:" prefix works same as "sub:"', () => {
+    writeFileSync(
+      join(tmpDir, 'slot-overrides.json'),
+      JSON.stringify({ subagent: 'ds:deepseek-v4-flash' }),
+    );
+
+    const ccJson = JSON.stringify({
+      workspace: { current_dir: '/home/user/proj' },
+      model: { id: 'subagent:claude-haiku-4-5' },
+      effort: { level: 'low' },
+      context_window: { total_input_tokens: 500, max_input_tokens: 200000 },
+    });
+
+    const result = runStatusline({
+      stdin: ccJson,
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const plain = stripAnsi(result.stdout);
+    // Should resolve to the override
+    expect(plain).toContain('ds:deepseek-v4-flash');
+  });
+});
+
+describe('statusline modelKey provider-prefix stripping', () => {
+  test('strips single-char provider prefix from display when not a slot model', () => {
+    // "ds:model" has provider prefix "ds:" — modelLookup strips it.
+    // But modelKey = "ds:model" (no hex prefix) — the provider prefix "ds:"
+    // is stripped by modelLookup but shown in modelKey. Verify the display
+    // shows the full "ds:model" (not "ds:ds:model").
+    const ccJson = JSON.stringify({
+      workspace: { current_dir: '/home/user/proj' },
+      model: { id: 'ds:deepseek-v4-pro' },
+      effort: { level: 'medium' },
+      context_window: { total_input_tokens: 500, max_input_tokens: 200000 },
+    });
+
+    const result = runStatusline({
+      stdin: ccJson,
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const plain = stripAnsi(result.stdout);
+    // Non-slot model — shown as-is with provider prefix
+    expect(plain).toContain('ds:deepseek-v4-pro');
+  });
+
+  test('strips multi-char provider prefix for OR models', () => {
+    // "or:org/model" — modelKey strips hex prefix (none here),
+    // modelLookup strips "or:" prefix → "org/model"
+    const ccJson = JSON.stringify({
+      workspace: { current_dir: '/home/user/proj' },
+      model: { id: 'or:openai/gpt-4o' },
+      effort: { level: 'medium' },
+      context_window: { total_input_tokens: 500, max_input_tokens: 200000 },
+    });
+
+    const result = runStatusline({
+      stdin: ccJson,
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const plain = stripAnsi(result.stdout);
+    expect(plain).toContain('or:openai/gpt-4o');
+  });
+});
+
+describe('statusline main() error suppression', () => {
+  test('malformed CC JSON produces no output and exit code 0', () => {
+    const result = runStatusline({
+      stdin: '{broken json',
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe('');
+  });
+
+  test('empty stdin produces no output and exit code 0', () => {
+    const result = runStatusline({
+      stdin: '',
+      env: {
+        ...process.env,
+        DEEPCLAUDE_DIR: tmpDir,
+        GIT_BRANCH: 'main',
+        PATH: process.env.PATH || '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe('');
+  });
+});
