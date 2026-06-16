@@ -1094,6 +1094,19 @@ if (probeIdx >= 2) {
                 t.type && (t.type.startsWith('web_search_') || t.type.startsWith('web_fetch_')),
             );
             if (hasWeb) {
+              const messages = (parsedBody as Record<string, unknown>).messages as
+                | Array<Record<string, unknown>>
+                | undefined;
+              const q = messages ? extractSearchQuery(messages as any[]) : null;
+              log.info(
+                null,
+                'WEB_SEARCH_DETECT: model=' +
+                  (model || '?') +
+                  ' hasWeb=true extractQuery=' +
+                  (q ? '"' + q.slice(0, 60) + '"' : 'null') +
+                  ' stream=' +
+                  ((parsedBody as Record<string, unknown>).stream === true),
+              );
               const handled = await tryPreExecuteWebSearch(
                 parsedBody as Record<string, unknown>,
                 model,
