@@ -601,19 +601,222 @@ export async function webSearchStructured(query: string): Promise<SearchResult[]
   const cached = structuredSearchCache.get(query);
   if (cached) return cached;
 
+  // Env-controlled engine selection. Default: all three. Set to "ddg" for tests, "ddg,brave" etc.
+  const engines = (process.env.DEEPCLAUDE_SEARCH_ENGINES || 'ddg,searxng,brave')
+    .toLowerCase()
+    .split(',')
+    .map((s) => s.trim());
+
+  // Run enabled search engines in parallel. Any single engine failure
+  // is non-fatal — we merge whatever results we get.
+  const tasks: Array<Promise<SearchResult[]>> = [];
+
+  if (engines.includes('ddg')) tasks.push(searchDDG(query));
+  if (engines.includes('searxng')) tasks.push(searchSearXNG(query));
+  if (engines.includes('brave')) tasks.push(searchBrave(query));
+
+  const settled = await Promise.allSettled(tasks);
+  const engineResults: SearchResult[][] = settled.map((s) =>
+    s.status === 'fulfilled' ? (s.value as SearchResult[]) : [],
+  );
+
+  const deduped = mergeAndDedup(...engineResults);
+
+  structuredSearchCache.set(query, deduped);
+  return deduped;
+}
+
+// -- Individual engine search functions ----------------------------------------
+
+/** DDG Lite — POST scraper with GET fallback. */
+async function searchDDG(query: string): Promise<SearchResult[]> {
+  if (process.env.DEEPCLAUDE_SEARCH_NO_NETWORK) {
+    return [
+      {
+        title: `Search: ${query}`,
+        url: 'https://example.com/search?q=test',
+        snippet: 'Mock search result for offline testing.',
+      },
+    ];
+  }
   await acquireFetchSlot();
   try {
-    // Tier 1: DDG Lite POST (rotating browser UA + cookies)
-    let liteResults = await ddgLiteSearch(query);
-    // Tier 2: DDG Lite GET (legacy)
-    if (liteResults.length === 0) {
-      liteResults = await ddgLiteSearchGet(query);
+    let results = await ddgLiteSearch(query);
+    if (results.length === 0) {
+      results = await ddgLiteSearchGet(query);
     }
-    structuredSearchCache.set(query, liteResults);
-    return liteResults;
+    return results;
+  } catch {
+    return [];
   } finally {
     releaseFetchSlot();
   }
+}
+
+/** SearXNG — queries public instances, no API key needed. */
+async function searchSearXNG(query: string): Promise<SearchResult[]> {
+  if (process.env.DEEPCLAUDE_SEARCH_NO_NETWORK) return [];
+  // Try up to 2 public instances; first to respond wins.
+  const INSTANCES = [
+    'https://searx.be/search?format=json&q=',
+    'https://search.sapti.me/search?format=json&q=',
+    'https://search.bus-hit.me/search?format=json&q=',
+  ];
+
+  for (const instance of INSTANCES.slice(0, 2)) {
+    try {
+      const results = await new Promise<SearchResult[]>((resolve) => {
+        const url = instance + encodeURIComponent(query);
+        https
+          .get(url, { headers: { 'User-Agent': 'deepclaude-proxy/1.0' }, timeout: 6000 }, (res) => {
+            let data = '';
+            let size = 0;
+            res.on('data', (chunk: Buffer) => {
+              size += chunk.length;
+              if (size > 500_000) {
+                res.destroy();
+                resolve([]);
+                return;
+              }
+              data += chunk.toString();
+            });
+            res.on('end', () => {
+              try {
+                const parsed = JSON.parse(data);
+                const raw = (parsed.results || []) as Array<Record<string, unknown>>;
+                resolve(
+                  raw
+                    .filter((r) => r.url && r.title)
+                    .slice(0, 20)
+                    .map((r) => ({
+                      title: String(r.title || '').slice(0, 200),
+                      url: String(r.url || ''),
+                      snippet: String(r.content || r.snippet || '').slice(0, 500),
+                    })),
+                );
+              } catch {
+                resolve([]);
+              }
+            });
+          })
+          .on('error', () => resolve([]))
+          .on('timeout', () => resolve([]));
+      });
+      if (results.length > 0) return results;
+    } catch {
+      // Try next instance
+    }
+  }
+  return [];
+}
+
+/** Brave Search API — requires DEEPCLAUDE_BRAVE_API_KEY env var, 2000 free calls/month. */
+async function searchBrave(query: string): Promise<SearchResult[]> {
+  if (process.env.DEEPCLAUDE_SEARCH_NO_NETWORK) return [];
+  const apiKey = process.env.DEEPCLAUDE_BRAVE_API_KEY;
+  if (!apiKey) return [];
+
+  try {
+    return await new Promise<SearchResult[]>((resolve) => {
+      const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}`;
+      https
+        .get(
+          url,
+          {
+            headers: {
+              Accept: 'application/json',
+              'Accept-Encoding': 'gzip',
+              'X-Subscription-Token': apiKey,
+              'User-Agent': 'deepclaude-proxy/1.0',
+            },
+            timeout: 8000,
+          },
+          (res) => {
+            const chunks: Buffer[] = [];
+            let size = 0;
+            res.on('data', (chunk: Buffer) => {
+              size += chunk.length;
+              if (size > 500_000) {
+                res.destroy();
+                resolve([]);
+                return;
+              }
+              chunks.push(chunk);
+            });
+            res.on('end', () => {
+              try {
+                const raw = Buffer.concat(chunks);
+                // Handle gzip if needed
+                let text: string;
+                if (raw[0] === 0x1f && raw[1] === 0x8b) {
+                  text = require('zlib').gunzipSync(raw).toString();
+                } else {
+                  text = raw.toString();
+                }
+                const parsed = JSON.parse(text);
+                const web = (parsed.web?.results || parsed.results || []) as Array<
+                  Record<string, unknown>
+                >;
+                resolve(
+                  web
+                    .filter((r) => r.url && r.title)
+                    .slice(0, 20)
+                    .map((r) => ({
+                      title: String(r.title || '').slice(0, 200),
+                      url: String(r.url || ''),
+                      snippet: String(r.description || r.snippet || '').slice(0, 500),
+                    })),
+                );
+              } catch {
+                resolve([]);
+              }
+            });
+          },
+        )
+        .on('error', () => resolve([]))
+        .on('timeout', () => resolve([]));
+    });
+  } catch {
+    return [];
+  }
+}
+
+// -- Result merging -----------------------------------------------------------
+
+/** Merge results from multiple engines, deduplicate by URL, preserve diversity. */
+export function mergeAndDedup(...engineResults: SearchResult[][]): SearchResult[] {
+  const seen = new Set<string>();
+  const merged: SearchResult[] = [];
+
+  // Normalize URL for dedup: strip protocol, trailing slash, lowercase
+  const normUrl = (u: string): string => {
+    try {
+      let n = u
+        .replace(/^https?:\/\//, '')
+        .replace(/\/+$/, '')
+        .toLowerCase();
+      // Strip www. prefix for comparison
+      n = n.replace(/^www\./, '');
+      return n;
+    } catch {
+      return u;
+    }
+  };
+
+  // Interleave: round-robin across engines for source diversity
+  const maxLen = Math.max(...engineResults.map((r) => r.length));
+  for (let i = 0; i < maxLen; i++) {
+    for (const results of engineResults) {
+      if (i >= results.length) continue;
+      const r = results[i];
+      const norm = normUrl(r.url);
+      if (!norm || seen.has(norm)) continue;
+      seen.add(norm);
+      merged.push(r);
+    }
+  }
+
+  return merged;
 }
 
 export async function webSearch(query: string): Promise<string> {
