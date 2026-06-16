@@ -65,6 +65,9 @@ export function setCachedSearch(query: string, result: string): void {
 export function _resetSearchCache(): void {
   searchCache.clear();
 }
+export function _resetDdgCookies(): void {
+  ddgCookieJar = '';
+}
 
 /**
  * Slice a string without splitting UTF-16 surrogate pairs.
@@ -303,6 +306,12 @@ export function preprocessServerTools(
 // The Lite HTML page (lite.duckduckgo.com) returns real web search results
 // with titles, snippets, and URLs — and is designed to be scraped (no JS,
 // minimal markup). This scraper extracts structured results from that HTML.
+//
+// KEY REQUIREMENTS (DDG blocks otherwise):
+//   - POST (not GET) — DDG returns the search form for GET requests
+//   - Browser-like User-Agent — the proxy UA triggers CAPTCHAs
+//   - Cookie jar — DDG requires session cookies for search to work
+//   - Referer header — DDG validates the Referer
 
 interface SearchResult {
   title: string;
@@ -310,117 +319,174 @@ interface SearchResult {
   snippet: string;
 }
 
+// Shared cookie jar — DDG sets session cookies that must be sent back on
+// subsequent requests. Without them every search returns the empty form.
+let ddgCookieJar = '';
+
+function extractDdgCookies(setCookieHeaders: string[] | undefined): void {
+  if (!setCookieHeaders) return;
+  for (const header of setCookieHeaders) {
+    const parts = header.split(';')[0];
+    if (!parts) continue;
+    const eq = parts.indexOf('=');
+    if (eq < 0) continue;
+    const name = parts.slice(0, eq).trim();
+    const value = parts.slice(eq + 1).trim();
+    // Update the jar — overwrite existing cookie, add new ones
+    const prefix = name + '=';
+    const re = new RegExp('(^|;\\s*)' + prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[^;]*');
+    const pair = prefix + value;
+    if (ddgCookieJar.match(re)) {
+      ddgCookieJar = ddgCookieJar.replace(re, pair);
+    } else {
+      ddgCookieJar = ddgCookieJar ? ddgCookieJar + '; ' + pair : pair;
+    }
+  }
+}
+
+const DDG_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
 export function ddgLiteSearch(query: string): Promise<SearchResult[]> {
   return new Promise((resolve) => {
     const shortQuery = query.slice(0, 100);
-    const url = `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`;
-    https
-      .get(
-        url,
-        {
-          headers: { 'User-Agent': 'deepclaude-proxy/1.0' },
-          timeout: 15000,
-        },
-        (res) => {
-          let data = '';
-          let dataSize = 0;
-          res.on('data', (chunk: Buffer) => {
-            dataSize += chunk.length;
-            if (dataSize > 500_000) {
-              log.warn(null, 'ddgLiteSearch: response exceeded 500KB limit for: ' + shortQuery);
-              resolve([]);
-              res.destroy();
-              return;
-            }
-            data += chunk.toString();
-          });
-          res.on('end', () => {
-            if (!data) {
-              log.warn(null, 'ddgLiteSearch: empty response body for: ' + shortQuery);
-              resolve([]);
-              return;
-            }
-            try {
-              // Extract titles from <a class='result-link' href="...">Title</a>
-              const titleRe = /<a[^>]*href="[^"]*uddg=([^"&]+)[^"]*"[^>]*>([\s\S]*?)<\/a>/gi;
-              const titles: Array<{ title: string; url: string }> = [];
-              let tm: RegExpExecArray | null;
-              while ((tm = titleRe.exec(data)) !== null) {
-                try {
-                  const realUrl = decodeURIComponent(tm[1]);
-                  const title = tm[2]
-                    .replace(/<[^>]+>/g, '')
-                    .replace(/&#x27;/g, "'")
-                    .replace(/&amp;/g, '&')
-                    .replace(/&lt;/g, '<')
-                    .replace(/&gt;/g, '>')
-                    .replace(/&quot;/g, '"')
-                    .trim();
-                  if (title && realUrl) titles.push({ title, url: realUrl });
-                } catch (_) {
-                  /* skip malformed */
-                }
-              }
+    const postData = 'q=' + encodeURIComponent(query);
+    const headers: Record<string, string> = {
+      'User-Agent': DDG_UA,
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Referer: 'https://lite.duckduckgo.com/lite/',
+    };
+    if (ddgCookieJar) {
+      headers['Cookie'] = ddgCookieJar;
+    }
 
-              // Extract snippets from <td class='result-snippet'>...snippet...</td>
-              const snippetRe = /<td[^>]*class='result-snippet'[^>]*>([\s\S]*?)<\/td>/gi;
-              const snippets: string[] = [];
-              let sm: RegExpExecArray | null;
-              while ((sm = snippetRe.exec(data)) !== null) {
-                // Snippet may contain <b> and other inline tags
-                let text = sm[1];
-                // Remove link-text spans and other nested elements
-                text = text.replace(/<span[^>]*class='link-text'[^>]*>[\s\S]*?<\/span>/gi, '');
-                text = text.replace(/<a[^>]*>[\s\S]*?<\/a>/gi, '');
-                text = text.replace(/<[^>]+>/g, ' ');
-                text = text
+    const req = https.request(
+      'https://lite.duckduckgo.com/lite/',
+      {
+        method: 'POST',
+        headers,
+        timeout: 15000,
+      },
+      (res) => {
+        // Harvest Set-Cookie headers for the shared jar
+        extractDdgCookies(res.headers['set-cookie'] as string[] | undefined);
+
+        let data = '';
+        let dataSize = 0;
+        res.on('data', (chunk: Buffer) => {
+          dataSize += chunk.length;
+          if (dataSize > 500_000) {
+            log.warn(null, 'ddgLiteSearch: response exceeded 500KB limit for: ' + shortQuery);
+            resolve([]);
+            res.destroy();
+            return;
+          }
+          data += chunk.toString();
+        });
+        res.on('end', () => {
+          if (!data) {
+            log.warn(null, 'ddgLiteSearch: empty response body for: ' + shortQuery);
+            resolve([]);
+            return;
+          }
+          try {
+            // Extract result-link anchors. DDG now uses direct URLs in href
+            // (e.g. href="https://example.com/") rather than the old uddg=
+            // redirect wrapper. Match both formats.
+            //
+            // Two-pass: first find every <a> with class=result-link, then
+            // extract href and title. This handles both orderings
+            // (href before class, class before href) and both quote styles.
+            const anchorRe = /<a\s[^>]*?\bclass=["']result-link["'][^>]*>([\s\S]*?)<\/a>/gi;
+            const titles: Array<{ title: string; url: string }> = [];
+            let am: RegExpExecArray | null;
+            while ((am = anchorRe.exec(data)) !== null) {
+              try {
+                const fullAnchor = am[0]; // full <a ...>...</a>
+                const innerHtml = am[1]; // content inside <a>
+                // Extract href from the opening tag
+                const hrefMatch = fullAnchor.match(/\bhref="([^"]*)"/);
+                if (!hrefMatch) continue;
+                const rawUrl = hrefMatch[1];
+                // Decode uddg= redirect wrapper if present (legacy format)
+                const uddgMatch = rawUrl.match(/uddg=([^&]+)/);
+                const realUrl = decodeURIComponent(uddgMatch ? uddgMatch[1] : rawUrl);
+                const title = innerHtml
+                  .replace(/<[^>]+>/g, '')
                   .replace(/&#x27;/g, "'")
                   .replace(/&amp;/g, '&')
                   .replace(/&lt;/g, '<')
                   .replace(/&gt;/g, '>')
-                  .replace(/&quot;/g, '"');
-                text = text.replace(/\s+/g, ' ').trim();
-                if (text) snippets.push(text);
+                  .replace(/&quot;/g, '"')
+                  .trim();
+                if (title && realUrl) titles.push({ title, url: realUrl });
+              } catch (_) {
+                /* skip malformed */
               }
-
-              // Pair: first title uses first snippet, etc.
-              const results: SearchResult[] = [];
-              for (let i = 0; i < titles.length; i++) {
-                results.push({
-                  title: titles[i].title,
-                  url: titles[i].url,
-                  snippet: snippets[i] || '',
-                });
-              }
-              resolve(results.slice(0, 10));
-            } catch (e) {
-              log.error(
-                null,
-                'ddgLiteSearch: HTML parse failure for: ' +
-                  shortQuery +
-                  ' — ' +
-                  ((e as Error).message || ''),
-              );
-              resolve([]);
             }
-          });
-          res.on('error', (err: Error) => {
-            log.warn(
+
+            // Extract snippets from <td class='result-snippet'>...snippet...</td>
+            const snippetRe = /<td[^>]*class='result-snippet'[^>]*>([\s\S]*?)<\/td>/gi;
+            const snippets: string[] = [];
+            let sm: RegExpExecArray | null;
+            while ((sm = snippetRe.exec(data)) !== null) {
+              let text = sm[1];
+              // Remove nested result-link anchors (some layouts put them inside snippet td)
+              text = text.replace(/<a[^>]*class=["']result-link["'][^>]*>[\s\S]*?<\/a>/gi, '');
+              // Remove link-text spans and other nested elements
+              text = text.replace(/<span[^>]*class='link-text'[^>]*>[\s\S]*?<\/span>/gi, '');
+              text = text.replace(/<a[^>]*>[\s\S]*?<\/a>/gi, '');
+              text = text.replace(/<[^>]+>/g, ' ');
+              text = text
+                .replace(/&#x27;/g, "'")
+                .replace(/&amp;/g, '&')
+                .replace(/&lt;/g, '<')
+                .replace(/&gt;/g, '>')
+                .replace(/&quot;/g, '"');
+              text = text.replace(/\s+/g, ' ').trim();
+              if (text) snippets.push(text);
+            }
+
+            // Pair: first title uses first snippet, etc.
+            const results: SearchResult[] = [];
+            for (let i = 0; i < titles.length; i++) {
+              results.push({
+                title: titles[i].title,
+                url: titles[i].url,
+                snippet: snippets[i] || '',
+              });
+            }
+            resolve(results.slice(0, 10));
+          } catch (e) {
+            log.error(
               null,
-              'ddgLiteSearch: response error for: ' + shortQuery + ' — ' + err.message,
+              'ddgLiteSearch: HTML parse failure for: ' +
+                shortQuery +
+                ' — ' +
+                ((e as Error).message || ''),
             );
             resolve([]);
-          });
-        },
-      )
-      .on('error', (err: Error) => {
-        log.warn(null, 'ddgLiteSearch: request error for: ' + shortQuery + ' — ' + err.message);
-        resolve([]);
-      })
-      .on('timeout', () => {
-        log.warn(null, 'ddgLiteSearch: request timed out for: ' + shortQuery);
-        resolve([]);
-      });
+          }
+        });
+        res.on('error', (err: Error) => {
+          log.warn(null, 'ddgLiteSearch: response error for: ' + shortQuery + ' — ' + err.message);
+          resolve([]);
+        });
+      },
+    );
+
+    req.on('error', (err: Error) => {
+      log.warn(null, 'ddgLiteSearch: request error for: ' + shortQuery + ' — ' + err.message);
+      resolve([]);
+    });
+    req.on('timeout', () => {
+      req.destroy();
+      log.warn(null, 'ddgLiteSearch: request timed out for: ' + shortQuery);
+      resolve([]);
+    });
+
+    req.write(postData);
+    req.end();
   });
 }
 
