@@ -18,14 +18,14 @@ import type {
 } from '../protocol-types';
 
 // =========================================================================
-// ProviderConstraints — all 19 providers validate
+// ProviderConstraints — all 20 providers validate
 // =========================================================================
 
 describe('ProviderConstraints', () => {
   const providers = Object.entries(PROVIDER_CONSTRAINTS);
 
-  test('all 19 providers are configured', () => {
-    expect(Object.keys(PROVIDER_CONSTRAINTS).length).toBe(19);
+  test('all 20 providers are configured', () => {
+    expect(Object.keys(PROVIDER_CONSTRAINTS).length).toBe(20);
   });
 
   test.each(providers)('%s has required fields', (_key, c: ProviderConstraints) => {
@@ -95,6 +95,18 @@ describe('ProviderConstraints', () => {
     expect(xa.thinkingFormat).toBeNull();
     expect(xa.stripFields).toContain('top_k');
     expect(xa.stripFields).toContain('metadata');
+  });
+
+  test('lo (Ollama local) has correct values', () => {
+    const lo = PROVIDER_CONSTRAINTS.lo;
+    expect(lo.format).toBe('openai');
+    expect(lo.nativeServerTools).toBe(false);
+    expect(lo.nativeServerToolUse).toBe(false);
+    expect(lo.requiresModelRewrite).toBe(true);
+    expect(lo.forbidsToolChoiceWithThinking).toBe(false);
+    expect(lo.requiresThinkingEcho).toBe(false);
+    expect(lo.thinkingFormat).toBeNull();
+    expect(lo.noAutoFallback).toBe(true);
   });
 
   test('all non-Anthropic providers have nativeServerTools: false', () => {

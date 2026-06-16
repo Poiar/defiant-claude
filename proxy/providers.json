@@ -182,6 +182,17 @@
       "setupUrl": "https://console.anthropic.com/keys",
       "streamUsageReporting": null,
       "noAutoFallback": true
+    },
+    "lo": {
+      "displayName": "Ollama (local)",
+      "endpoint": "http://localhost:11434/v1",
+      "keyEnv": "",
+      "authHeader": "x-api-key",
+      "wireFormat": "openai",
+      "setupUrl": "https://ollama.com/download",
+      "streamUsageReporting": "openai_stream_options",
+      "noAuth": true,
+      "noAutoFallback": true
     }
   },
   "aliases": {
@@ -202,7 +213,9 @@
     "gpt5": "gpt-5",
     "gpt5-mini": "gpt-5-mini",
     "grok": "grok-4",
-    "grok-code": "grok-code-fast"
+    "grok-code": "grok-code-fast",
+    "llama": "ollama/llama3.3",
+    "qwen": "ollama/qwen3"
   },
   "_comment": "contextLimits = max tokens the provider accepts. compactionWindow = CLAUDE_CODE_AUTO_COMPACT_WINDOW (compact threshold). Use ~90-95% of context for models with free unlimited disk cache (DeepSeek) to preserve cache hits — compaction rewrites history, invalidating the prefix and causing expensive cache misses.",
   "contextLimits": {
@@ -235,6 +248,9 @@
     "grok-4": 131072,
     "grok-3": 131072,
     "grok-code-fast": 131072,
+    "ollama/llama3.3": 131072,
+    "ollama/qwen3": 131072,
+    "ollama/deepseek-r1": 131072,
     "gemini-2.5-flash": 1048576,
     "gemini-2.5-pro": 2097152,
     "gemini-3.0-flash": 1048576,
@@ -386,6 +402,14 @@
       "sub": "xa:grok-code-fast",
       "fable": "xa:grok-4"
     },
+    "lo": {
+      "name": "Ollama (local)",
+      "opus": "lo:ollama/llama3.3",
+      "sonnet": "lo:ollama/llama3.3",
+      "haiku": "lo:ollama/qwen3",
+      "sub": "lo:ollama/qwen3",
+      "fable": "lo:ollama/llama3.3"
+    },
     "ds+oc": {
       "name": "DeepSeek + OpenCode subs",
       "opus": "ds:deepseek-v4-pro",
@@ -520,6 +544,18 @@
     "grok-code-fast": {
       "input": 1.5,
       "output": 4.5
+    },
+    "ollama/llama3.3": {
+      "input": 0,
+      "output": 0
+    },
+    "ollama/qwen3": {
+      "input": 0,
+      "output": 0
+    },
+    "ollama/deepseek-r1": {
+      "input": 0,
+      "output": 0
     },
     "siliconflow/deepseek-v4-pro": {
       "input": 0.435,

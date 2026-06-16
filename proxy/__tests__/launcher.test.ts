@@ -775,6 +775,7 @@ describe('maskKey via key-status', () => {
       'nv',
       'oa',
       'xa',
+      'lo',
       'gm',
     ];
     for (const pk of knownProviders) {

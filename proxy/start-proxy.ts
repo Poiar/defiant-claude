@@ -1329,7 +1329,11 @@ if (probeIdx >= 2) {
             }
           }
 
-          if (target.isBearer) {
+          if (!target.key) {
+            // No API key configured — skip auth headers (e.g. Ollama local)
+            delete options.headers['authorization'];
+            delete options.headers['x-api-key'];
+          } else if (target.isBearer) {
             options.headers['authorization'] = 'Bearer ' + target.key;
             delete options.headers['x-api-key'];
           } else {
