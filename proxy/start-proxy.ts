@@ -421,6 +421,13 @@ if (probeIdx >= 2) {
    * Pre-execute a web search request — run DDG locally and return results
    * inline, bypassing the model entirely. Returns true if the request was
    * handled (response sent), false to fall through to normal routing.
+   *
+   * Guardrails:
+   * - 100KB response cap (prevents OOM from unbounded search results)
+   * - Empty-result handling (returns clear "No results" message)
+   * - Query length limit (800 chars, prevents abuse)
+   * - Concurrent fetch slotting (shared with webSearch's own limiter)
+   * - Error fallthrough (returns false → normal model routing)
    */
   async function tryPreExecuteWebSearch(
     body: Record<string, unknown>,
@@ -428,17 +435,54 @@ if (probeIdx >= 2) {
     reqId: number,
     response: http.ServerResponse,
   ): Promise<boolean> {
+    // Guard: response already in flight
     if (response.headersSent || response.destroyed) return false;
 
     const messages = body.messages as Array<Record<string, unknown>> | undefined;
     const query = messages ? extractSearchQuery(messages as any[]) : null;
+
+    // Guard: no extractable query — let the model handle it
     if (!query) return false;
+
+    // Guard: query too long (800 chars — CC typically sends normal-length queries)
+    if (query.length > 800) {
+      log.warn(
+        null,
+        'WEB_SEARCH_PREX: query too long (' + query.length + ' chars) — falling through to model',
+      );
+      return false;
+    }
 
     try {
       const searchResult = await webSearch(query);
+      const MAX_RESULT_BYTES = 100_000;
       const isStream = body.stream === true;
       const trustModel = getTrustedModel(modelName || (body.model as string) || null);
       const msgId = 'msg_search_' + reqId;
+
+      // Guard: truncate oversized results
+      let displayText = searchResult;
+      let truncated = false;
+      if (Buffer.byteLength(displayText, 'utf-8') > MAX_RESULT_BYTES) {
+        // Walk back to a safe cut point
+        const buf = Buffer.from(displayText, 'utf-8');
+        displayText = buf.slice(0, MAX_RESULT_BYTES).toString('utf-8');
+        // Don't split multi-byte characters
+        if (displayText.endsWith('�')) {
+          displayText = displayText.slice(0, -1);
+        }
+        displayText += '\n\n[Results truncated at ' + Math.round(MAX_RESULT_BYTES / 1024) + 'KB]';
+        truncated = true;
+      }
+
+      // Guard: sanitize for JSON embedding (search results may contain
+      // control characters or unescaped unicode surrogates)
+      try {
+        JSON.stringify(displayText);
+      } catch {
+        // Strip surrogates and control chars if JSON.stringify fails
+        displayText = displayText.replace(/[\uD800-\uDFFF]/g, '').replace(/[\x00-\x1F\x7F]/g, '');
+      }
 
       if (isStream) {
         const sse =
@@ -466,7 +510,7 @@ if (probeIdx >= 2) {
           JSON.stringify({
             type: 'content_block_delta',
             index: 0,
-            delta: { type: 'text_delta', text: searchResult },
+            delta: { type: 'text_delta', text: displayText },
           }) +
           '\n\nevent: content_block_stop\ndata: ' +
           JSON.stringify({ type: 'content_block_stop', index: 0 }) +
@@ -476,14 +520,13 @@ if (probeIdx >= 2) {
             delta: { stop_reason: 'end_turn', stop_sequence: null },
             usage: {
               input_tokens: 1,
-              output_tokens: Math.ceil(searchResult.length / 4),
+              output_tokens: Math.ceil(Buffer.byteLength(displayText, 'utf-8') / 4),
               server_tool_use: { web_search_requests: 1, web_fetch_requests: 0 },
             },
           }) +
           '\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\n';
         response.writeHead(200, sseHeaders({}) as Record<string, string | number>);
-        response.write(sse);
-        response.end();
+        response.end(sse);
       } else {
         response.writeHead(200, { 'content-type': 'application/json' });
         response.end(
@@ -492,12 +535,12 @@ if (probeIdx >= 2) {
             type: 'message',
             role: 'assistant',
             model: trustModel,
-            content: [{ type: 'text', text: searchResult }],
+            content: [{ type: 'text', text: displayText }],
             stop_reason: 'end_turn',
             stop_sequence: null,
             usage: {
               input_tokens: 1,
-              output_tokens: Math.ceil(searchResult.length / 4),
+              output_tokens: Math.ceil(Buffer.byteLength(displayText, 'utf-8') / 4),
               server_tool_use: { web_search_requests: 1, web_fetch_requests: 0 },
             },
           }),
@@ -509,7 +552,8 @@ if (probeIdx >= 2) {
         'WEB_SEARCH_PREX: query="' +
           query.slice(0, 80) +
           '" len=' +
-          searchResult.length +
+          displayText.length +
+          (truncated ? ' TRUNCATED' : '') +
           ' stream=' +
           isStream,
       );
