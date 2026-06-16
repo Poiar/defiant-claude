@@ -9,7 +9,7 @@ DeepClaude runs a local HTTP routing proxy that intercepts Claude Code's Anthrop
 
 **Direct DeepSeek (`ds`) uses the `/anthropic` endpoint** — DeepSeek offers an Anthropic-compatible API surface that speaks Claude's protocol natively. The proxy passes messages through unchanged: no format translation, no content flattening, no lossy conversion. Thinking mode (`{type: "enabled", budget_tokens: N}`), structured content blocks, tool use, and streaming all work without transformation. OpenAI-format translation only activates when routing through third-party providers (OpenRouter, Kimi, Mistral, etc.) that don't offer an Anthropic-compatible endpoint.
 
-**Thinking block echo** — When DeepSeek's thinking mode is enabled, every assistant response that contains a tool_use also includes a `thinking` block. DeepSeek requires these thinking blocks to be echoed back verbatim in every subsequent request — if missing, it returns HTTP 400 ("content[].thinking must be passed back to the API"). The proxy's `thinking-cache.ts` handles this automatically: it extracts thinking blocks from responses, caches them keyed by `sessionKey:toolUseId` (the tool_use UUID is globally unique, so no conversation fingerprint is needed), and re-injects them into the next request before forwarding. The same pattern applies to OpenAI-format reasoning content via `reasoning-cache.ts`.
+**Thinking block echo** — When DeepSeek's thinking mode is enabled, every assistant response that contains a tool_use also includes a `thinking` block. DeepSeek requires these thinking blocks to be echoed back verbatim in every subsequent request — if missing, it returns HTTP 400 ("content[].thinking must be passed back to the API"). The proxy's `thinking-cache.ts` handles this automatically: it extracts thinking blocks from responses, caches them keyed by `sessionKey:toolUseId` (the tool_use UUID is globally unique, so no conversation fingerprint is needed), and re-injects them into the next request before forwarding. **Caches now persist to `~/.deepclaude/thinking-cache/` and survive proxy restarts** — kill+resume no longer burns cache-miss tokens at 120× cost. Same pattern applies to reasoning content via `reasoning-cache.ts` and provider momentum via `momentum.ts`.
 
 ### Proxy modules (`proxy/`)
 
@@ -196,7 +196,11 @@ Per-model context limits are configured automatically:
 
 Models at 1M tokens get `CLAUDE_CODE_AUTO_COMPACT_WINDOW` set (clamped to 1,000,000 — Claude Code's internal max). Models between 128K–1M get `CLAUDE_CODE_MAX_CONTEXT_TOKENS` with compaction disabled. A `[1m]` suffix is appended to 1M-context model IDs (e.g. `deepseek-v4-pro[1m]`) — this is stripped by the proxy's router and used internally by Claude Code for dynamic context-window detection.
 
-DeepSeek V4 models use a `compactionWindow` of 950K tokens to preserve automatic disk cache hits. Compaction rewrites conversation history, which invalidates the prefix and forces an expensive cache miss ($0.435/M). By delaying compaction to 950K (near the 1M wall), most requests stay within the same prefix and hit the disk cache at $0.0036/M — a 50× discount. The cache persists for hours to days and requires no configuration.
+DeepSeek V4 models use a `compactionWindow` of 950K tokens to preserve automatic disk cache hits. Compaction rewrites conversation history, which invalidates the prefix and forces an expensive cache miss ($0.435/M). By delaying compaction to 950K (near the 1M wall), most requests stay within the same prefix and hit the disk cache at $0.0036/M — a 120× discount. The cache persists for hours to days and requires no configuration.
+
+### Cost optimization (defaults)
+
+The default config is **`ds+oc`** (DeepSeek for opus/sonnet/fable, free OpenCode for haiku/subagent). Prompt-router sends TRIVIAL requests (greetings, `<50` char) to free providers automatically. A **$25/day budget cap** is on by default — set `DEEPCLAUDE_DAILY_BUDGET=0` to disable. Provider fallback chains prefer free tiers: `ds → oc → um → or`.
 
 ## Per-session proxy design
 

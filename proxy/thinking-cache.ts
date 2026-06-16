@@ -1,5 +1,6 @@
 'use strict';
 
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -21,6 +22,12 @@ const CACHE_DIR = path.join(
 );
 
 const cache = new LruCache<CachedEntry>({ ttlMs: TTL_MS, maxEntries: MAX_ENTRIES });
+
+// Hash a cache key to a safe filename (hex only, valid on all platforms).
+// The cache key contains | and tool_use IDs — not safe for NTFS.
+function hashKey(key: string): string {
+  return crypto.createHash('sha256').update(key).digest('hex').slice(0, 32);
+}
 
 // --- Types ---
 
@@ -52,11 +59,6 @@ interface CachedEntry {
 
 // --- Disk persistence ---
 
-function cacheFilePath(key: string): string {
-  // Sanitize the key for filesystem use — hex chars only, safe as-is.
-  return path.join(CACHE_DIR, `${key}.json`);
-}
-
 const isTestEnv = process.env.JEST_WORKER_ID !== undefined || process.env.NODE_ENV === 'test';
 
 function writeToDisk(key: string, entry: CachedEntry): void {
@@ -66,11 +68,13 @@ function writeToDisk(key: string, entry: CachedEntry): void {
       fs.mkdirSync(CACHE_DIR, { recursive: true });
     }
     const data = JSON.stringify({
+      key, // store original key so we can reconstruct on load
       blocks: entry.blocks,
       messageCount: entry.messageCount,
       storedAt: Date.now(),
     });
-    fs.writeFileSync(cacheFilePath(key), data, 'utf-8');
+    const fname = hashKey(key) + '.json';
+    fs.writeFileSync(path.join(CACHE_DIR, fname), data, 'utf-8');
   } catch {
     /* non-fatal — cache is best-effort */
   }
@@ -82,43 +86,42 @@ function loadFromDisk(): void {
     if (!fs.existsSync(CACHE_DIR)) return;
     const files = fs.readdirSync(CACHE_DIR);
     const cutoff = Date.now() - TTL_MS;
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    let _loaded = 0;
     for (const file of files) {
       if (!file.endsWith('.json')) continue;
-      const key = file.replace(/\.json$/, '');
-      // Skip if already in memory (from this session)
-      if (cache.get(key)) continue;
+      const fpath = path.join(CACHE_DIR, file);
       try {
-        const raw = fs.readFileSync(path.join(CACHE_DIR, file), 'utf-8');
+        const raw = fs.readFileSync(fpath, 'utf-8');
         const data = JSON.parse(raw);
-        if (data.storedAt && data.storedAt < cutoff) {
-          // Expired — clean up
+        if (!data.key || !data.blocks) {
+          // Malformed or old-format file — remove
           try {
-            fs.unlinkSync(path.join(CACHE_DIR, file));
+            fs.unlinkSync(fpath);
           } catch {
             /* ok */
           }
           continue;
         }
-        if (data.blocks && Array.isArray(data.blocks)) {
-          cache.set(key, {
-            blocks: data.blocks,
-            messageCount: data.messageCount ?? -1,
-          });
-          _loaded++;
+        if (data.storedAt && data.storedAt < cutoff) {
+          try {
+            fs.unlinkSync(fpath);
+          } catch {
+            /* ok */
+          }
+          continue;
         }
+        if (cache.get(data.key)) continue;
+        cache.set(data.key, {
+          blocks: data.blocks,
+          messageCount: data.messageCount ?? -1,
+        });
       } catch {
-        // Corrupt file — delete it
         try {
-          fs.unlinkSync(path.join(CACHE_DIR, file));
+          fs.unlinkSync(fpath);
         } catch {
           /* ok */
         }
       }
     }
-    // Cache entries hydrated from disk silently — no logging to avoid
-    // circular dependency with start-proxy.ts
   } catch {
     /* non-fatal */
   }
@@ -136,7 +139,7 @@ export function store(
   messageCount: number = -1,
 ): void {
   if (!blocks || blocks.length === 0 || !firstToolUseId) return;
-  const key = `${sessionKeyParam}:${firstToolUseId}`;
+  const key = `${sessionKeyParam}|${firstToolUseId}`;
   const entry: CachedEntry = {
     blocks: blocks.map((b) => ({
       type: b.type,
@@ -154,7 +157,7 @@ function retrieve(
   firstToolUseId: string | null,
   currentMsgCount: number = -1,
 ): StoredBlock[] | null {
-  const entry = cache.get(`${sessionKeyParam}:${firstToolUseId}`);
+  const entry = cache.get(`${sessionKeyParam}|${firstToolUseId}`);
   if (!entry) return null;
   if (entry.messageCount > 0 && currentMsgCount >= 0 && entry.messageCount !== currentMsgCount)
     return null;

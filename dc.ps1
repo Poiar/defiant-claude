@@ -1,5 +1,5 @@
-# Launch DeepClaude with ds (DeepSeek) config by default.
-# Override with: dc -b or  or  dc -b ds+oc  etc.
+# Launch DeepClaude with ds+oc (DeepSeek + free OpenCode subs) by default.
+# Override with: dc -b ds  or  dc -b or  etc.
 #
 # NO param() block: use automatic $args. Three reasons:
 # 1. A [string[]]$Args param collides with the automatic $args variable
@@ -19,15 +19,15 @@
 try { Set-PSReadLineOption -HistorySaveStyle SaveAtExit -ErrorAction Stop } catch {}
 
 if ($args.Count -eq 0) {
-    # Just dc → launch with ds config
-    & "$PSScriptRoot\deepclaude.ps1" -b ds
+    # Just dc → launch with ds+oc config (free haiku/subagent)
+    & "$PSScriptRoot\deepclaude.ps1" -b ds+oc
 } elseif ($args[0] -match '^-b$|^--backend$') {
     # dc -b or → launch with specified config
     & "$PSScriptRoot\deepclaude.ps1" @args
 } elseif ($args[0] -notmatch '^-' -and $args[0] -notmatch ':') {
-    # dc ds+oc → shortcut for -b ds+oc
+    # dc ds → shortcut for -b ds
     & "$PSScriptRoot\deepclaude.ps1" -b @args
 } else {
-    # dc --other-flags → ds config + flags
-    & "$PSScriptRoot\deepclaude.ps1" -b ds @args
+    # dc --other-flags → ds+oc config + flags
+    & "$PSScriptRoot\deepclaude.ps1" -b ds+oc @args
 }

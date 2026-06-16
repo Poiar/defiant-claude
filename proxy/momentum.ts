@@ -1,5 +1,6 @@
 'use strict';
 
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -17,6 +18,10 @@ const CACHE_DIR = path.join(
     path.join(process.env.HOME || process.env.USERPROFILE || '.', '.deepclaude'),
   'momentum',
 );
+
+function hashKey(key: string): string {
+  return crypto.createHash('sha256').update(key).digest('hex').slice(0, 32);
+}
 
 interface Decision {
   providerKey: string;
@@ -37,10 +42,6 @@ const cache = new LruCache<MomentumEntry>({ ttlMs: TTL_MS, maxEntries: MAX_ENTRI
 
 // --- Disk persistence ---
 
-function cacheFilePath(sk: string): string {
-  return path.join(CACHE_DIR, `${sk}.json`);
-}
-
 const isTestEnv = process.env.JEST_WORKER_ID !== undefined || process.env.NODE_ENV === 'test';
 
 function writeToDisk(sk: string, entry: MomentumEntry): void {
@@ -49,9 +50,11 @@ function writeToDisk(sk: string, entry: MomentumEntry): void {
     if (!fs.existsSync(CACHE_DIR)) {
       fs.mkdirSync(CACHE_DIR, { recursive: true });
     }
+    const fname = hashKey(sk) + '.json';
     fs.writeFileSync(
-      cacheFilePath(sk),
+      path.join(CACHE_DIR, fname),
       JSON.stringify({
+        key: sk,
         decisions: entry.decisions,
         storedAt: Date.now(),
       }),
@@ -68,36 +71,38 @@ function loadFromDisk(): void {
     if (!fs.existsSync(CACHE_DIR)) return;
     const files = fs.readdirSync(CACHE_DIR);
     const cutoff = Date.now() - TTL_MS;
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    let _loaded = 0;
     for (const file of files) {
       if (!file.endsWith('.json')) continue;
-      const sk = file.replace(/\.json$/, '');
-      if (cache.get(sk)) continue;
+      const fpath = path.join(CACHE_DIR, file);
       try {
-        const raw = fs.readFileSync(path.join(CACHE_DIR, file), 'utf-8');
+        const raw = fs.readFileSync(fpath, 'utf-8');
         const data = JSON.parse(raw);
-        if (data.storedAt && data.storedAt < cutoff) {
+        if (!data.key || !data.decisions || !Array.isArray(data.decisions)) {
           try {
-            fs.unlinkSync(path.join(CACHE_DIR, file));
+            fs.unlinkSync(fpath);
           } catch {
             /* ok */
           }
           continue;
         }
-        if (data.decisions && Array.isArray(data.decisions)) {
-          cache.set(sk, { decisions: data.decisions });
-          _loaded++;
+        if (data.storedAt && data.storedAt < cutoff) {
+          try {
+            fs.unlinkSync(fpath);
+          } catch {
+            /* ok */
+          }
+          continue;
         }
+        if (cache.get(data.key)) continue;
+        cache.set(data.key, { decisions: data.decisions });
       } catch {
         try {
-          fs.unlinkSync(path.join(CACHE_DIR, file));
+          fs.unlinkSync(fpath);
         } catch {
           /* ok */
         }
       }
     }
-    // Momentum entries hydrated from disk silently
   } catch {
     /* non-fatal */
   }
