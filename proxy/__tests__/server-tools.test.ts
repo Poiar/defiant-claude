@@ -85,10 +85,11 @@ interface MockResponse {
   headers?: Record<string, string>;
 }
 
-function makeMockResponse(): MockResponse {
+function makeMockResponse(opts?: { contentType?: string }): MockResponse {
   const listeners: Record<string, Array<(...args: any[]) => void>> = {};
   return {
     listeners,
+    headers: { 'content-type': opts?.contentType || 'text/html' },
     on(event: string, cb: (...args: any[]) => void) {
       if (!listeners[event]) listeners[event] = [];
       listeners[event].push(cb);
@@ -1442,7 +1443,7 @@ describe('search engine backends', () => {
     process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
 
     mockHttpsGet.mockImplementation((_url: string, _opts: any, cb: any) => {
-      const res = makeMockResponse();
+      const res = makeMockResponse({ contentType: 'application/json' });
       setTimeout(() => {
         cb(res);
         fireDataEnd(
@@ -1472,7 +1473,7 @@ describe('search engine backends', () => {
     process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
 
     mockHttpsGet.mockImplementation((_url: string, _opts: any, cb: any) => {
-      const res = makeMockResponse();
+      const res = makeMockResponse({ contentType: 'application/json' });
       setTimeout(() => {
         cb(res);
         fireDataEnd(
@@ -1501,7 +1502,7 @@ describe('search engine backends', () => {
     process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
 
     mockHttpsGet.mockImplementation((_url: string, _opts: any, cb: any) => {
-      const res = makeMockResponse();
+      const res = makeMockResponse({ contentType: 'application/json' });
       setTimeout(() => {
         cb(res);
         fireDataEnd(res, 'not valid json {{{');
@@ -1520,7 +1521,7 @@ describe('search engine backends', () => {
     process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
 
     mockHttpsGet.mockImplementation((_url: string, _opts: any, cb: any) => {
-      const res = makeMockResponse();
+      const res = makeMockResponse({ contentType: 'application/json' });
       setTimeout(() => {
         cb(res);
         fireDataEnd(
@@ -1565,7 +1566,7 @@ describe('search engine backends', () => {
     process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
 
     mockHttpsGet.mockImplementation((_url: string, _opts: any, cb: any) => {
-      const res = makeMockResponse();
+      const res = makeMockResponse({ contentType: 'application/json' });
       setTimeout(() => {
         cb(res);
         fireDataEnd(res, 'garbage {{{');
@@ -1587,7 +1588,7 @@ describe('search engine backends', () => {
 
     // SearXNG returns via mockHttpsGet
     mockHttpsGet.mockImplementation((_url: string, _opts: any, cb: any) => {
-      const res = makeMockResponse();
+      const res = makeMockResponse({ contentType: 'application/json' });
       setTimeout(() => {
         cb(res);
         fireDataEnd(

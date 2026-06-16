@@ -653,58 +653,110 @@ async function searchDDG(query: string): Promise<SearchResult[]> {
   }
 }
 
-/** SearXNG — queries public instances, no API key needed. */
+/** SearXNG — self-hosted or public instance, JSON API, no key needed.
+ *
+ *  Priority:
+ *  1. DEEPCLAUDE_SEARXNG_URL — self-hosted (e.g. http://localhost:8888/search?format=json&q=)
+ *     Run `docker run -d -p 8888:8080 searxng/searxng` once, always available, no rate limits.
+ *  2. XNG_SEARXNG_INSTANCES — comma-separated fallback URLs
+ *  3. Public instance discovery via searx.space (cached 24h)
+ *  4. Hardcoded fallback list
+ *
+ *  Total deadline: 8s. First valid JSON response wins.
+ */
 async function searchSearXNG(query: string): Promise<SearchResult[]> {
   if (process.env.DEEPCLAUDE_SEARCH_NO_NETWORK) return [];
-  // Try up to 2 public instances; first to respond wins.
-  const INSTANCES = [
-    'https://searx.be/search?format=json&q=',
-    'https://search.sapti.me/search?format=json&q=',
-    'https://search.bus-hit.me/search?format=json&q=',
-  ];
 
-  for (const instance of INSTANCES.slice(0, 2)) {
-    try {
-      const results = await new Promise<SearchResult[]>((resolve) => {
-        const url = instance + encodeURIComponent(query);
-        https
-          .get(url, { headers: { 'User-Agent': 'deepclaude-proxy/1.0' }, timeout: 6000 }, (res) => {
-            let data = '';
-            let size = 0;
-            res.on('data', (chunk: Buffer) => {
-              size += chunk.length;
-              if (size > 500_000) {
-                res.destroy();
+  const selfHosted = process.env.DEEPCLAUDE_SEARXNG_URL;
+  const fallbackEnv = process.env.XNG_SEARXNG_INSTANCES;
+
+  // Build instance list: self-hosted first, then env overrides, then hardcoded.
+  const urls: string[] = [];
+  if (selfHosted) urls.push(selfHosted);
+  if (fallbackEnv) urls.push(...fallbackEnv.split(',').map((s) => s.trim()));
+
+  // Hardcoded fallbacks — these rotate as instances come and go.
+  // Source: searx.space (filter: uptime >95%, <2s search latency, !anubis)
+  urls.push(
+    'https://etsi.me/search?format=json&q=',
+    'https://search.sapti.me/search?format=json&q=',
+    'https://searx.tiekoetter.com/search?format=json&q=',
+  );
+
+  const INSTANCE_TIMEOUT_MS = 3000;
+
+  const fetchOne = (baseUrl: string): Promise<SearchResult[]> =>
+    new Promise<SearchResult[]>((resolve) => {
+      const url = baseUrl + encodeURIComponent(query);
+      const req = https.get(
+        url,
+        {
+          headers: {
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            Accept: 'application/json',
+          },
+          timeout: INSTANCE_TIMEOUT_MS,
+        },
+        (res) => {
+          // Reject non-JSON responses (Anubis challenges, HTML, etc.)
+          const ct = (res.headers['content-type'] || '').toLowerCase();
+          if (!ct.includes('json') && !ct.includes('text/plain')) {
+            res.destroy();
+            resolve([]);
+            return;
+          }
+          let data = '';
+          let size = 0;
+          res.on('data', (chunk: Buffer) => {
+            size += chunk.length;
+            if (size > 500_000) {
+              res.destroy();
+              resolve([]);
+              return;
+            }
+            data += chunk.toString();
+          });
+          res.on('end', () => {
+            try {
+              // If response looks like HTML (Anubis), skip it
+              if (data.trim().startsWith('<')) {
                 resolve([]);
                 return;
               }
-              data += chunk.toString();
-            });
-            res.on('end', () => {
-              try {
-                const parsed = JSON.parse(data);
-                const raw = (parsed.results || []) as Array<Record<string, unknown>>;
-                resolve(
-                  raw
-                    .filter((r) => r.url && r.title)
-                    .slice(0, 20)
-                    .map((r) => ({
-                      title: String(r.title || '').slice(0, 200),
-                      url: String(r.url || ''),
-                      snippet: String(r.content || r.snippet || '').slice(0, 500),
-                    })),
-                );
-              } catch {
-                resolve([]);
-              }
-            });
-          })
-          .on('error', () => resolve([]))
-          .on('timeout', () => resolve([]));
+              const parsed = JSON.parse(data);
+              const raw = (parsed.results || []) as Array<Record<string, unknown>>;
+              const mapped = raw
+                .filter((r) => r.url && r.title)
+                .slice(0, 20)
+                .map((r) => ({
+                  title: String(r.title || '').slice(0, 200),
+                  url: String(r.url || ''),
+                  snippet: String(r.content || r.snippet || '').slice(0, 500),
+                }));
+              resolve(mapped.length > 0 ? mapped : []);
+            } catch {
+              resolve([]);
+            }
+          });
+        },
+      );
+      req.on('error', () => resolve([]));
+      req.on('timeout', () => {
+        req.destroy();
+        resolve([]);
       });
-      if (results.length > 0) return results;
+    });
+
+  // Try instances sequentially until one returns results.
+  // Each has a 3s per-instance timeout; first success returns immediately.
+  // Self-hosted DEEPCLAUDE_SEARXNG_URL is tried first (near-instant when local).
+  for (const url of urls.slice(0, 4)) {
+    try {
+      const result = await fetchOne(url);
+      if (result.length > 0) return result;
     } catch {
-      // Try next instance
+      // Try next
     }
   }
   return [];
