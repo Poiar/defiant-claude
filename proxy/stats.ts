@@ -708,8 +708,6 @@ const SPEND_WRITE_THROTTLE_MS = 1000;
 // The proxy attributes accumulated spend to the active session on every flush.
 let ccPendingSpend = 0;
 const CC_SESSION_TTL_MS = 120_000; // 2 min — don't attribute to stale windows
-let ccSessionInitialized: string | null = null; // tracks which session's file was last reset
-
 function ccSpendFilePath(sessionId: string): string {
   return path.join(ccSessionDir, `cc-spend-${sessionId}.json`);
 }
@@ -963,6 +961,12 @@ function bootstrapCcActiveFromEnv(): void {
 // Flush pending spend to the active CC session's spend file.
 // One file per session: cc-spend-<sessionId>.json contains a single number.
 // Called alongside the main spend.json write in the throttled flush path.
+//
+// Always accumulates — never resets. Session IDs are UUIDs, so a new CC
+// window gets a new file (starts from 0 naturally because the file doesn't
+// exist yet). A proxy restart during the same CC session continues adding
+// to the same file, which is correct: the session is still active and all
+// spend belongs to it.
 function writeCcSpend(): void {
   if (ccPendingSpend <= 0) return;
 
@@ -985,18 +989,6 @@ function writeCcSpend(): void {
     ccPendingSpend = 0;
 
     const f = ccSpendFilePath(activeId);
-
-    // On proxy restart OR CC session change, reset the session file.
-    // Otherwise the file accumulates across proxy restarts and inflates
-    // the session spend shown in the statusline — ccPendingSpend resets
-    // to 0, but the file retains the old proxy's totals.
-    if (activeId !== ccSessionInitialized) {
-      ccSessionInitialized = activeId;
-      const tmpFile = f + '.tmp';
-      fs.writeFileSync(tmpFile, String(amt.toFixed(6)) + '\n');
-      fs.renameSync(tmpFile, f);
-      return;
-    }
 
     let existing = 0;
     if (fs.existsSync(f)) {

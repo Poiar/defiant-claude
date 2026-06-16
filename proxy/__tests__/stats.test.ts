@@ -1077,6 +1077,46 @@ describe('recordSpend — pricing edge cases', () => {
       else delete process.env.CLAUDE_CODE_SESSION_ID;
     }
   });
+
+  test('writeCcSpend accumulates into existing session file (proxy restart)', async () => {
+    // The critical scenario missed by prior tests: a cc-spend file already
+    // exists from a previous proxy instance within the same CC session.
+    // After a proxy restart/hot-swap, new spend MUST add to the existing
+    // file total — NOT overwrite it.
+    const sessionId = 'test-accumulate-session';
+    const prevId = process.env.CLAUDE_CODE_SESSION_ID;
+    try {
+      process.env.CLAUDE_CODE_SESSION_ID = sessionId;
+
+      // Pre-create cc-active.json (simulating statusline having run)
+      const ccActivePath = path.join(tmpDir, 'cc-active.json');
+      fs.writeFileSync(ccActivePath, JSON.stringify({ sessionId, timestamp: Date.now() }));
+
+      // Pre-write cc-spend file with existing accumulated spend (from
+      // a previous proxy instance in the same session)
+      const ccSpendPath = path.join(tmpDir, `cc-spend-${sessionId}.json`);
+      const existingSpend = 0.42;
+      fs.writeFileSync(ccSpendPath, String(existingSpend) + '\n');
+
+      // Now record new spend. This MUST accumulate, not reset.
+      await recordSpend(
+        'deepseek-v4-pro',
+        { prompt_tokens: 100_000, completion_tokens: 1_000 },
+        'ds',
+      );
+
+      // The cc-spend file should now contain old + new, not just new.
+      expect(fs.existsSync(ccSpendPath)).toBe(true);
+      const newVal = parseFloat(fs.readFileSync(ccSpendPath, 'utf-8').trim());
+      expect(newVal).toBeGreaterThan(existingSpend);
+      // With 100K input + 1K output tokens at DeepSeek prices, the
+      // increment should be roughly ~$0.04, so total > 0.45.
+      expect(newVal).toBeGreaterThan(0.45);
+    } finally {
+      if (prevId !== undefined) process.env.CLAUDE_CODE_SESSION_ID = prevId;
+      else delete process.env.CLAUDE_CODE_SESSION_ID;
+    }
+  });
 });
 
 describe('recordProviderSpend extended', () => {
