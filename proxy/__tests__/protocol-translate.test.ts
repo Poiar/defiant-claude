@@ -1819,3 +1819,295 @@ describe('translateRequestToGemini with new block types', () => {
     expect(thoughtParts[0].thought).toBe('[redacted]');
   });
 });
+
+// =========================================================================
+// createGeminiToAnthropicStream — Gemini streaming → Anthropic SSE
+// =========================================================================
+
+import { createGeminiToAnthropicStream } from '../protocol-translate';
+
+function makeGeminiSSE(events: Array<Record<string, unknown>>): string {
+  return events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join('');
+}
+
+function collectGeminiStream(
+  transformer: Transform,
+  input: string,
+): Promise<Array<{ event: string; data: Record<string, unknown> }>> {
+  return new Promise((resolve, reject) => {
+    let output = '';
+    transformer.on('data', (chunk: string) => (output += chunk.toString()));
+    transformer.on('end', () => {
+      try {
+        const events: Array<{ event: string; data: Record<string, unknown> }> = [];
+        for (const part of output.split('\n\n')) {
+          const m = part.match(/^event: (.+)\ndata: (.+)$/m);
+          if (m) events.push({ event: m[1], data: JSON.parse(m[2]) });
+        }
+        resolve(events);
+      } catch (e) {
+        reject(e);
+      }
+    });
+    transformer.on('error', reject);
+    transformer.write(input);
+    transformer.end();
+  });
+}
+
+describe('createGeminiToAnthropicStream', () => {
+  test('sets model to trusted claude-* name in message_start', async () => {
+    const t = createGeminiToAnthropicStream('claude-haiku-4-5-20251001');
+    const sse = makeGeminiSSE([
+      {
+        candidates: [
+          {
+            content: { role: 'model', parts: [{ text: 'Hello' }] },
+            finishReason: 'STOP',
+          },
+        ],
+        usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 },
+      },
+    ]);
+    const events = await collectGeminiStream(t, sse);
+    const ms = events.find((e) => e.event === 'message_start');
+    expect(ms).toBeDefined();
+    expect((ms!.data as any).message.model).toBe('claude-haiku-4-5-20251001');
+  });
+
+  test('defaults to claude-haiku-4-5 when no trusted model passed', async () => {
+    const t = createGeminiToAnthropicStream();
+    const sse = makeGeminiSSE([
+      {
+        candidates: [
+          {
+            content: { role: 'model', parts: [{ text: 'Hi' }] },
+            finishReason: 'STOP',
+          },
+        ],
+      },
+    ]);
+    const events = await collectGeminiStream(t, sse);
+    const ms = events.find((e) => e.event === 'message_start');
+    expect((ms!.data as any).message.model).toBe('claude-haiku-4-5-20251001');
+  });
+
+  test('injects server_tool_use for web_search tool calls', async () => {
+    const t = createGeminiToAnthropicStream('claude-haiku-4-5-20251001');
+    const sse = makeGeminiSSE([
+      {
+        candidates: [
+          {
+            content: {
+              role: 'model',
+              parts: [{ functionCall: { name: 'web_search', args: { query: 'test' } } }],
+            },
+            finishReason: 'STOP',
+          },
+        ],
+        usageMetadata: { promptTokenCount: 20, candidatesTokenCount: 30 },
+      },
+    ]);
+    const events = await collectGeminiStream(t, sse);
+    const delta = events.find((e) => e.event === 'message_delta');
+    expect(delta).toBeDefined();
+    const usage = (delta!.data as any).usage;
+    expect(usage.server_tool_use).toBeDefined();
+    expect(usage.server_tool_use.web_search_requests).toBe(1);
+    expect(usage.server_tool_use.web_fetch_requests).toBe(0);
+  });
+
+  test('injects server_tool_use for web_fetch tool calls', async () => {
+    const t = createGeminiToAnthropicStream();
+    const sse = makeGeminiSSE([
+      {
+        candidates: [
+          {
+            content: {
+              role: 'model',
+              parts: [{ functionCall: { name: 'web_fetch', args: { url: 'https://x.com' } } }],
+            },
+            finishReason: 'STOP',
+          },
+        ],
+      },
+    ]);
+    const events = await collectGeminiStream(t, sse);
+    const usage = (events.find((e) => e.event === 'message_delta')!.data as any).usage;
+    expect(usage.server_tool_use.web_search_requests).toBe(0);
+    expect(usage.server_tool_use.web_fetch_requests).toBe(1);
+  });
+
+  test('does NOT inject server_tool_use when no web tools used', async () => {
+    const t = createGeminiToAnthropicStream();
+    const sse = makeGeminiSSE([
+      {
+        candidates: [
+          {
+            content: { role: 'model', parts: [{ text: 'just text' }] },
+            finishReason: 'STOP',
+          },
+        ],
+      },
+    ]);
+    const events = await collectGeminiStream(t, sse);
+    const usage = (events.find((e) => e.event === 'message_delta')!.data as any).usage;
+    expect(usage.server_tool_use).toBeUndefined();
+  });
+
+  test('counts multiple web tools across parts', async () => {
+    const t = createGeminiToAnthropicStream();
+    const sse = makeGeminiSSE([
+      {
+        candidates: [
+          {
+            content: {
+              role: 'model',
+              parts: [
+                { functionCall: { name: 'web_search', args: { query: 'a' } } },
+                { functionCall: { name: 'web_search', args: { query: 'b' } } },
+                { functionCall: { name: 'web_fetch', args: { url: 'x' } } },
+              ],
+            },
+            finishReason: 'STOP',
+          },
+        ],
+      },
+    ]);
+    const events = await collectGeminiStream(t, sse);
+    const usage = (events.find((e) => e.event === 'message_delta')!.data as any).usage;
+    expect(usage.server_tool_use.web_search_requests).toBe(2);
+    expect(usage.server_tool_use.web_fetch_requests).toBe(1);
+  });
+
+  test('produces complete SSE sequence: start → block → delta → message_delta → stop', async () => {
+    const t = createGeminiToAnthropicStream('claude-haiku-4-5');
+    const sse = makeGeminiSSE([
+      {
+        candidates: [
+          {
+            content: { role: 'model', parts: [{ text: 'Hello world' }] },
+            finishReason: 'STOP',
+          },
+        ],
+        usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 3 },
+      },
+    ]);
+    const events = await collectGeminiStream(t, sse);
+    const types = events.map((e) => e.event);
+    expect(types).toContain('message_start');
+    expect(types).toContain('content_block_start');
+    expect(types).toContain('content_block_delta');
+    expect(types).toContain('content_block_stop');
+    expect(types).toContain('message_delta');
+    expect(types).toContain('message_stop');
+  });
+
+  test('handles empty SSE gracefully', async () => {
+    const t = createGeminiToAnthropicStream();
+    // No data — just close
+    t.end();
+    // Should not throw
+    expect(true).toBe(true);
+  });
+
+  test('maps Gemini MAX_TOKENS to anthropic max_tokens stop_reason', async () => {
+    const t = createGeminiToAnthropicStream();
+    const sse = makeGeminiSSE([
+      {
+        candidates: [
+          {
+            content: { role: 'model', parts: [{ text: 'incomplete...' }] },
+            finishReason: 'MAX_TOKENS',
+          },
+        ],
+      },
+    ]);
+    const events = await collectGeminiStream(t, sse);
+    const delta = events.find((e) => e.event === 'message_delta');
+    expect((delta!.data as any).delta.stop_reason).toBe('max_tokens');
+  });
+
+  test('maps Gemini MALFORMED_FUNCTION_CALL to anthropic tool_use', async () => {
+    const t = createGeminiToAnthropicStream();
+    const sse = makeGeminiSSE([
+      {
+        candidates: [
+          {
+            content: { role: 'model', parts: [] },
+            finishReason: 'MALFORMED_FUNCTION_CALL',
+          },
+        ],
+      },
+    ]);
+    const events = await collectGeminiStream(t, sse);
+    const delta = events.find((e) => e.event === 'message_delta');
+    expect((delta!.data as any).delta.stop_reason).toBe('tool_use');
+  });
+});
+
+// =========================================================================
+// translateResponse — model trust for non-claude slot overrides
+// =========================================================================
+
+describe('translateResponse model trust', () => {
+  test('uses claude-* model when given haiku:deepseek-v4-flash', () => {
+    const result = translateResponse(
+      {
+        id: 'resp_1',
+        object: '',
+        created: 0,
+        model: '',
+        choices: [
+          {
+            index: 0,
+            message: { role: 'assistant', content: 'test' },
+            finish_reason: 'stop',
+          },
+        ],
+      },
+      'haiku:deepseek-v4-flash',
+    );
+    expect(result.model).toBe('claude-haiku-4-5-20251001');
+  });
+
+  test('uses claude-* model when given sonnet:deepseek-v4-pro', () => {
+    const result = translateResponse(
+      {
+        id: 'resp_2',
+        object: '',
+        created: 0,
+        model: '',
+        choices: [
+          {
+            index: 0,
+            message: { role: 'assistant', content: 'test' },
+            finish_reason: 'stop',
+          },
+        ],
+      },
+      'sonnet:deepseek-v4-pro',
+    );
+    expect(result.model).toBe('claude-sonnet-4-6');
+  });
+
+  test('passes through claude-* models unchanged', () => {
+    const result = translateResponse(
+      {
+        id: 'resp_3',
+        object: '',
+        created: 0,
+        model: '',
+        choices: [
+          {
+            index: 0,
+            message: { role: 'assistant', content: 'test' },
+            finish_reason: 'stop',
+          },
+        ],
+      },
+      'haiku:claude-haiku-4-5-20251001',
+    );
+    expect(result.model).toBe('claude-haiku-4-5-20251001');
+  });
+});
