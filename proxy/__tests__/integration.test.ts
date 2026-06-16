@@ -270,6 +270,29 @@ describe('Proxy integration tests', () => {
     expect((res2.body as Record<string, unknown>).status).toBe('ok');
   });
 
+  test('concurrent TCP connections beyond the first are rejected', async () => {
+    // The proxy only allows one active TCP connection. When two concurrent
+    // requests race (each with agent:false = fresh connection), one must
+    // succeed and the other must be rejected.
+    const results = await Promise.allSettled([
+      request('GET', '/health'),
+      request('GET', '/health'),
+    ]);
+
+    const fulfilled = results.filter((r) => r.status === 'fulfilled');
+    const rejected = results.filter((r) => r.status === 'rejected');
+
+    // At least one must succeed (the first connection accepted)
+    expect(fulfilled.length).toBeGreaterThanOrEqual(1);
+    if (fulfilled.length > 0) {
+      const res = (fulfilled[0] as PromiseFulfilledResult<Awaited<ReturnType<typeof request>>>)
+        .value;
+      expect(res.status).toBe(200);
+    }
+    // At least one must be rejected (the second connection destroyed)
+    expect(rejected.length).toBeGreaterThanOrEqual(1);
+  });
+
   test('POST /v1/messages without Content-Type header is rejected with 415', async () => {
     const res = await request('POST', '/v1/messages', {
       body: JSON.stringify({}),
