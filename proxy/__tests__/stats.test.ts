@@ -1004,6 +1004,79 @@ describe('recordSpend — pricing edge cases', () => {
     const data = JSON.parse(raw);
     expect(data.current_model).toBe('deepseek-v4-pro');
   });
+
+  test('writeCcSpend bootstraps cc-active.json from CLAUDE_CODE_SESSION_ID', async () => {
+    // When no cc-active.json exists yet (statusline hasn't run), the proxy
+    // should bootstrap it from the env var so the first request's spend is
+    // attributed instead of silently lost.
+    const sessionId = 'test-bootstrap-session';
+    const prevId = process.env.CLAUDE_CODE_SESSION_ID;
+    try {
+      process.env.CLAUDE_CODE_SESSION_ID = sessionId;
+
+      // No cc-active.json in temp dir yet
+      const ccActivePath = path.join(tmpDir, 'cc-active.json');
+      expect(fs.existsSync(ccActivePath)).toBe(false);
+
+      await recordSpend(
+        'deepseek-v4-pro',
+        { prompt_tokens: 100_000, completion_tokens: 1_000 },
+        'ds',
+      );
+
+      // cc-active.json should have been bootstrapped from the env var
+      expect(fs.existsSync(ccActivePath)).toBe(true);
+      const activeData = JSON.parse(fs.readFileSync(ccActivePath, 'utf-8'));
+      expect(activeData.sessionId).toBe(sessionId);
+      expect(typeof activeData.timestamp).toBe('number');
+
+      // cc-spend-<sessionId>.json should exist with the accumulated spend
+      const ccSpendPath = path.join(tmpDir, `cc-spend-${sessionId}.json`);
+      expect(fs.existsSync(ccSpendPath)).toBe(true);
+      const spendVal = parseFloat(fs.readFileSync(ccSpendPath, 'utf-8').trim());
+      expect(spendVal).toBeGreaterThan(0);
+    } finally {
+      if (prevId !== undefined) process.env.CLAUDE_CODE_SESSION_ID = prevId;
+      else delete process.env.CLAUDE_CODE_SESSION_ID;
+    }
+  });
+
+  test('writeCcSpend does not lose spend when no active session', async () => {
+    // Without CLAUDE_CODE_SESSION_ID and without cc-active.json, previous
+    // code would reset ccPendingSpend to 0, silently losing the money.
+    // Now it should keep the pending spend. Verify that the spend doesn't
+    // appear in a cc-spend file but also doesn't crash or error.
+    const prevId = process.env.CLAUDE_CODE_SESSION_ID;
+    try {
+      delete process.env.CLAUDE_CODE_SESSION_ID;
+
+      // Ensure no cc-active.json exists
+      const ccActivePath = path.join(tmpDir, 'cc-active.json');
+      try {
+        fs.unlinkSync(ccActivePath);
+      } catch (_) {}
+
+      // recordSpend should complete without error even without a session
+      await recordSpend(
+        'deepseek-v4-pro',
+        { prompt_tokens: 100_000, completion_tokens: 1_000 },
+        'ds',
+      );
+
+      // The main spend.json should still be written (provider-level tracking)
+      expect(fs.existsSync(tmpFile)).toBe(true);
+      const raw = fs.readFileSync(tmpFile, 'utf-8');
+      const data = JSON.parse(raw);
+      expect(data.total).toBeGreaterThan(0);
+
+      // No cc-spend file should exist (no session to attribute to)
+      const files = fs.readdirSync(tmpDir).filter((f: string) => f.startsWith('cc-spend-'));
+      expect(files.length).toBe(0);
+    } finally {
+      if (prevId !== undefined) process.env.CLAUDE_CODE_SESSION_ID = prevId;
+      else delete process.env.CLAUDE_CODE_SESSION_ID;
+    }
+  });
 });
 
 describe('recordProviderSpend extended', () => {

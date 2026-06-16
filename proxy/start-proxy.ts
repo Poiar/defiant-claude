@@ -515,6 +515,11 @@ if (probeIdx >= 2) {
       }
     }
 
+    // --- Single-tenant enforcement ---
+    // Reject model calls from a different CC session (different x-api-key).
+    // Health/dashboard/metrics endpoints are exempt to allow statusline probes.
+    if (rejectOtherSession(req, res)) return;
+
     // --- Rate limit check ---
     const clientIp = req.socket.remoteAddress || '127.0.0.1';
     const rateCheck = mainRateLimiter.check(clientIp);
