@@ -25,6 +25,27 @@ echo "  node --check..."
 node --check "$DIR/proxy/launcher.mjs" || FAIL=1
 node --check "$DIR/statusline/statusline.mjs" || FAIL=1
 
+# ── Secret scanning ──────────────────────────────────────────
+# Scans staged changes for common API key patterns.
+# Test files (proxy/__tests__/) are excluded — they use placeholders.
+echo "  secret-scan..."
+SECRETS_FOUND=0
+SCAN_FILES="$(git -C "$DIR" diff --cached --name-only --diff-filter=ACM | grep -v 'proxy/__tests__/' | grep -v 'node_modules/' || true)"
+if [ -n "$SCAN_FILES" ]; then
+  # Brave API keys (BSA...)
+  HITS="$(echo "$SCAN_FILES" | xargs grep -nE 'BSA[A-Za-z0-9_]{10,}' 2>/dev/null)" && [ -n "$HITS" ] && { echo "$HITS"; SECRETS_FOUND=1; }
+  # OpenAI keys (sk-...) — exclude test placeholders
+  HITS="$(echo "$SCAN_FILES" | xargs grep -nE 'sk-[A-Za-z0-9]{20,}' 2>/dev/null | grep -v 'test-key' | grep -v 'sk-your-key')" && [ -n "$HITS" ] && { echo "$HITS"; SECRETS_FOUND=1; }
+  # Anthropic keys
+  HITS="$(echo "$SCAN_FILES" | xargs grep -nE 'sk-ant-[A-Za-z0-9\-_]{20,}' 2>/dev/null)" && [ -n "$HITS" ] && { echo "$HITS"; SECRETS_FOUND=1; }
+  # Generic KEY=longvalue patterns
+  HITS="$(echo "$SCAN_FILES" | xargs grep -niE '(api[_-]?key|secret|token|password).{0,3}[:=].{0,3}[A-Za-z0-9_\-]{20,}' 2>/dev/null | grep -v 'test-key' | grep -v 'sk-your-key' | grep -v 'secret_key:')" && [ -n "$HITS" ] && { echo "$HITS"; SECRETS_FOUND=1; }
+fi
+if [ "$SECRETS_FOUND" -ne 0 ]; then
+  echo "  ✗ Secrets detected! Remove them before committing."
+  FAIL=1
+fi
+
 # ── JSON validity ──────────────────────────────────────────────
 echo "  JSON..."
 node --eval "JSON.parse(require('node:fs').readFileSync(process.argv[1],'utf-8'))" "$DIR/package.json" || FAIL=1
@@ -32,7 +53,7 @@ node --eval "JSON.parse(require('node:fs').readFileSync(process.argv[1],'utf-8')
 
 if [ "$FAIL" -ne 0 ]; then
   echo ""
-  echo "Commit blocked — linting failed. Fix the above and retry."
+  echo "Commit blocked — fix the above and retry."
   exit 1
 fi
 

@@ -602,7 +602,7 @@ export async function webSearchStructured(query: string): Promise<SearchResult[]
   if (cached) return cached;
 
   // Env-controlled engine selection. Default: all three.
-  const engines = (process.env.DEEPCLAUDE_SEARCH_ENGINES || 'ddg,searxng,brave')
+  const engines = (process.env.DEEPCLAUDE_SEARCH_ENGINES || 'brave')
     .toLowerCase()
     .split(',')
     .map((s) => s.trim());
