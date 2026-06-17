@@ -29,6 +29,8 @@ import {
 
 const mockHttpsGet = jest.fn();
 const mockHttpsRequest = jest.fn();
+const mockHttpGet = jest.fn();
+const mockHttpRequest = jest.fn();
 const mockDnsLookup = jest.fn();
 const mockValidateUrl = jest.fn();
 
@@ -36,6 +38,12 @@ jest.mock('https', () => ({
   ...jest.requireActual('https'),
   get: (...args: any[]) => mockHttpsGet(...args),
   request: (...args: any[]) => mockHttpsRequest(...args),
+}));
+
+jest.mock('http', () => ({
+  ...jest.requireActual('http'),
+  get: (...args: any[]) => mockHttpGet(...args),
+  request: (...args: any[]) => mockHttpRequest(...args),
 }));
 
 jest.mock('dns', () => ({
@@ -1220,6 +1228,8 @@ describe('webSearch', () => {
     _resetFetchSlots();
     mockHttpsRequest.mockReset();
     mockHttpsGet.mockReset();
+    mockHttpGet.mockReset();
+    mockHttpRequest.mockReset();
     mockFetch.mockReset();
     process.env.DEEPCLAUDE_SEARCH_ENGINES = 'ddg';
   });
@@ -1319,6 +1329,8 @@ describe('webSearchStructured', () => {
     _resetFetchSlots();
     mockHttpsRequest.mockReset();
     mockHttpsGet.mockReset();
+    mockHttpGet.mockReset();
+    mockHttpRequest.mockReset();
     mockFetch.mockReset();
     process.env.DEEPCLAUDE_SEARCH_ENGINES = 'ddg';
   });
@@ -1377,6 +1389,8 @@ describe('search engine backends', () => {
     _resetFetchSlots();
     mockHttpsRequest.mockReset();
     mockHttpsGet.mockReset();
+    mockHttpGet.mockReset();
+    mockHttpRequest.mockReset();
     mockFetch.mockReset();
   });
 
@@ -1461,6 +1475,127 @@ describe('search engine backends', () => {
 
     const results = await webSearchStructured('test malformed');
     expect(results.length).toBe(0);
+  });
+
+  test('SearXNG: uses http.get for http:// self-hosted URL', async () => {
+    // When DEEPCLAUDE_SEARXNG_URL is http://, the transport must be http, not https
+    process.env.DEEPCLAUDE_SEARCH_ENGINES = 'searxng';
+    process.env.DEEPCLAUDE_SEARXNG_URL = 'http://localhost:8888/search?format=json&q=';
+    process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
+    delete process.env.XNG_SEARXNG_INSTANCES;
+
+    mockHttpGet.mockImplementation((_url: string, _opts: any, cb: any) => {
+      const res = makeMockResponse({ contentType: 'application/json' });
+      setTimeout(() => {
+        cb(res);
+        fireDataEnd(
+          res,
+          JSON.stringify({
+            results: [
+              {
+                url: 'https://local-result.com',
+                title: 'Local SearXNG',
+                content: 'From localhost',
+              },
+            ],
+          }),
+        );
+      }, 0);
+      const req = { on: jest.fn().mockReturnThis(), destroy: jest.fn() };
+      return req as any;
+    });
+
+    const results = await webSearchStructured('test local');
+    expect(results.length).toBe(1);
+    expect(results[0].title).toBe('Local SearXNG');
+    expect(results[0].url).toBe('https://local-result.com');
+    expect(results[0].snippet).toBe('From localhost');
+
+    // https.get should NOT have been called for http:// URL
+    expect(mockHttpsGet).not.toHaveBeenCalled();
+    // http.get SHOULD have been called
+    expect(mockHttpGet).toHaveBeenCalled();
+
+    delete process.env.DEEPCLAUDE_SEARXNG_URL;
+  });
+
+  test('SearXNG: uses https.get for https:// self-hosted URL', async () => {
+    process.env.DEEPCLAUDE_SEARCH_ENGINES = 'searxng';
+    process.env.DEEPCLAUDE_SEARXNG_URL = 'https://searx.example.com/search?format=json&q=';
+    process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
+    delete process.env.XNG_SEARXNG_INSTANCES;
+
+    mockHttpsGet.mockImplementation((_url: string, _opts: any, cb: any) => {
+      const res = makeMockResponse({ contentType: 'application/json' });
+      setTimeout(() => {
+        cb(res);
+        fireDataEnd(
+          res,
+          JSON.stringify({
+            results: [
+              { url: 'https://remote-result.com', title: 'Remote SearXNG', content: 'From HTTPS' },
+            ],
+          }),
+        );
+      }, 0);
+      const req = { on: jest.fn().mockReturnThis(), destroy: jest.fn() };
+      return req as any;
+    });
+
+    const results = await webSearchStructured('test remote');
+    expect(results.length).toBe(1);
+    expect(results[0].title).toBe('Remote SearXNG');
+
+    // https.get SHOULD have been called for https:// URL
+    expect(mockHttpsGet).toHaveBeenCalled();
+    // http.get should NOT have been called
+    expect(mockHttpGet).not.toHaveBeenCalled();
+
+    delete process.env.DEEPCLAUDE_SEARXNG_URL;
+  });
+
+  test('SearXNG: falls back to hardcoded instances when self-hosted fails', async () => {
+    process.env.DEEPCLAUDE_SEARCH_ENGINES = 'searxng';
+    process.env.DEEPCLAUDE_SEARXNG_URL = 'http://localhost:9999/search?format=json&q=';
+    process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
+    delete process.env.XNG_SEARXNG_INSTANCES;
+
+    // Self-hosted URL fails with error
+    mockHttpGet.mockImplementation((_url: string, _opts: any, _cb: any) => {
+      const req = { on: jest.fn().mockReturnThis(), destroy: jest.fn() };
+      // Simulate error on the request
+      setTimeout(() => {
+        const errorCb = (req.on as jest.Mock).mock.calls.find(
+          (call: string[]) => call[0] === 'error',
+        );
+        if (errorCb) errorCb[1](new Error('ECONNREFUSED'));
+      }, 0);
+      return req as any;
+    });
+
+    // First hardcoded fallback (https://etsi.me) succeeds via mockHttpsGet
+    mockHttpsGet.mockImplementation((_url: string, _opts: any, cb: any) => {
+      const res = makeMockResponse({ contentType: 'application/json' });
+      setTimeout(() => {
+        cb(res);
+        fireDataEnd(
+          res,
+          JSON.stringify({
+            results: [
+              { url: 'https://fallback-result.com', title: 'Fallback', content: 'From fallback' },
+            ],
+          }),
+        );
+      }, 0);
+      const req = { on: jest.fn().mockReturnThis(), destroy: jest.fn() };
+      return req as any;
+    });
+
+    const results = await webSearchStructured('test fallback');
+    // Should get results from the fallback instance
+    expect(results.length).toBeGreaterThanOrEqual(1);
+
+    delete process.env.DEEPCLAUDE_SEARXNG_URL;
   });
 
   test('Brave: parses API response correctly', async () => {
@@ -1847,6 +1982,8 @@ describe('populateToolResults', () => {
     _resetDdgCookies();
     mockHttpsRequest.mockReset();
     mockHttpsGet.mockReset();
+    mockHttpGet.mockReset();
+    mockHttpRequest.mockReset();
     mockFetch.mockReset();
     process.env.DEEPCLAUDE_SEARCH_ENGINES = 'ddg';
   });

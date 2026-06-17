@@ -534,17 +534,21 @@ import { execSync } from 'child_process';
 
 function envWithRegistry(name: string): string | undefined {
   if (process.env[name]) return process.env[name];
-  // Fallback: read Windows Registry (HKCU\Environment) for detached proxy starts
+  // Fallback: read Windows Registry (HKCU\Environment) for detached proxy starts.
+  // Use PowerShell instead of reg.exe to avoid MSYS2 path mangling of HKCU\Environment.
   if (process.platform === 'win32') {
     try {
-      const out = execSync(`reg query "HKCU\\Environment" /v ${name}`, {
-        encoding: 'utf8',
-        windowsHide: true,
-        timeout: 2000,
-        stdio: ['ignore', 'pipe', 'ignore'],
-      });
-      const m = out.match(new RegExp(name + '\\s+REG_\\w+\\s+(.+)'));
-      if (m) return m[1].trim();
+      const out = execSync(
+        `powershell -NoProfile -Command "Get-ItemProperty -Path 'HKCU:\\Environment' -Name '${name}' | Select-Object -ExpandProperty '${name}'"`,
+        {
+          encoding: 'utf8',
+          windowsHide: true,
+          timeout: 3000,
+          stdio: ['ignore', 'pipe', 'ignore'],
+        },
+      );
+      const trimmed = out.trim();
+      if (trimmed) return trimmed;
     } catch {
       // Key not in registry — return undefined
     }
@@ -557,8 +561,10 @@ export async function webSearchStructured(query: string): Promise<SearchResult[]
   const cached = structuredSearchCache.get(query);
   if (cached) return cached;
 
-  // Env-controlled engine selection. Default: all three.
-  const engines = (envWithRegistry('DEEPCLAUDE_SEARCH_ENGINES') || 'brave')
+  // Env-controlled engine selection.
+  // Default: ddg first (free, no key), then searxng (free, no key).
+  // Add 'brave' when DEEPCLAUDE_BRAVE_API_KEY is set (2000 free calls/mo).
+  const engines = (envWithRegistry('DEEPCLAUDE_SEARCH_ENGINES') || 'ddg,searxng')
     .toLowerCase()
     .split(',')
     .map((s) => s.trim());
@@ -640,7 +646,8 @@ async function searchSearXNG(query: string): Promise<SearchResult[]> {
   const fetchOne = (baseUrl: string): Promise<SearchResult[]> =>
     new Promise<SearchResult[]>((resolve) => {
       const url = baseUrl + encodeURIComponent(query);
-      const req = https.get(
+      const transport = url.startsWith('https://') ? https : http;
+      const req = transport.get(
         url,
         {
           headers: {
