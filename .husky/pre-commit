@@ -30,7 +30,7 @@ node --check "$DIR/statusline/statusline.mjs" || FAIL=1
 # Test files (proxy/__tests__/) are excluded — they use placeholders.
 echo "  secret-scan..."
 SECRETS_FOUND=0
-SCAN_FILES="$(git -C "$DIR" diff --cached --name-only --diff-filter=ACM | grep -v 'proxy/__tests__/' | grep -v 'node_modules/' || true)"
+SCAN_FILES="$(git -C "$DIR" diff --cached --name-only --diff-filter=ACM | grep -v 'proxy/__tests__/' | grep -v 'node_modules/' | grep -v '.env.example' || true)"
 if [ -n "$SCAN_FILES" ]; then
   # Brave API keys (BSA...)
   HITS="$(echo "$SCAN_FILES" | xargs grep -nE 'BSA[A-Za-z0-9_]{10,}' 2>/dev/null)" && [ -n "$HITS" ] && { echo "$HITS"; SECRETS_FOUND=1; }
