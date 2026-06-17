@@ -7,6 +7,7 @@ import {
   isPassthroughProvider,
   stripProviderFields,
   stripSystemBillingHeader,
+  stripCacheControl,
   serializeSSEEvent,
   parseSSEEventData,
   parseSSEEventRaw,
@@ -1328,5 +1329,144 @@ describe('stripSystemBillingHeader', () => {
     const sys = body.system as Array<Record<string, unknown>>;
     expect(sys.length).toBe(1);
     expect(sys[0].text).toBe('You are Claude Code.');
+  });
+});
+
+// =========================================================================
+// stripCacheControl — removes Anthropic prompt-caching metadata from blocks
+// =========================================================================
+
+describe('stripCacheControl', () => {
+  test('strips cache_control from tool_result blocks', () => {
+    const body: Record<string, unknown> = {
+      model: 'deepseek-v4-pro',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'call_1',
+              content: 'ok',
+              cache_control: { type: 'ephemeral' },
+            },
+          ],
+        },
+      ],
+    };
+    const modified = stripCacheControl(body);
+    expect(modified).toBe(true);
+    const block = (body.messages as Array<Record<string, unknown>>)[0].content as Array<
+      Record<string, unknown>
+    >;
+    expect(block[0]).not.toHaveProperty('cache_control');
+  });
+
+  test('no cache_control → no-op', () => {
+    const body: Record<string, unknown> = {
+      model: 'deepseek-v4-pro',
+      messages: [
+        { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call_1', content: 'ok' }] },
+      ],
+    };
+    const modified = stripCacheControl(body);
+    expect(modified).toBe(false);
+  });
+
+  test('no messages → no-op', () => {
+    const body: Record<string, unknown> = { model: 'deepseek-v4-pro' };
+    const modified = stripCacheControl(body);
+    expect(modified).toBe(false);
+  });
+
+  test('strips multiple cache_control blocks', () => {
+    const body: Record<string, unknown> = {
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'tool_result', tool_use_id: 'a', cache_control: { type: 'ephemeral' } },
+          ],
+        },
+        {
+          role: 'user',
+          content: [
+            { type: 'tool_result', tool_use_id: 'b', cache_control: { type: 'ephemeral' } },
+          ],
+        },
+      ],
+    };
+    const modified = stripCacheControl(body);
+    expect(modified).toBe(true);
+    const msgs = body.messages as Array<Record<string, unknown>>;
+    for (const msg of msgs) {
+      for (const block of msg.content as Array<Record<string, unknown>>) {
+        expect(block).not.toHaveProperty('cache_control');
+      }
+    }
+  });
+
+  test('other block fields preserved', () => {
+    const body: Record<string, unknown> = {
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'call_1',
+              content: 'ok',
+              is_error: false,
+              cache_control: { type: 'ephemeral' },
+            },
+          ],
+        },
+      ],
+    };
+    stripCacheControl(body);
+    const block = (body.messages as Array<Record<string, unknown>>)[0].content as Array<
+      Record<string, unknown>
+    >;
+    expect(block[0].type).toBe('tool_result');
+    expect(block[0].tool_use_id).toBe('call_1');
+    expect(block[0].content).toBe('ok');
+    expect(block[0].is_error).toBe(false);
+  });
+
+  test('full strip pipeline: metadata + billing + cache_control', () => {
+    const ds = getConstraints('ds');
+    const body: Record<string, unknown> = {
+      model: 'deepseek-v4-pro',
+      metadata: { user_id: 'session-123' },
+      system: [
+        { type: 'text', text: 'x-anthropic-billing-header: cch=abc12;' },
+        { type: 'text', text: 'You are Claude Code.' },
+      ],
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'call_1',
+              content: 'ok',
+              cache_control: { type: 'ephemeral' },
+            },
+          ],
+        },
+      ],
+    };
+    const s1 = stripProviderFields(body, ds);
+    const s2 = stripSystemBillingHeader(body);
+    const s3 = stripCacheControl(body);
+    expect(s1).toBe(true);
+    expect(s2).toBe(true);
+    expect(s3).toBe(true);
+    expect(body).not.toHaveProperty('metadata');
+    expect((body.system as Array<Record<string, unknown>>).length).toBe(1);
+    const block = (body.messages as Array<Record<string, unknown>>)[0].content as Array<
+      Record<string, unknown>
+    >;
+    expect(block[0]).not.toHaveProperty('cache_control');
   });
 });

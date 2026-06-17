@@ -838,6 +838,33 @@ export function stripSystemBillingHeader(body: Record<string, unknown>): boolean
   return false;
 }
 
+/**
+ * Strip Anthropic prompt-caching `cache_control` from all content blocks.
+ * CC tags the last turn's tool_result with `cache_control: {type:"ephemeral"}`
+ * to mark it for Anthropic's prompt cache. Non-Anthropic providers don't
+ * implement this — the field is dead weight that adds per-request variance
+ * (which message is "last" changes every turn).
+ *
+ * Returns true if any cache_control blocks were stripped.
+ */
+export function stripCacheControl(body: Record<string, unknown>): boolean {
+  const messages = body.messages;
+  if (!Array.isArray(messages)) return false;
+  let stripped = false;
+  for (const msg of messages) {
+    if (!msg || typeof msg !== 'object') continue;
+    const content = (msg as Record<string, unknown>).content;
+    if (!Array.isArray(content)) continue;
+    for (const block of content) {
+      if (block && typeof block === 'object' && 'cache_control' in block) {
+        delete (block as Record<string, unknown>).cache_control;
+        stripped = true;
+      }
+    }
+  }
+  return stripped;
+}
+
 // --- SSE Serialization Helpers ---------------------------------------------
 
 function sseLine(event: string, data: unknown): string {
