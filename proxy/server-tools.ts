@@ -562,9 +562,9 @@ export async function webSearchStructured(query: string): Promise<SearchResult[]
   if (cached) return cached;
 
   // Env-controlled engine selection.
-  // Default: ddg first (free, no key), then searxng (free, no key).
+  // Default: searxng first (local Docker, fastest), then ddg (free, no key).
   // Add 'brave' when DEEPCLAUDE_BRAVE_API_KEY is set (2000 free calls/mo).
-  const engines = (envWithRegistry('DEEPCLAUDE_SEARCH_ENGINES') || 'ddg,searxng')
+  const engines = (envWithRegistry('DEEPCLAUDE_SEARCH_ENGINES') || 'searxng,ddg')
     .toLowerCase()
     .split(',')
     .map((s) => s.trim());
