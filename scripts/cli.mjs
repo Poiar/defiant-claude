@@ -34,7 +34,7 @@ const SLOTS = ['opus', 'sonnet', 'haiku', 'subagent', 'fable'];
 const IS_WIN = platform() === 'win32';
 const NPX = IS_WIN ? 'npx.cmd' : 'npx';
 // Claude Code installs as 'claude.cmd' on Windows, 'claude' on Unix.
-const CLAUDE = IS_WIN ? 'claude.cmd' : 'claude';
+const CLAUDE = 'claude';
 
 // ─── Shell-safe spawn helpers (avoid DEP0190 on Windows) ─────────────
 // On Windows, .cmd files require shell:true, but passing args with
