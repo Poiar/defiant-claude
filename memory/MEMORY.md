@@ -12,3 +12,4 @@
 - [Fingerprint Cache Key Antipattern](fingerprint-cache-key-antipattern.md) — Don't use last-N-message fingerprints as cache keys. Sliding window shifts between turns.
 - [Model Trust for Server Tool Use](model-trust-for-server-tool-use.md) — CC ignores server_tool_use unless response model starts with claude-; proxy rewrites it
 - [Safe Proxy Restart](safe-proxy-restart.md) — Detached restart kills session; use --watch or restart from another terminal
+- [SearXNG Setup](searxng-setup.md) — Local Docker SearXNG on port 8888, registry key, default engine order, http transport
