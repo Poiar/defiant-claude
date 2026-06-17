@@ -810,34 +810,32 @@ export function stripProviderFields(
 }
 
 /**
- * Normalize session-varying fields in the system prompt's billing header.
- * Claude Code injects a `cch` hash that changes every request (119 unique
- * values observed across 125 dumps). Replace it with a stable value so
- * DeepSeek's disk cache recognizes the prefix across requests.
+ * Strip the x-anthropic-billing-header text block from the system prompt.
+ * Claude Code injects this as `system[0]` — it contains a `cch` hash that
+ * changes every request (119 unique values in 125 dumps) and a `cc_version`
+ * that varies across CC auto-updates. It is Anthropic billing metadata with
+ * no meaning outside Anthropic's API. Stripping it entirely keeps the
+ * upstream body stable for DeepSeek's disk cache.
  *
- * The billing header sits in `system[0].text` as:
- *   x-anthropic-billing-header: cc_version=2.1.177.841; cc_entrypoint=cli; cch=<HEX>;
- *
- * Returns true if any changes were made.
+ * Returns true if the billing header was stripped.
  */
-export function normalizeSystemBillingHeader(body: Record<string, unknown>): boolean {
+export function stripSystemBillingHeader(body: Record<string, unknown>): boolean {
   const system = body.system;
   if (!Array.isArray(system)) return false;
-  let modified = false;
-  for (const block of system) {
-    if (block && typeof block === 'object' && (block as Record<string, unknown>).type === 'text') {
-      const b = block as Record<string, unknown>;
-      if (typeof b.text === 'string' && (b.text as string).includes('x-anthropic-billing-header')) {
-        const original = b.text as string;
-        const normalized = original.replace(/cch=[a-fA-F0-9]+;/, 'cch=0000000000000000;');
-        if (normalized !== original) {
-          b.text = normalized;
-          modified = true;
-        }
-      }
+  for (let i = 0; i < system.length; i++) {
+    const block = system[i];
+    if (
+      block &&
+      typeof block === 'object' &&
+      (block as Record<string, unknown>).type === 'text' &&
+      typeof (block as Record<string, unknown>).text === 'string' &&
+      ((block as Record<string, unknown>).text as string).includes('x-anthropic-billing-header')
+    ) {
+      system.splice(i, 1);
+      return true;
     }
   }
-  return modified;
+  return false;
 }
 
 // --- SSE Serialization Helpers ---------------------------------------------

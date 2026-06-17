@@ -6,7 +6,7 @@ import {
   isAnthropicProvider,
   isPassthroughProvider,
   stripProviderFields,
-  normalizeSystemBillingHeader,
+  stripSystemBillingHeader,
   serializeSSEEvent,
   parseSSEEventData,
   parseSSEEventRaw,
@@ -1177,11 +1177,11 @@ describe('stripProviderFields', () => {
 });
 
 // =========================================================================
-// normalizeSystemBillingHeader — stabilizes cch hash for disk cache
+// stripSystemBillingHeader — removes Anthropic billing header from system
 // =========================================================================
 
-describe('normalizeSystemBillingHeader', () => {
-  test('normalizes cch in billing header text block', () => {
+describe('stripSystemBillingHeader', () => {
+  test('strips billing header block from system array', () => {
     const body: Record<string, unknown> = {
       model: 'deepseek-v4-pro',
       system: [
@@ -1196,11 +1196,11 @@ describe('normalizeSystemBillingHeader', () => {
         },
       ],
     };
-    const modified = normalizeSystemBillingHeader(body);
+    const modified = stripSystemBillingHeader(body);
     expect(modified).toBe(true);
-    const sys0 = (body.system as Array<Record<string, unknown>>)[0];
-    expect(sys0.text).toContain('cch=0000000000000000;');
-    expect(sys0.text).not.toContain('cch=6d025;');
+    const sys = body.system as Array<Record<string, unknown>>;
+    expect(sys.length).toBe(1);
+    expect(sys[0].text).toBe("You are Claude Code, Anthropic's official CLI for Claude.");
   });
 
   test('no billing header → no-op', () => {
@@ -1213,8 +1213,9 @@ describe('normalizeSystemBillingHeader', () => {
         },
       ],
     };
-    const modified = normalizeSystemBillingHeader(body);
+    const modified = stripSystemBillingHeader(body);
     expect(modified).toBe(false);
+    expect((body.system as Array<Record<string, unknown>>).length).toBe(1);
   });
 
   test('non-array system → no-op', () => {
@@ -1222,8 +1223,9 @@ describe('normalizeSystemBillingHeader', () => {
       model: 'deepseek-v4-pro',
       system: 'plain string system prompt',
     };
-    const modified = normalizeSystemBillingHeader(body);
+    const modified = stripSystemBillingHeader(body);
     expect(modified).toBe(false);
+    expect(body.system).toBe('plain string system prompt');
   });
 
   test('no system field → no-op', () => {
@@ -1231,11 +1233,11 @@ describe('normalizeSystemBillingHeader', () => {
       model: 'deepseek-v4-pro',
       messages: [],
     };
-    const modified = normalizeSystemBillingHeader(body);
+    const modified = stripSystemBillingHeader(body);
     expect(modified).toBe(false);
   });
 
-  test('other system blocks preserved unchanged', () => {
+  test('other system blocks preserved after strip', () => {
     const body: Record<string, unknown> = {
       system: [
         {
@@ -1254,58 +1256,30 @@ describe('normalizeSystemBillingHeader', () => {
         },
       ],
     };
-    normalizeSystemBillingHeader(body);
+    stripSystemBillingHeader(body);
     const sys = body.system as Array<Record<string, unknown>>;
-    expect(sys[1].text).toBe('You are Claude Code.');
+    expect(sys.length).toBe(2);
+    expect(sys[0].text).toBe('You are Claude Code.');
+    expect(sys[0].cache_control).toEqual({ type: 'ephemeral' });
+    expect(sys[1].text).toBe('You are an interactive agent.');
     expect(sys[1].cache_control).toEqual({ type: 'ephemeral' });
-    expect(sys[2].text).toBe('You are an interactive agent.');
-    expect(sys[2].cache_control).toEqual({ type: 'ephemeral' });
   });
 
-  test('longer cch hex value normalized', () => {
+  test('idempotent — stripping twice returns false second time', () => {
     const body: Record<string, unknown> = {
       system: [
         {
           type: 'text',
-          text: 'x-anthropic-billing-header: cch=abc123def456;',
+          text: 'x-anthropic-billing-header: cch=6d025;',
         },
+        { type: 'text', text: 'You are Claude Code.' },
       ],
     };
-    const modified = normalizeSystemBillingHeader(body);
-    expect(modified).toBe(true);
-    const sys0 = (body.system as Array<Record<string, unknown>>)[0];
-    expect(sys0.text).toBe('x-anthropic-billing-header: cch=0000000000000000;');
+    expect(stripSystemBillingHeader(body)).toBe(true);
+    expect(stripSystemBillingHeader(body)).toBe(false);
   });
 
-  test('already normalized → no-op (idempotent)', () => {
-    const body: Record<string, unknown> = {
-      system: [
-        {
-          type: 'text',
-          text: 'x-anthropic-billing-header: cc_version=2.1.177.841; cc_entrypoint=cli; cch=0000000000000000;',
-        },
-      ],
-    };
-    const modified = normalizeSystemBillingHeader(body);
-    expect(modified).toBe(false);
-  });
-
-  test('uppercase CCH hex normalized', () => {
-    const body: Record<string, unknown> = {
-      system: [
-        {
-          type: 'text',
-          text: 'x-anthropic-billing-header: cch=ABCDE;',
-        },
-      ],
-    };
-    const modified = normalizeSystemBillingHeader(body);
-    expect(modified).toBe(true);
-    const sys0 = (body.system as Array<Record<string, unknown>>)[0];
-    expect(sys0.text).toContain('cch=0000000000000000;');
-  });
-
-  test('identical bodies with different cch become identical', () => {
+  test('identical bodies with different cch become identical after strip', () => {
     const bodyA: Record<string, unknown> = {
       model: 'deepseek-v4-pro',
       system: [
@@ -1322,18 +1296,18 @@ describe('normalizeSystemBillingHeader', () => {
       system: [
         {
           type: 'text',
-          text: 'x-anthropic-billing-header: cc_version=2.1.177.841; cc_entrypoint=cli; cch=95c1d;',
+          text: 'x-anthropic-billing-header: cc_version=2.1.999.0; cc_entrypoint=cli; cch=95c1d;',
         },
         { type: 'text', text: 'You are Claude Code.' },
       ],
       messages: [{ role: 'user', content: 'hello' }],
     };
-    normalizeSystemBillingHeader(bodyA);
-    normalizeSystemBillingHeader(bodyB);
+    stripSystemBillingHeader(bodyA);
+    stripSystemBillingHeader(bodyB);
     expect(JSON.stringify(bodyA)).toBe(JSON.stringify(bodyB));
   });
 
-  test('strip + normalize together — both metadata and cch removed', () => {
+  test('strip metadata + billing together', () => {
     const ds = getConstraints('ds');
     const body: Record<string, unknown> = {
       model: 'deepseek-v4-pro',
@@ -1343,14 +1317,16 @@ describe('normalizeSystemBillingHeader', () => {
           type: 'text',
           text: 'x-anthropic-billing-header: cch=6d025;',
         },
+        { type: 'text', text: 'You are Claude Code.' },
       ],
     };
     const stripped = stripProviderFields(body, ds);
-    const normalized = normalizeSystemBillingHeader(body);
+    const billingStripped = stripSystemBillingHeader(body);
     expect(stripped).toBe(true);
-    expect(normalized).toBe(true);
+    expect(billingStripped).toBe(true);
     expect(body).not.toHaveProperty('metadata');
-    const sys0 = (body.system as Array<Record<string, unknown>>)[0];
-    expect(sys0.text).toContain('cch=0000000000000000;');
+    const sys = body.system as Array<Record<string, unknown>>;
+    expect(sys.length).toBe(1);
+    expect(sys[0].text).toBe('You are Claude Code.');
   });
 });
