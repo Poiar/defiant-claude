@@ -1538,17 +1538,22 @@ if (probeIdx >= 2) {
 
           const constraints = getConstraints(target.providerKey);
 
-          // Strip provider-unsupported fields (metadata, top_k, etc.) and
-          // Anthropic billing header from the system prompt. Both keep the
-          // upstream body identical across sessions so DeepSeek's disk cache
-          // recognizes the prefix → cache hit at $0.0036/M instead of miss at $0.435/M.
+          // Strip provider-unsupported fields, Anthropic billing header,
+          // and prompt-cache metadata from the request body. These are
+          // Anthropic-only and would otherwise vary between sessions,
+          // defeating DeepSeek's disk cache ($0.0036/M vs $0.435/M).
           if (constraints.stripFields && constraints.stripFields.length > 0) {
             try {
-              const { stripProviderFields, stripSystemBillingHeader } = require('./protocol-types');
+              const {
+                stripProviderFields,
+                stripSystemBillingHeader,
+                stripCacheControl,
+              } = require('./protocol-types');
               const p = JSON.parse(forwardedBody.toString());
               const stripped = stripProviderFields(p, constraints);
               const billingStripped = stripSystemBillingHeader(p);
-              if (stripped || billingStripped) {
+              const cacheStripped = stripCacheControl(p);
+              if (stripped || billingStripped || cacheStripped) {
                 forwardedBody = Buffer.from(JSON.stringify(p));
               }
             } catch (_) {
