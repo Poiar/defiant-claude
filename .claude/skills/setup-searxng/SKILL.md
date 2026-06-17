@@ -1,13 +1,13 @@
 ---
 name: setup-searxng
-description: Set up a local SearXNG instance via Docker for DeepClaude web search — free, no API key, unlimited queries. Already installed and configured on Mathias's machine.
+description: Set up a local SearXNG instance via Docker for DeepClaude web search — free, no API key, unlimited queries. Already installed and configured on this machine.
 ---
 
 # Setup SearXNG for DeepClaude Web Search
 
 Sets up a self-hosted SearXNG search engine that DeepClaude uses for web search. SearXNG aggregates results from multiple engines (Google, DuckDuckGo, Brave, etc.) and bypasses their CAPTCHAs. No API keys, no rate limits, no cost.
 
-## Current state (Mathias's machine)
+## Current state (this machine)
 
 - ✅ Docker Desktop installed, SearXNG container running on port 8888
 - ✅ `DEEPCLAUDE_SEARXNG_URL` set in `HKCU:\Environment` → `http://localhost:8888/search?format=json&q=`

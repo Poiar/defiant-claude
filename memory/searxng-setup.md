@@ -5,7 +5,7 @@ metadata:
   type: project
 ---
 
-## SearXNG Local Setup (Mathias's machine, 2026-06-18)
+## SearXNG Local Setup (this machine, 2026-06-18)
 
 SearXNG runs in Docker on port 8888 as the primary web search engine for DeepClaude. It's free, unlimited, and bypasses CAPTCHAs that break DuckDuckGo.
 
