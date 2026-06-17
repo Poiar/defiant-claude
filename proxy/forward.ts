@@ -4,7 +4,12 @@
 // fallback response headers.
 
 import http from 'http';
+import https from 'https';
+import net from 'net';
+import tls from 'tls';
 import zlib from 'zlib';
+import fs from 'fs';
+import path from 'path';
 import { pipeline, Transform } from 'stream';
 import { buildSafeHeaders } from './util';
 import { translateResponse } from './protocol-translate';
@@ -23,6 +28,245 @@ import type { StreamTimings, StreamMetrics } from './stream-metrics';
 const log = createLogger('forward');
 
 const upstreamAgent = new http.Agent({ keepAlive: true, keepAliveMsecs: 30000, maxSockets: 25 });
+
+// --- Upstream proxy (Fiddler, mitmproxy, Charles, Burp Suite) ---
+// Set DEEPCLAUDE_UPSTREAM_PROXY=http://127.0.0.1:8888 to route all upstream
+// API calls through a debugging proxy.  Also reads ~/.deepclaude/upstream-proxy.flag
+// (first line = proxy URL) so it can be toggled without restarting.
+//
+// HTTPS traffic uses HTTP CONNECT tunneling with a custom agent; HTTP traffic
+// has its request path rewritten to the full upstream URL so the proxy forwards it.
+//
+// For Fiddler: export the root certificate (Tools → Options → HTTPS → Export)
+// and set NODE_EXTRA_CA_CERTS=path/to/FiddlerRoot.pem so Node.js trusts it.
+
+let _upstreamProxyUrl: string | null | undefined;
+let _tunnelHttpsAgent: https.Agent | null = null;
+let _tunnelHttpAgent: http.Agent | null = null;
+
+function getUpstreamProxyUrl(): string | null {
+  if (_upstreamProxyUrl !== undefined) return _upstreamProxyUrl;
+
+  // 1. Env var
+  const envUrl = process.env.DEEPCLAUDE_UPSTREAM_PROXY;
+  if (envUrl) {
+    _upstreamProxyUrl = envUrl.includes('://') ? envUrl : 'http://' + envUrl;
+    log.info(null, 'Upstream proxy configured via DEEPCLAUDE_UPSTREAM_PROXY: ' + _upstreamProxyUrl);
+    return _upstreamProxyUrl;
+  }
+
+  // 2. Flag file
+  try {
+    const flagPath = path.join(
+      process.env.HOME || process.env.USERPROFILE || '.',
+      '.deepclaude',
+      'upstream-proxy.flag',
+    );
+    if (fs.existsSync(flagPath)) {
+      const content = fs.readFileSync(flagPath, 'utf-8').trim();
+      if (content) {
+        _upstreamProxyUrl = content.includes('://') ? content : 'http://' + content;
+        log.info(null, 'Upstream proxy configured via flag file: ' + _upstreamProxyUrl);
+        return _upstreamProxyUrl;
+      }
+    }
+  } catch (_) {
+    /* flag file absent or unreadable */
+  }
+
+  _upstreamProxyUrl = null;
+  return null;
+}
+
+function getUpstreamProxyAgents(): { httpAgent: http.Agent; httpsAgent: https.Agent } | null {
+  const proxyUrl = getUpstreamProxyUrl();
+  if (!proxyUrl) return null;
+
+  if (_tunnelHttpAgent && _tunnelHttpsAgent) {
+    return { httpAgent: _tunnelHttpAgent, httpsAgent: _tunnelHttpsAgent };
+  }
+
+  let u: { hostname: string; port: number };
+  try {
+    const parsed = new (require('url').URL)(proxyUrl);
+    u = { hostname: parsed.hostname, port: parseInt(parsed.port) || 8888 };
+  } catch {
+    log.error(null, 'Invalid upstream proxy URL: ' + proxyUrl);
+    _upstreamProxyUrl = null;
+    return null;
+  }
+
+  // HTTPS: custom agent that establishes a CONNECT tunnel to the target
+  // through the debugging proxy, then upgrades the tunneled socket to TLS.
+  // This lets Fiddler/mitmproxy decrypt and inspect all upstream API calls.
+  _tunnelHttpsAgent = new https.Agent({
+    keepAlive: true,
+    keepAliveMsecs: 30000,
+    maxSockets: 25,
+  });
+  (_tunnelHttpsAgent as unknown as Record<string, unknown>).createConnection = (
+    opts: { hostname?: string; host?: string; servername?: string; port?: number },
+    cb: (err: Error | null, socket?: net.Socket) => void,
+  ): void => {
+    const targetHost = opts.hostname || opts.host || opts.servername || 'unknown';
+    const targetPort = opts.port || 443;
+
+    const socket = net.connect({ host: u.hostname, port: u.port }, () => {
+      socket.write(
+        'CONNECT ' +
+          targetHost +
+          ':' +
+          targetPort +
+          ' HTTP/1.1\r\n' +
+          'Host: ' +
+          targetHost +
+          ':' +
+          targetPort +
+          '\r\n' +
+          'Proxy-Connection: Keep-Alive\r\n\r\n',
+      );
+
+      let buf = '';
+      const onData = (chunk: Buffer): void => {
+        buf += chunk.toString();
+        if (buf.includes('\r\n\r\n')) {
+          socket.removeListener('data', onData);
+          const statusMatch = buf.match(/^HTTP\/\d\.\d\s+(\d+)/);
+          const statusCode = statusMatch ? parseInt(statusMatch[1], 10) : 0;
+
+          if (statusCode === 200) {
+            // Tunnel established — upgrade to TLS so the HTTPS request
+            // flows through the proxy as a transparent encrypted stream
+            // that Fiddler/mitmproxy can decrypt and inspect.
+            const rejectUnauthorized = process.env.NODE_TLS_REJECT_UNAUTHORIZED !== '0';
+            const tlsOpts: tls.ConnectionOptions & { socket: net.Socket } = {
+              socket,
+              servername: targetHost,
+              rejectUnauthorized,
+            };
+            // Trust the debugging proxy's root CA so Node.js accepts the
+            // re-signed certificate Fiddler/mitmproxy presents.
+            const proxyCa = getProxyCaCert();
+            if (proxyCa) {
+              tlsOpts.ca = proxyCa;
+              if (typeof proxyCa === 'string') {
+                log.info(null, 'Using upstream proxy CA cert (' + proxyCa.length + ' chars)');
+              } else {
+                log.info(null, 'Using upstream proxy CA cert (' + proxyCa.length + ' bytes)');
+              }
+            }
+            const tlsSocket = tls.connect(tlsOpts, () =>
+              cb(null, tlsSocket as unknown as net.Socket),
+            );
+            tlsSocket.on('error', (err: Error) => cb(err));
+          } else {
+            cb(
+              new Error(
+                'Upstream proxy CONNECT ' +
+                  targetHost +
+                  ':' +
+                  targetPort +
+                  ' failed: HTTP ' +
+                  statusCode +
+                  ' — is ' +
+                  proxyUrl +
+                  ' running?',
+              ),
+            );
+          }
+        }
+      };
+      socket.on('data', onData);
+    });
+    socket.on('error', (err: Error) => cb(err));
+  };
+
+  // HTTP: standard agent.  tryForward rewrites the request path to the
+  // full upstream URL when an upstream proxy is active (see below).
+  _tunnelHttpAgent = new http.Agent({
+    keepAlive: true,
+    keepAliveMsecs: 30000,
+    maxSockets: 25,
+  });
+
+  log.info(null, 'Upstream proxy agents created for ' + proxyUrl);
+  return { httpAgent: _tunnelHttpAgent, httpsAgent: _tunnelHttpsAgent };
+}
+
+// --- CA certificate loading for debugging proxies ---
+// Fiddler, mitmproxy, Charles, and Burp Suite all use their own root CA
+// to decrypt HTTPS.  Node.js must trust this CA to establish TLS through
+// the CONNECT tunnel.  Two mechanisms, in priority order:
+//   1. DEEPCLAUDE_UPSTREAM_PROXY_CA=path/to/cert.pem  (explicit path)
+//   2. Auto-detect Fiddler cert on Windows: %USERPROFILE%\Documents\Fiddler2\FiddlerRoot.cer
+// The cert is loaded once when the tunnel agent is first created.
+
+let _proxyCaCert: string | Buffer | undefined;
+let _proxyCaLoaded = false;
+
+function getProxyCaCert(): string | Buffer | undefined {
+  if (_proxyCaLoaded) return _proxyCaCert;
+  _proxyCaLoaded = true;
+
+  // 1. Explicit CA cert path
+  const caPath = process.env.DEEPCLAUDE_UPSTREAM_PROXY_CA;
+  if (caPath) {
+    try {
+      if (fs.existsSync(caPath)) {
+        _proxyCaCert = fs.readFileSync(caPath);
+        log.info(null, 'Upstream proxy CA loaded from ' + caPath);
+        return _proxyCaCert;
+      }
+    } catch (e) {
+      log.warn(
+        null,
+        'Failed to load upstream proxy CA from ' + caPath + ': ' + (e as Error).message,
+      );
+    }
+  }
+
+  // 2. Auto-detect Fiddler cert on Windows
+  if (process.platform === 'win32') {
+    const fiddlerCerts = [
+      path.join(process.env.USERPROFILE || '', 'Documents', 'Fiddler2', 'FiddlerRoot.cer'),
+      path.join(process.env.USERPROFILE || '', 'Documents', 'Fiddler2', 'FiddlerRoot.pem'),
+      path.join(process.env.APPDATA || '', 'Fiddler', 'FiddlerRoot.cer'),
+    ];
+    for (const certPath of fiddlerCerts) {
+      try {
+        if (fs.existsSync(certPath)) {
+          _proxyCaCert = fs.readFileSync(certPath);
+          log.info(null, 'Auto-detected Fiddler root CA at ' + certPath);
+          return _proxyCaCert;
+        }
+      } catch (_) {
+        /* no cert at this path */
+      }
+    }
+  }
+
+  // 3. Common mitmproxy locations
+  const mitmproxyCerts = [
+    path.join(
+      process.env.HOME || process.env.USERPROFILE || '',
+      '.mitmproxy',
+      'mitmproxy-ca-cert.pem',
+    ),
+  ];
+  for (const certPath of mitmproxyCerts) {
+    try {
+      if (fs.existsSync(certPath)) {
+        _proxyCaCert = fs.readFileSync(certPath);
+        log.info(null, 'Auto-detected mitmproxy root CA at ' + certPath);
+        return _proxyCaCert;
+      }
+    } catch (_) {
+      /* no cert at this path */
+    }
+  }
+
+  return _proxyCaCert;
+}
 
 // Max buffer size per SSE event before we abort (prevents unbounded memory
 // from a misbehaving upstream).
@@ -263,8 +507,48 @@ export function tryForward(
     let timings: StreamTimings | null = null;
     let responseStarted = false;
     let firstByteTimer: ReturnType<typeof setTimeout> | null = null;
+    // Upstream proxy (Fiddler/mitmproxy/Charles) — when configured, route
+    // all upstream API calls through the debugging proxy so the operator can
+    // inspect request/response bodies in real time.
+    const tunnelAgents = getUpstreamProxyAgents();
+    const isHttpsTarget = (transport as unknown) === (https as unknown);
+    let effectiveOptions = { ...options };
+    let effectiveAgent = options.agent ?? (isHttpsTarget ? undefined : upstreamAgent);
+
+    if (tunnelAgents) {
+      if (isHttpsTarget) {
+        // HTTPS: use the CONNECT-tunneling agent — everything else
+        // (hostname, path, headers) stays the same; the tunnel agent
+        // establishes a CONNECT to the target through the proxy, then
+        // upgrades to TLS.  Fiddler/mitmproxy decrypts and inspects.
+        effectiveAgent = tunnelAgents.httpsAgent;
+      } else {
+        // HTTP: rewrite the request so it goes THROUGH the proxy rather
+        // than directly to the upstream.  The proxy expects:
+        //   GET http://upstream-host:port/path HTTP/1.1
+        //   Host: upstream-host:port
+        const proxyUrl = getUpstreamProxyUrl()!;
+        const pu = new (require('url').URL)(proxyUrl);
+        const origHostname = effectiveOptions.hostname || 'localhost';
+        const origPort = effectiveOptions.port || 80;
+        const origPath = effectiveOptions.path || '/';
+        const fullUrl = 'http://' + origHostname + ':' + origPort + origPath;
+        effectiveOptions = {
+          ...effectiveOptions,
+          hostname: pu.hostname,
+          port: parseInt(pu.port) || 8888,
+          path: fullUrl,
+        };
+        effectiveOptions.headers = {
+          ...(effectiveOptions.headers as Record<string, string>),
+          Host: origHostname + ':' + origPort,
+        };
+        effectiveAgent = tunnelAgents.httpAgent;
+      }
+    }
+
     const proxy = transport.request(
-      { ...options, agent: options.agent ?? upstreamAgent },
+      { ...effectiveOptions, agent: effectiveAgent },
       (
         proxyRes: NodeJS.ReadableStream & {
           statusCode?: number;

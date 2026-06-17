@@ -1536,15 +1536,23 @@ if (probeIdx >= 2) {
             }
           }
 
-          // Strip provider-unsupported fields (metadata, top_k, etc.) from the
-          // request body BEFORE sending upstream. This keeps the request body
-          // identical across sessions → DeepSeek disk cache recognizes the prefix
-          // → cache hit at $0.0036/M instead of miss at $0.435/M.
+          const constraints = getConstraints(target.providerKey);
+
+          // Strip provider-unsupported fields (metadata, top_k, etc.) and
+          // normalize session-varying data in the system billing header.
+          // Both keep the upstream body identical across sessions so
+          // DeepSeek's disk cache recognizes the prefix → cache hit at
+          // $0.0036/M instead of miss at $0.435/M.
           if (constraints.stripFields && constraints.stripFields.length > 0) {
             try {
-              const { stripProviderFields } = require('./protocol-types');
+              const {
+                stripProviderFields,
+                normalizeSystemBillingHeader,
+              } = require('./protocol-types');
               const p = JSON.parse(forwardedBody.toString());
-              if (stripProviderFields(p, constraints)) {
+              const stripped = stripProviderFields(p, constraints);
+              const normalized = normalizeSystemBillingHeader(p);
+              if (stripped || normalized) {
                 forwardedBody = Buffer.from(JSON.stringify(p));
               }
             } catch (_) {
@@ -1560,7 +1568,6 @@ if (probeIdx >= 2) {
           // The --no-thinking flag disables thinking by removing the model entry;
           // --thinking-budget N overrides the budget_tokens.
           const upstreamModel = target.rewriteModel || model;
-          const constraints = getConstraints(target.providerKey);
           const effectiveThinking = getEffectiveThinkingConfig(
             state.thinkingConfig || {},
             state.thinkingOverridesFile,

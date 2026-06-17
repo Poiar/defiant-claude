@@ -809,6 +809,37 @@ export function stripProviderFields(
   return stripped;
 }
 
+/**
+ * Normalize session-varying fields in the system prompt's billing header.
+ * Claude Code injects a `cch` hash that changes every request (119 unique
+ * values observed across 125 dumps). Replace it with a stable value so
+ * DeepSeek's disk cache recognizes the prefix across requests.
+ *
+ * The billing header sits in `system[0].text` as:
+ *   x-anthropic-billing-header: cc_version=2.1.177.841; cc_entrypoint=cli; cch=<HEX>;
+ *
+ * Returns true if any changes were made.
+ */
+export function normalizeSystemBillingHeader(body: Record<string, unknown>): boolean {
+  const system = body.system;
+  if (!Array.isArray(system)) return false;
+  let modified = false;
+  for (const block of system) {
+    if (block && typeof block === 'object' && (block as Record<string, unknown>).type === 'text') {
+      const b = block as Record<string, unknown>;
+      if (typeof b.text === 'string' && (b.text as string).includes('x-anthropic-billing-header')) {
+        const original = b.text as string;
+        const normalized = original.replace(/cch=[a-fA-F0-9]+;/, 'cch=0000000000000000;');
+        if (normalized !== original) {
+          b.text = normalized;
+          modified = true;
+        }
+      }
+    }
+  }
+  return modified;
+}
+
 // --- SSE Serialization Helpers ---------------------------------------------
 
 function sseLine(event: string, data: unknown): string {
