@@ -198,4 +198,77 @@ TRIGGER — read BEFORE opening the target file when the prompt names Claude/Ant
     expect(result).not.toMatch(/\bAnthropic\b/);
     expect(result).toContain('Claude Code');
   });
+
+  // ── Cache-prefix stabilisers ──────────────────────────────────────────
+
+  test('normalises currentDate to a fixed date', () => {
+    const input = "# currentDate\nToday's date is 2026-06-19.\nSome content after.";
+    const result = stripAnthropicSkills(input);
+    expect(result).toContain("Today's date is 2026-06-01.");
+    expect(result).not.toContain('2026-06-19');
+    expect(result).toContain('Some content after.');
+  });
+
+  test('strips gitStatus block', () => {
+    const input = `Some prefix.
+gitStatus: This is the git status at the start of the conversation. Note that this status is a snapshot...
+M proxy/skill-filter.ts
+?? proxy/new-file.ts
+
+Recent commits:
+abc1234 fix: something`;
+    const result = stripAnthropicSkills(input);
+    expect(result).toContain('Some prefix.');
+    expect(result).toContain('Recent commits:');
+    expect(result).not.toContain('gitStatus');
+    expect(result).not.toContain('M proxy/skill-filter.ts');
+  });
+
+  test('strips memory recall block', () => {
+    const input = `# Project context
+
+# Memory
+Some recalled memory content.
+Another line of memory.
+
+# Instructions
+Be helpful.`;
+    const result = stripAnthropicSkills(input);
+    expect(result).toContain('# Project context');
+    expect(result).toContain('# Instructions');
+    expect(result).toContain('Be helpful.');
+    expect(result).not.toContain('Some recalled memory');
+    expect(result).not.toContain('Another line of memory');
+  });
+
+  test('strips all three cache-prefix breakers together', () => {
+    const input = `You are a helpful assistant.
+# currentDate
+Today's date is 2026-06-19.
+# Environment
+Platform: win32
+gitStatus: M file1.ts
+?? file2.ts
+
+# Memory
+Remember this: important context.
+Also this.
+# Project instructions
+Write good code.`;
+    const result = stripAnthropicSkills(input);
+    // currentDate normalised
+    expect(result).toContain('2026-06-01');
+    expect(result).not.toContain('2026-06-19');
+    // gitStatus stripped
+    expect(result).not.toContain('M file1.ts');
+    expect(result).not.toContain('?? file2.ts');
+    // Memory stripped
+    expect(result).not.toContain('Remember this');
+    expect(result).not.toContain('Also this');
+    // Important content kept
+    expect(result).toContain('You are a helpful assistant');
+    expect(result).toContain('Platform: win32');
+    expect(result).toContain('# Project instructions');
+    expect(result).toContain('Write good code.');
+  });
 });
