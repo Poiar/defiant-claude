@@ -3,17 +3,21 @@
 # This hook MUST NOT crash — any parse error defaults to ALLOW (fail-open),
 # so the script is written defensively.
 
+# Force UTF-8 output — no BOM
+$PSDefaultParameterValues['*:Encoding'] = 'utf8'
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
 # PowerShell's $input is an automatic variable (pipeline enumerator) and
 # CANNOT be assigned to. Read it without overwriting.
 $raw = try { $input | Out-String } catch { '' }
 if (-not $raw) {
-  Write-Output '{"decision":"allow"}'
+  @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; permissionDecision = 'allow' } } | ConvertTo-Json -Compress -Depth 3
   exit 0
 }
 
 $ctx = try { $raw | ConvertFrom-Json } catch { $null }
 if (-not $ctx) {
-  Write-Output '{"decision":"allow"}'
+  @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; permissionDecision = 'allow' } } | ConvertTo-Json -Compress -Depth 3
   exit 0
 }
 
@@ -21,7 +25,7 @@ $tool = $ctx.tool_name -as [string]
 $cmd  = $ctx.tool_input.command -as [string]
 
 if (($tool -ne 'Bash' -and $tool -ne 'PowerShell') -or -not $cmd) {
-  Write-Output '{"decision":"allow"}'
+  @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; permissionDecision = 'allow' } } | ConvertTo-Json -Compress -Depth 3
   exit 0
 }
 
@@ -43,7 +47,7 @@ $ALLOW = @(
 $cmdTrimmed = $cmd.Trim()
 foreach ($pat in $ALLOW) {
   if ($cmdTrimmed -match $pat) {
-    Write-Output '{"decision":"allow"}'
+    @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; permissionDecision = 'allow' } } | ConvertTo-Json -Compress -Depth 3
     exit 0
   }
 }
@@ -92,10 +96,16 @@ foreach ($pat in $BLOCK) {
 }
 
 if ($matched) {
-  $reason = 'BLOCKED: This command would kill or restart the proxy. The proxy IS the Claude Code API connection — killing it kills your session. Run this command from a separate terminal instead.'
-  Write-Output ('{"decision":"deny","reason":"' + $reason + '"}')
-  exit 2
+  $reason = 'BLOCKED: This command would kill or restart the proxy. The proxy IS the Claude Code API connection -- killing it kills your session. Run this command from a separate terminal instead.'
+  @{
+    hookSpecificOutput = @{
+      hookEventName = 'PreToolUse'
+      permissionDecision = 'deny'
+      permissionDecisionReason = $reason
+    }
+  } | ConvertTo-Json -Compress -Depth 3
+  exit 0
 }
 
-Write-Output '{"decision":"allow"}'
+@{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; permissionDecision = 'allow' } } | ConvertTo-Json -Compress -Depth 3
 exit 0
