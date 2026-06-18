@@ -47,6 +47,7 @@ DeepClaude runs a local HTTP routing proxy that intercepts Claude Code's Anthrop
 | `routing.ts` | Slot-based routing with prefix matching, fallback chain construction, circuit breaker |
 | `server-tools.ts` | Anthropic server tool conversion (web_search, web_fetch, url_fetch, computer, bash, text_editor, memory, tool_search_tool), DuckDuckGo web search, SSRF-protected web fetch, tool result population |
 | `session-key.ts` | SHA-256 session key derivation from conversation content, shared by thinking/reasoning caches and momentum |
+| `skill-filter.ts` | (undocumented) |
 | `ssrf.ts` | URL validation against SSRF/DNS rebinding, blocks private/internal IPs and metadata endpoints |
 | `start-proxy.ts` | Entry point — HTTP server, request lifecycle, health endpoint |
 | `startup-check.ts` | Startup health probe — concurrent non-streaming + streaming checks per provider before accepting connections |
@@ -88,7 +89,7 @@ Config resolution, routes JSON construction, env var computation, slot/thinking 
 ### Test coverage
 
 <!-- AUTO:test-coverage -->
-1743 tests across 52 test files covering all proxy modules — transport errors, concurrency, LRU cache, provider registry validation, error codes, routing, stats, forwarding, server tools, config, protocol translation, thinking cache (including fingerprint-free cross-turn regression tests), reasoning cache, header sanitization, truncation, crypto, friendly errors, SSRF validation, dead stream detection, startup checks, and stream metrics. Run with `npm test`.
+1761 tests across 53 test files covering all proxy modules — transport errors, concurrency, LRU cache, provider registry validation, error codes, routing, stats, forwarding, server tools, config, protocol translation, thinking cache (including fingerprint-free cross-turn regression tests), reasoning cache, header sanitization, truncation, crypto, friendly errors, SSRF validation, dead stream detection, startup checks, and stream metrics. Run with `npm test`.
 <!-- /AUTO:test-coverage -->
 
 ### Pre-commit

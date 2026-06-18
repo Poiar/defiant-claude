@@ -10,7 +10,11 @@
 
 import { PROVIDER_CONSTRAINTS, translateToolChoice, mapFinishReason } from '../protocol-types';
 import type { AnthropicRequestBody, AnthropicContentBlock } from '../protocol-types';
-import { translateRequest, translateResponse } from '../protocol-translate';
+import {
+  translateRequest,
+  translateResponse,
+  translateRequestToGemini,
+} from '../protocol-translate';
 import { preprocessServerTools } from '../server-tools';
 import { applyThinkingConfig } from '../thinking-config';
 import { stripEffortBetaHeader } from '../header-sanitizer';
@@ -707,5 +711,86 @@ describe('Scenario 5: DeepSeek forwarded body matches Haiku structure', () => {
     // Both have tool_use stop_reason
     expect(dsResponse.stop_reason).toBe('tool_use');
     expect(anResponse.stop_reason).toBe('tool_use');
+  });
+
+  // ── Skill filter integration ──────────────────────────────────────────
+
+  test('strips Anthropic skills from system during OpenAI translation', () => {
+    const body: AnthropicRequestBody = {
+      ...ccTextRequest,
+      system:
+        'You are Claude Code.\n' +
+        'The most recent Claude models are Fable 5 and the Claude 4.X family. ' +
+        "Model IDs — Fable 5: 'claude-fable-5', Opus 4.8: 'claude-opus-4-8'.\n" +
+        '<system-reminder>\n' +
+        'Available skills:\n' +
+        '- deep-research: Research harness\n' +
+        '- claude-api: Anthropic API reference\n' +
+        '- loop: Recurring tasks\n' +
+        '</system-reminder>',
+    };
+    const { openaiBody } = translateRequest(body);
+    const systemMsg = openaiBody.messages.find((m: { role: string }) => m.role === 'system') as
+      | { role: string; content: string }
+      | undefined;
+    expect(systemMsg).toBeDefined();
+    expect(systemMsg!.content).not.toContain('Fable 5');
+    expect(systemMsg!.content).not.toContain('claude-opus-4-8');
+    expect(systemMsg!.content).not.toContain('claude-api');
+    expect(systemMsg!.content).not.toContain('TRIGGER');
+    expect(systemMsg!.content).toContain('deep-research');
+    expect(systemMsg!.content).toContain('loop');
+  });
+
+  test('strips Anthropic skills from systemInstruction during Gemini translation (string system)', () => {
+    const body: AnthropicRequestBody = {
+      ...ccTextRequest,
+      system:
+        'You are Claude Code, powered by claude-opus-4-8.\n' +
+        'The most recent Claude models are Fable 5.\n' +
+        '- deep-research: Research\n' +
+        '- claude-api: API reference\n' +
+        '- loop: Recurring tasks',
+    };
+    const { geminiBody } = translateRequestToGemini(body);
+    expect(geminiBody.systemInstruction).toBeDefined();
+    const parts = geminiBody.systemInstruction!.parts;
+    const text = parts.map((p: { text?: string }) => p.text || '').join('\n');
+    expect(text).not.toContain('Fable 5');
+    expect(text).not.toContain('claude-api');
+    expect(text).not.toContain('claude-opus-4-8');
+    expect(text).toContain('deep-research');
+    expect(text).toContain('loop');
+  });
+
+  test('strips Anthropic skills from Gemini translation (array system)', () => {
+    const body: AnthropicRequestBody = {
+      ...ccTextRequest,
+      system: [
+        {
+          type: 'text',
+          text:
+            'You are Claude Code.\n' +
+            'Available skills:\n' +
+            '- claude-api: API reference\n' +
+            '- loop: Recurring tasks',
+        },
+        {
+          type: 'text',
+          text:
+            'The most recent Claude models are Fable 5 and claude-opus-4-8.\n' +
+            '- code-review: Review code',
+        },
+      ],
+    };
+    const { geminiBody } = translateRequestToGemini(body);
+    expect(geminiBody.systemInstruction).toBeDefined();
+    const parts = geminiBody.systemInstruction!.parts;
+    const text = parts.map((p: { text?: string }) => p.text || '').join('\n');
+    expect(text).not.toContain('claude-api');
+    expect(text).not.toContain('code-review');
+    expect(text).not.toContain('Fable 5');
+    expect(text).not.toContain('claude-opus-4-8');
+    expect(text).toContain('loop');
   });
 });
