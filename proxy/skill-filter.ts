@@ -64,6 +64,43 @@ const GIT_STATUS_RE = /^gitStatus:[\s\S]*?(?=\n\n(?:Recent commits|Memory|# |<))
 // block (from the "memory" heading to the next section boundary).
 const MEMORY_RECALL_RE = /^\n?# Memory[\s\S]*?(?=\n# [A-Z])/gm;
 
+// <system-reminder> blocks that are pure CC harness metadata — the model
+// doesn't need to see agent type listings, gentle reminders, or model
+// availability notices.  These change between CC versions and sessions.
+const SYSTEM_REMINDER_STRIP_PATTERNS: Array<{ name: string; re: RegExp }> = [
+  {
+    name: 'agent-types',
+    // "Available agent types for the Agent tool:" through closing tag.
+    // Agent types change with CC versions; DeepSeek doesn't use them.
+    re: /<system-reminder>\s*Available agent types for the Agent tool:[\s\S]*?<\/system-reminder>\n?/g,
+  },
+  {
+    name: 'task-tools-reminder',
+    // "The task tools haven't been used recently..." gentle reminder block.
+    // Content includes variable task lists.
+    re: /<system-reminder>\s*The task tools haven't been used recently[\s\S]*?<\/system-reminder>\n?/g,
+  },
+  {
+    name: 'provider-unavailable',
+    // "All AI providers are currently unavailable" / CRITICAL blocks.
+    // These appear dynamically when providers go down.
+    re: /<system-reminder>\s*(?:CRITICAL:|IMPORTANT:)\s*"All AI providers are currently unavailable"[\s\S]*?<\/system-reminder>\n?/g,
+  },
+  {
+    name: 'context-management',
+    // "When the conversation grows long..." context summarization notes.
+    // Harness behavior description, not useful for the model.
+    re: /<system-reminder>\s*When the conversation grows long[\s\S]*?<\/system-reminder>\n?/g,
+  },
+];
+
+// Recent commits section — appears after gitStatus, changes every commit.
+// Strip from "Recent commits:" through the blank line after the last entry.
+const RECENT_COMMITS_RE = /^Recent commits:[\s\S]*?(?=\n\n(?:# |<))/gm;
+
+// Empty <system-reminder> blocks left after content was stripped from them.
+const EMPTY_SYSTEM_REMINDER_RE = /<system-reminder>\s*<\/system-reminder>\n?/g;
+
 export interface FilterStats {
   bytesBefore: number;
   bytesAfter: number;
@@ -84,15 +121,18 @@ function createStats(bytesBefore: number): FilterStats {
  * Strip Anthropic-specific and volatile content from a system prompt.
  *
  * Cache-prefix stabilisers (strip / normalise metadata that changes between turns):
- * 1. Normalise `currentDate` to a fixed date (changes daily)
- * 2. Strip gitStatus block (changes after every commit)
- * 3. Strip memory recall (varies between sessions)
+ * 1. Normalise `currentDate` to a fixed date
+ * 2. Strip gitStatus block
+ * 3. Strip memory recall
+ * 4. Strip volatile <system-reminder> blocks (agent types, reminders, etc.)
+ * 5. Strip "Recent commits:" section
+ * 6. Clean up empty <system-reminder> blocks
  *
  * Anthropic-specific removals:
- * 4. Strip "The most recent Claude models are..." paragraph + model table
- * 5. Strip claude-api TRIGGER block
- * 6. Strip Anthropic-only skill entries (claude-api, code-review, etc.)
- * 7. Replace scattered model-name references (Fable 5, claude-opus-4-8, etc.)
+ * 7. Strip model lineup paragraph
+ * 8. Strip claude-api TRIGGER block
+ * 9. Strip Anthropic-only skill entries
+ * 10. Replace scattered model-name references
  *
  * Applied on all three wire-format paths: Anthropic /anthropic, OpenAI, Gemini.
  */
@@ -115,7 +155,28 @@ export function stripAnthropicSkills(systemContent: string): string {
   // CC injects relevant memory files; these vary between sessions.
   result = result.replace(MEMORY_RECALL_RE, '');
 
-  // ── 4. Strip "The most recent Claude models are..." paragraph(s) ──
+  // ── 4. Strip volatile <system-reminder> blocks ──
+  // Agent type listings, gentle reminders, provider notices, context
+  // management notes — all CC harness metadata that changes between versions
+  // or sessions.  The model doesn't need these to function.
+  for (const { name, re } of SYSTEM_REMINDER_STRIP_PATTERNS) {
+    const before = result;
+    result = result.replace(re, '');
+    if (result !== before) {
+      stats.skillsStripped.push(`sys-reminder:${name}`);
+    }
+  }
+
+  // ── 5. Strip "Recent commits:" section ──
+  // Appears after gitStatus, changes every commit.
+  result = result.replace(RECENT_COMMITS_RE, '');
+
+  // ── 6. Clean up empty <system-reminder> blocks ──
+  // After stripping content from within system-reminder blocks, empty
+  // <system-reminder></system-reminder> pairs may remain.
+  result = result.replace(EMPTY_SYSTEM_REMINDER_RE, '');
+
+  // ── 7. Strip "The most recent Claude models are..." paragraph(s) ──
   // These appear in <system-reminder> blocks and describe Anthropic's model
   // lineup, pricing, and capabilities.  Match from "The most recent Claude
   // models" to the closing ")" of the last model-id spec, then consume any
@@ -128,7 +189,7 @@ export function stripAnthropicSkills(systemContent: string): string {
     },
   );
 
-  // ── 5. Strip claude-api TRIGGER block ──
+  // ── 8. Strip claude-api TRIGGER block ──
   // Format: "TRIGGER — read BEFORE opening the target file...\n"
   // followed by long paragraph, ending before the next skill entry or
   // double newline or system-reminder.
@@ -143,7 +204,7 @@ export function stripAnthropicSkills(systemContent: string): string {
     });
   }
 
-  // ── 6. Strip Anthropic-only skill entries from the skills list ──
+  // ── 9. Strip Anthropic-only skill entries from the skills list ──
   // Each skill line: "- skill-name: Description\n"
   // Some skills have multi-line descriptions. Match from the skill name
   // through to the next skill entry or end of skills section.
@@ -159,7 +220,7 @@ export function stripAnthropicSkills(systemContent: string): string {
     }
   }
 
-  // ── 7. Clean up any remaining Anthropic model-name litter ──
+  // ── 10. Clean up any remaining Anthropic model-name litter ──
   // These are scattered references like "Claude Opus 4.8" or
   // "claude-sonnet-4-6" outside the main model table.
   let modelRefCount = 0;
@@ -170,7 +231,7 @@ export function stripAnthropicSkills(systemContent: string): string {
     });
   }
 
-  // ── 8. Clean up blank lines left by removals ──
+  // ── 11. Clean up blank lines left by removals ──
   const modified = result !== systemContent;
   if (modified) {
     result = result.replace(/\n{3,}/g, '\n\n');

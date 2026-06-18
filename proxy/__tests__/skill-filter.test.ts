@@ -271,4 +271,123 @@ Write good code.`;
     expect(result).toContain('# Project instructions');
     expect(result).toContain('Write good code.');
   });
+
+  // ── <system-reminder> block stripping ──────────────────────────────────
+
+  test('strips Available agent types system-reminder block', () => {
+    const input = `Core prompt.
+<system-reminder>
+Available agent types for the Agent tool:
+- claude: Catch-all agent
+- Explore: Read-only search agent
+</system-reminder>
+More content.`;
+    const result = stripAnthropicSkills(input);
+    expect(result).toContain('Core prompt.');
+    expect(result).toContain('More content.');
+    expect(result).not.toContain('Available agent types');
+    expect(result).not.toContain('claude: Catch-all');
+    expect(result).not.toContain('<system-reminder>');
+  });
+
+  test('strips task tools reminder system-reminder block', () => {
+    const input = `Header.
+<system-reminder>
+The task tools haven't been used recently. If you're working on tasks that would benefit from tracking progress, consider using TaskCreate.
+Here are the existing tasks:
+
+#1. [in_progress] Some task
+</system-reminder>
+Footer.`;
+    const result = stripAnthropicSkills(input);
+    expect(result).toContain('Header.');
+    expect(result).toContain('Footer.');
+    expect(result).not.toContain('TaskCreate');
+    expect(result).not.toContain('in_progress');
+  });
+
+  test('strips provider unavailable CRITICAL system-reminder', () => {
+    const input = `Before.
+<system-reminder>
+CRITICAL: "All AI providers are currently unavailable" is a system-reminder — NOT a blocker.
+The harness retries automatically.
+</system-reminder>
+After.`;
+    const result = stripAnthropicSkills(input);
+    expect(result).toContain('Before.');
+    expect(result).toContain('After.');
+    expect(result).not.toContain('CRITICAL');
+    expect(result).not.toContain('unavailable');
+  });
+
+  test('strips context management system-reminder block', () => {
+    const input = `Start.
+<system-reminder>
+When the conversation grows long, some or all of the current context is summarized;
+the summary is provided in the next context window so work can continue.
+</system-reminder>
+End.`;
+    const result = stripAnthropicSkills(input);
+    expect(result).toContain('Start.');
+    expect(result).toContain('End.');
+    expect(result).not.toContain('conversation grows long');
+  });
+
+  test('strips Recent commits section', () => {
+    const input = `Some content.
+
+Recent commits:
+abc1234 fix: something
+def5678 feat: another thing
+
+# Next section
+More content.`;
+    const result = stripAnthropicSkills(input);
+    expect(result).toContain('Some content.');
+    expect(result).toContain('# Next section');
+    expect(result).toContain('More content.');
+    expect(result).not.toContain('abc1234');
+    expect(result).not.toContain('def5678');
+  });
+
+  test('cleans up empty <system-reminder> blocks', () => {
+    // After stripping volatile blocks, empty <system-reminder></system-reminder>
+    // pairs may remain. These should be cleaned up.
+    const input = 'Text.\n<system-reminder>\n</system-reminder>\nMore text.';
+    const result = stripAnthropicSkills(input);
+    expect(result).toContain('Text.');
+    expect(result).toContain('More text.');
+    expect(result).not.toContain('<system-reminder>');
+    expect(result).not.toContain('</system-reminder>');
+  });
+
+  test('preserves CLAUDE.md content while stripping surrounding metadata', () => {
+    // The claudeMd system-reminder should survive because it doesn't match
+    // any of the volatile block patterns (it starts with "# claudeMd" not
+    // "Available agent types" etc.)
+    const input = `You are an assistant.
+<system-reminder>
+# claudeMd
+Project: DeepClaude
+Language: TypeScript
+</system-reminder>
+<system-reminder>
+Available agent types for the Agent tool:
+- claude: General agent
+</system-reminder>
+<system-reminder>
+The task tools haven't been used recently.
+</system-reminder>
+End of prompt.`;
+    const result = stripAnthropicSkills(input);
+    // claudeMd preserved
+    expect(result).toContain('Project: DeepClaude');
+    expect(result).toContain('Language: TypeScript');
+    // Volatile system-reminders stripped
+    expect(result).not.toContain('Available agent types');
+    expect(result).not.toContain('TaskCreate');
+    // Structural: claudeMd system-reminder tags still present
+    // (we strip volatile blocks but keep non-matching ones)
+    expect(result).toContain('# claudeMd');
+  });
 });
