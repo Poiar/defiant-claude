@@ -1,9 +1,11 @@
 'use strict';
 
-// Strip Anthropic-specific skill descriptions, TRIGGER blocks, and model
-// reference paragraphs from the system prompt. Applied unconditionally in the
-// OpenAI and Gemini translation paths since translateRequest/translateRequestToGemini
-// are only called for non-Anthropic upstream providers.
+// Strip Anthropic-specific content and volatile CC harness metadata from the
+// system prompt before forwarding to non-Anthropic providers.  The goal is
+// cache-prefix stability: DeepSeek's disk cache requires identical prefixes,
+// and every byte that varies between turns is a 120× price penalty.
+//
+// Applied on all three wire-format paths (Anthropic /anthropic, OpenAI, Gemini).
 
 const log = (() => {
   const { createLogger } = require('./log');
@@ -44,6 +46,24 @@ const ANTHROPIC_MODEL_PATTERNS = [
 // model to read SKILL.md files before answering certain queries.
 const ANTHROPIC_TRIGGER_SKILLS = ['claude-api'];
 
+// ── Cache-prefix stabilisers ────────────────────────────────────────────
+// These patterns strip or normalise CC harness metadata that changes between
+// turns or sessions.  Removing them makes the system prompt prefix identical
+// request-to-request so DeepSeek's disk cache hits instead of missing.
+
+// currentDate changes daily and appears early in the prompt.  Normalise it
+// to a fixed date so the prefix stays identical across days.
+const CURRENT_DATE_RE = /^# currentDate\nToday's date is \d{4}-\d{2}-\d{2}\./gm;
+
+// gitStatus block — changes after every commit.  Strip from the opening
+// "# gitStatus" heading through the blank line that follows the last file.
+const GIT_STATUS_RE = /^gitStatus:[\s\S]*?(?=\n\n(?:Recent commits|Memory|# |<))/gm;
+
+// Memory recall — CC injects relevant memory files as context.  These vary
+// between sessions as memories are added/removed.  Strip the entire recall
+// block (from the "memory" heading to the next section boundary).
+const MEMORY_RECALL_RE = /^\n?# Memory[\s\S]*?(?=\n# [A-Z])/gm;
+
 export interface FilterStats {
   bytesBefore: number;
   bytesAfter: number;
@@ -61,16 +81,20 @@ function createStats(bytesBefore: number): FilterStats {
 }
 
 /**
- * Strip Anthropic-specific content from a Claude Code system prompt.
+ * Strip Anthropic-specific and volatile content from a system prompt.
  *
- * Targets:
- * 1. The "The most recent Claude models are..." paragraph with model table
- * 2. Anthropic-only skill entries from the skills list (claude-api, etc.)
- * 3. TRIGGER blocks for Anthropic-only skills
- * 4. Scattered Anthropic model name references
+ * Cache-prefix stabilisers (strip / normalise metadata that changes between turns):
+ * 1. Normalise `currentDate` to a fixed date (changes daily)
+ * 2. Strip gitStatus block (changes after every commit)
+ * 3. Strip memory recall (varies between sessions)
  *
- * Only the OpenAI/Gemini translation paths call this — Anthropic-format
- * providers (DeepSeek /anthropic, Fireworks) pass through unchanged.
+ * Anthropic-specific removals:
+ * 4. Strip "The most recent Claude models are..." paragraph + model table
+ * 5. Strip claude-api TRIGGER block
+ * 6. Strip Anthropic-only skill entries (claude-api, code-review, etc.)
+ * 7. Replace scattered model-name references (Fable 5, claude-opus-4-8, etc.)
+ *
+ * Applied on all three wire-format paths: Anthropic /anthropic, OpenAI, Gemini.
  */
 export function stripAnthropicSkills(systemContent: string): string {
   const stats = createStats(systemContent.length);
@@ -79,7 +103,19 @@ export function stripAnthropicSkills(systemContent: string): string {
 
   let result = systemContent;
 
-  // ── 1. Strip "The most recent Claude models are..." paragraph(s) ──
+  // ── 1. Normalise currentDate to a fixed value ──
+  // Changes daily — the #1 cache-prefix breaker for long-running sessions.
+  result = result.replace(CURRENT_DATE_RE, "# currentDate\nToday's date is 2026-06-01.");
+
+  // ── 2. Strip gitStatus block ──
+  // Changes after every commit.  Strip the entire section.
+  result = result.replace(GIT_STATUS_RE, '');
+
+  // ── 3. Strip memory recall ──
+  // CC injects relevant memory files; these vary between sessions.
+  result = result.replace(MEMORY_RECALL_RE, '');
+
+  // ── 4. Strip "The most recent Claude models are..." paragraph(s) ──
   // These appear in <system-reminder> blocks and describe Anthropic's model
   // lineup, pricing, and capabilities.  Match from "The most recent Claude
   // models" to the closing ")" of the last model-id spec, then consume any
@@ -92,7 +128,7 @@ export function stripAnthropicSkills(systemContent: string): string {
     },
   );
 
-  // ── 2. Strip claude-api TRIGGER block ──
+  // ── 5. Strip claude-api TRIGGER block ──
   // Format: "TRIGGER — read BEFORE opening the target file...\n"
   // followed by long paragraph, ending before the next skill entry or
   // double newline or system-reminder.
@@ -107,7 +143,7 @@ export function stripAnthropicSkills(systemContent: string): string {
     });
   }
 
-  // ── 3. Strip Anthropic-only skill entries from the skills list ──
+  // ── 6. Strip Anthropic-only skill entries from the skills list ──
   // Each skill line: "- skill-name: Description\n"
   // Some skills have multi-line descriptions. Match from the skill name
   // through to the next skill entry or end of skills section.
@@ -123,7 +159,7 @@ export function stripAnthropicSkills(systemContent: string): string {
     }
   }
 
-  // ── 4. Clean up any remaining Anthropic model-name litter ──
+  // ── 7. Clean up any remaining Anthropic model-name litter ──
   // These are scattered references like "Claude Opus 4.8" or
   // "claude-sonnet-4-6" outside the main model table.
   let modelRefCount = 0;
@@ -134,7 +170,7 @@ export function stripAnthropicSkills(systemContent: string): string {
     });
   }
 
-  // ── 5. Clean up blank lines left by removals ──
+  // ── 8. Clean up blank lines left by removals ──
   const modified = result !== systemContent;
   if (modified) {
     result = result.replace(/\n{3,}/g, '\n\n');
