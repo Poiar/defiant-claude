@@ -14,6 +14,7 @@ import {
   translateRequestToGemini,
   createGeminiToAnthropicStream,
 } from './protocol-translate';
+import { stripAnthropicSkills } from './skill-filter';
 import { injectThinkingBlocks } from './thinking-cache';
 import { reinjectReasoningContent } from './reasoning-cache';
 import { deduplicatePath, buildSafeHeaders } from './util';
@@ -1588,6 +1589,44 @@ if (probeIdx >= 2) {
                 reqId,
                 'thinking config injection error: ' + truncateForLog((e as Error).message),
               );
+            }
+
+            // Strip Anthropic-specific content from system prompt to
+            // stabilise the cache prefix for DeepSeek and other non-Anthropic
+            // providers using the /anthropic wire format.
+            try {
+              const p = JSON.parse(forwardedBody.toString());
+              if (typeof p.system === 'string' && p.system.length > 0) {
+                const filtered = stripAnthropicSkills(p.system);
+                if (filtered !== p.system) {
+                  p.system = filtered;
+                  forwardedBody = Buffer.from(JSON.stringify(p));
+                }
+              } else if (Array.isArray(p.system) && p.system.length > 0) {
+                let changed = false;
+                const filteredBlocks: Array<{
+                  type: string;
+                  text?: string;
+                  [key: string]: unknown;
+                }> = [];
+                for (const block of p.system) {
+                  if (block.type === 'text' && typeof block.text === 'string') {
+                    const filtered = stripAnthropicSkills(block.text);
+                    if (filtered !== block.text) changed = true;
+                    if (filtered) {
+                      filteredBlocks.push({ ...block, text: filtered });
+                    }
+                  } else {
+                    filteredBlocks.push(block);
+                  }
+                }
+                if (changed) {
+                  p.system = filteredBlocks;
+                  forwardedBody = Buffer.from(JSON.stringify(p));
+                }
+              }
+            } catch (e) {
+              log.error(reqId, 'skill filter error: ' + truncateForLog((e as Error).message));
             }
           }
 

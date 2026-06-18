@@ -4,6 +4,7 @@ import { Transform, TransformCallback } from 'stream';
 import crypto from 'crypto';
 import { createLogger } from './log';
 import { getTrustedModel } from './model-trust';
+import { stripAnthropicSkills } from './skill-filter';
 import type {
   AnthropicMessage,
   AnthropicContentBlock,
@@ -112,6 +113,7 @@ export function translateRequest(anthropicBody: AnthropicRequestBody): {
       }
       systemContent = textBlocks.map((b: ContentBlock) => b.text).join('\n');
     }
+    systemContent = stripAnthropicSkills(systemContent);
     if (systemContent) {
       openaiBody.messages.unshift({ role: 'system', content: systemContent });
     }
@@ -850,11 +852,13 @@ export function translateRequestToGemini(anthropicBody: AnthropicRequestBody): {
   if (anthropicBody.system) {
     const parts: GeminiPart[] = [];
     if (typeof anthropicBody.system === 'string') {
-      parts.push({ text: anthropicBody.system });
+      const filtered = stripAnthropicSkills(anthropicBody.system);
+      if (filtered) parts.push({ text: filtered });
     } else if (Array.isArray(anthropicBody.system)) {
       for (const block of anthropicBody.system) {
         if (block.type === 'text' && block.text) {
-          parts.push({ text: block.text });
+          const filtered = stripAnthropicSkills(block.text);
+          if (filtered) parts.push({ text: filtered });
         }
       }
     }
