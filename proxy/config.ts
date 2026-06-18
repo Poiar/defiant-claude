@@ -669,6 +669,8 @@ function readWinReg(name: string): string | null {
       encoding: 'utf8',
       timeout: 2000,
       windowsHide: true,
+      stdio: ['ignore', 'pipe', 'ignore'],
+      shell: process.env.ComSpec || 'cmd.exe',
     });
     const m = out.match(/REG_\w+\s+(.+)/);
     return m ? m[1].trim() : null;
