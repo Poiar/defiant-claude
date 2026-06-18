@@ -37,7 +37,7 @@ $ALLOW = @(
   '^Where-Object\s',
   '^ForEach-Object\s',
   '^Get-Command\s',
-  '^Test-Path\s',
+  '^Test-Path\s'
 )
 
 $cmdTrimmed = $cmd.Trim()
