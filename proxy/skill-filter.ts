@@ -92,6 +92,12 @@ const SYSTEM_REMINDER_STRIP_PATTERNS: Array<{ name: string; re: RegExp }> = [
     // Harness behavior description, not useful for the model.
     re: /<system-reminder>\s*When the conversation grows long[\s\S]*?<\/system-reminder>\n?/g,
   },
+  {
+    name: 'local-commands',
+    // <local-command> blocks carry CC-specific command metadata that is
+    // meaningless to non-Anthropic providers (e.g. /slash-command invocations).
+    re: /<local-command>[\s\S]*?<\/local-command>\n?/g,
+  },
 ];
 
 // Recent commits section — appears after gitStatus, changes every commit.
@@ -106,6 +112,11 @@ export interface FilterStats {
   bytesAfter: number;
   skillsStripped: string[];
   modelRefsStripped: number;
+}
+
+/** Escape regex special characters in a string for safe RegExp construction. */
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function createStats(bytesBefore: number): FilterStats {
@@ -179,10 +190,14 @@ export function stripAnthropicSkills(systemContent: string): string {
   // ── 7. Strip "The most recent Claude models are..." paragraph(s) ──
   // These appear in <system-reminder> blocks and describe Anthropic's model
   // lineup, pricing, and capabilities.  Match from "The most recent Claude
-  // models" to the closing ")" of the last model-id spec, then consume any
-  // trailing whitespace/newlines up to the next <system-reminder> tag.
+  // models" to the closing ")" of the last model-id spec.
+  //
+  // Three termination cases:
+  //   a) Followed by <system-reminder> (next block) → lookahead for opening tag
+  //   b) Followed by </system-reminder> (within same block) → lookahead for closing tag
+  //   c) End of string → no more content
   result = result.replace(
-    /The most recent Claude models are\b[\s\S]*?Model IDs[\s\S]*?'claude-haiku-4-5-20251001'\)[\s\S]*?(?=\n<system-reminder>)/g,
+    /The most recent Claude models are\b[\s\S]*?Model IDs[\s\S]*?'claude-haiku-4-5-20251001'\)[\s\S]*?(?=\n<\/?system-reminder>|$)/g,
     (_match) => {
       stats.modelRefsStripped++;
       return '';
@@ -194,8 +209,9 @@ export function stripAnthropicSkills(systemContent: string): string {
   // followed by long paragraph, ending before the next skill entry or
   // double newline or system-reminder.
   for (const skill of ANTHROPIC_TRIGGER_SKILLS) {
+    const escapedSkill = escapeRegex(skill);
     const triggerRegex = new RegExp(
-      `TRIGGER[ \\u2014-].*?${skill}[\\s\\S]*?(?=\\n- \\w|\\n\\n(?:The following|Available|If)|\\n<system-reminder>|\\n<local-command|$)`,
+      `TRIGGER[ \\u2014-].*?${escapedSkill}[\\s\\S]*?(?=\\n- \\w|\\n\\n(?:The following|Available|If)|\\n<system-reminder>|\\n<local-command|$)`,
       'g',
     );
     result = result.replace(triggerRegex, (_match) => {
@@ -209,8 +225,9 @@ export function stripAnthropicSkills(systemContent: string): string {
   // Some skills have multi-line descriptions. Match from the skill name
   // through to the next skill entry or end of skills section.
   for (const skill of ANTHROPIC_ONLY_SKILLS) {
+    const escapedSkill = escapeRegex(skill);
     const skillRegex = new RegExp(
-      `- ${skill}:.*?(?=\\n- \\w|\\n\\n(?:The following|Available|<)|$)`,
+      `- ${escapedSkill}:.*?(?=\\n- \\w|\\n\\n(?:The following|Available|<)|$)`,
       'gs',
     );
     const before = result;

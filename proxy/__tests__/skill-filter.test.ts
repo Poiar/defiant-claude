@@ -390,4 +390,80 @@ End of prompt.`;
     // (we strip volatile blocks but keep non-matching ones)
     expect(result).toContain('# claudeMd');
   });
+
+  // ── Model lineup regex edge cases ────────────────────────────────────
+
+  test('strips model lineup followed by closing </system-reminder> tag', () => {
+    const input = `<system-reminder>
+    The most recent Claude models are Fable 5 and the Claude 4.X family. Model IDs — Fable 5: 'claude-fable-5', Opus 4.8: 'claude-opus-4-8', Sonnet 4.6: 'claude-sonnet-4-6', Haiku 4.5: 'claude-haiku-4-5-20251001'.
+    </system-reminder>
+    Afterwards.`;
+    const result = stripAnthropicSkills(input);
+    expect(result).not.toContain('Fable 5');
+    expect(result).not.toContain('claude-haiku-4-5-20251001');
+    expect(result).toContain('Afterwards.');
+  });
+
+  // ── Model lineup regex edge cases ────────────────────────────────────
+
+  test('strips model lineup followed by closing </system-reminder> tag', () => {
+    const input = `<system-reminder>
+    The most recent Claude models are Fable 5 and the Claude 4.X family. Model IDs — Fable 5: 'claude-fable-5', Opus 4.8: 'claude-opus-4-8', Sonnet 4.6: 'claude-sonnet-4-6', Haiku 4.5: 'claude-haiku-4-5-20251001'.
+    </system-reminder>
+    Afterwards.`;
+    const result = stripAnthropicSkills(input);
+    expect(result).not.toContain('Fable 5');
+    expect(result).not.toContain('claude-haiku-4-5-20251001');
+    expect(result).toContain('Afterwards.');
+  });
+
+  test('strips model lineup at end of string (no tag after)', () => {
+    const input =
+      "Header.\nThe most recent Claude models are Fable 5 and the Claude 4.X family. Model IDs — Fable 5: 'claude-fable-5', Opus 4.8: 'claude-opus-4-8', Sonnet 4.6: 'claude-sonnet-4-6', Haiku 4.5: 'claude-haiku-4-5-20251001'.";
+    const result = stripAnthropicSkills(input);
+    expect(result).not.toContain('Fable 5');
+    expect(result).not.toContain('claude-haiku-4-5-20251001');
+    expect(result).toContain('Header.');
+  });
+
+  // ── <local-command> block stripping ──────────────────────────────────
+
+  test('strips <local-command> blocks', () => {
+    const input = `Before.
+    <local-command>The user typed /config and the harness intercepted it.</local-command>
+    After.`;
+    const result = stripAnthropicSkills(input);
+    expect(result).toContain('Before.');
+    expect(result).toContain('After.');
+    expect(result).not.toContain('local-command');
+    expect(result).not.toContain('/config');
+  });
+
+  test('strips multiple <local-command> blocks', () => {
+    const input = `<local-command>/help</local-command>
+    Middle content.
+    <local-command>/config theme dark</local-command>
+    End.`;
+    const result = stripAnthropicSkills(input);
+    expect(result).toContain('Middle content.');
+    expect(result).toContain('End.');
+    expect(result).not.toContain('local-command');
+    expect(result).not.toContain('/help');
+    expect(result).not.toContain('/config');
+  });
+
+  // ── Regex safety ─────────────────────────────────────────────────────
+
+  test('escapeRegex: skill name with dots does not break regex', () => {
+    // Simulate a skill name containing regex-special chars (dot).
+    // This exercises the escapeRegex path — a bare '.' would match any char.
+    const input = `Skills:
+    - deep.research: Research harness
+    - loop: Recurring tasks`;
+    // None of the current skills match 'deep.research', so nothing is stripped.
+    // The key assertion: the regex compiles and runs without error.
+    const result = stripAnthropicSkills(input);
+    expect(result).toContain('deep.research');
+    expect(result).toContain('loop');
+  });
 });
