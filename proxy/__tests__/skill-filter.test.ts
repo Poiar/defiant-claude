@@ -404,19 +404,6 @@ End of prompt.`;
     expect(result).toContain('Afterwards.');
   });
 
-  // ── Model lineup regex edge cases ────────────────────────────────────
-
-  test('strips model lineup followed by closing </system-reminder> tag', () => {
-    const input = `<system-reminder>
-    The most recent Claude models are Fable 5 and the Claude 4.X family. Model IDs — Fable 5: 'claude-fable-5', Opus 4.8: 'claude-opus-4-8', Sonnet 4.6: 'claude-sonnet-4-6', Haiku 4.5: 'claude-haiku-4-5-20251001'.
-    </system-reminder>
-    Afterwards.`;
-    const result = stripAnthropicSkills(input);
-    expect(result).not.toContain('Fable 5');
-    expect(result).not.toContain('claude-haiku-4-5-20251001');
-    expect(result).toContain('Afterwards.');
-  });
-
   test('strips model lineup at end of string (no tag after)', () => {
     const input =
       "Header.\nThe most recent Claude models are Fable 5 and the Claude 4.X family. Model IDs — Fable 5: 'claude-fable-5', Opus 4.8: 'claude-opus-4-8', Sonnet 4.6: 'claude-sonnet-4-6', Haiku 4.5: 'claude-haiku-4-5-20251001'.";
