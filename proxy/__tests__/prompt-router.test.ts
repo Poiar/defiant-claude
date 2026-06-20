@@ -1,6 +1,11 @@
 'use strict';
 
-import { classifyRequest, resolvePromptRoute, capMaxTokens } from '../prompt-router';
+import {
+  classifyRequest,
+  resolvePromptRoute,
+  capMaxTokens,
+  maxRetriesForTier,
+} from '../prompt-router';
 
 describe('classifyRequest', () => {
   test('TRIVIAL: single short message, no tools', () => {
@@ -195,5 +200,35 @@ describe('capMaxTokens', () => {
 
   test('HEAVY has no cap', () => {
     expect(capMaxTokens(16384, 'HEAVY')).toBe(16384);
+  });
+});
+
+describe('maxRetriesForTier', () => {
+  test('TOOL returns 0 (flash tier)', () => {
+    expect(maxRetriesForTier('TOOL')).toBe(0);
+  });
+
+  test('CHAT returns 0 (flash tier)', () => {
+    expect(maxRetriesForTier('CHAT')).toBe(0);
+  });
+
+  test('HEAVY returns 0 (flash tier)', () => {
+    expect(maxRetriesForTier('HEAVY')).toBe(0);
+  });
+
+  test('CODE returns 2 (pro tier, keep retries)', () => {
+    expect(maxRetriesForTier('CODE')).toBe(2);
+  });
+
+  test('TRIVIAL returns 2 (free provider, keep retries)', () => {
+    expect(maxRetriesForTier('TRIVIAL')).toBe(2);
+  });
+
+  test('null returns 2 (unknown, keep retries)', () => {
+    expect(maxRetriesForTier(null)).toBe(2);
+  });
+
+  test('undefined returns 2 (unknown, keep retries)', () => {
+    expect(maxRetriesForTier(undefined)).toBe(2);
   });
 });

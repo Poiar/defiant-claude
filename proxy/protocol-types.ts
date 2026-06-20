@@ -865,6 +865,79 @@ export function stripCacheControl(body: Record<string, unknown>): boolean {
   return stripped;
 }
 
+// --- Message deduplication --------------------------------------------------
+
+/**
+ * Deep-compare two values for structural equality.  Handles primitives,
+ * arrays, and plain objects (recursively).  Does not handle Set, Map,
+ * Date, or RegExp — those are treated as unequal unless they share a
+ * reference (which won't happen across JSON parse boundaries).
+ */
+function deepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== typeof b) return false;
+  if (a === null || b === null) return a === b;
+  if (typeof a !== 'object' || typeof b !== 'object') return false;
+
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (!deepEqual(a[i], b[i])) return false;
+    }
+    return true;
+  }
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+
+  const aObj = a as Record<string, unknown>;
+  const bObj = b as Record<string, unknown>;
+  const aKeys = Object.keys(aObj);
+  const bKeys = Object.keys(bObj);
+  if (aKeys.length !== bKeys.length) return false;
+  for (const key of aKeys) {
+    if (!(key in bObj)) return false;
+    if (!deepEqual(aObj[key], bObj[key])) return false;
+  }
+  return true;
+}
+
+/**
+ * Strip exact-duplicate consecutive messages from the messages array.
+ * Claude Code sometimes resends the same tool_result block when retrying
+ * a tool call.  Consecutive identical messages add zero information but
+ * consume cache-miss tokens at $0.14–0.435/M.
+ *
+ * Returns true if any messages were stripped.
+ */
+export function stripDuplicateMessages(body: Record<string, unknown>): boolean {
+  const messages = body.messages;
+  if (!Array.isArray(messages) || messages.length < 2) return false;
+
+  let stripped = false;
+  let i = 1;
+  while (i < messages.length) {
+    const prev = messages[i - 1];
+    const curr = messages[i];
+    if (
+      prev &&
+      curr &&
+      typeof prev === 'object' &&
+      typeof curr === 'object' &&
+      (prev as Record<string, unknown>).role === (curr as Record<string, unknown>).role &&
+      deepEqual(
+        (prev as Record<string, unknown>).content,
+        (curr as Record<string, unknown>).content,
+      )
+    ) {
+      messages.splice(i, 1);
+      stripped = true;
+      // Don't increment — check the next message against the same prev
+    } else {
+      i++;
+    }
+  }
+  return stripped;
+}
+
 // --- SSE Serialization Helpers ---------------------------------------------
 
 function sseLine(event: string, data: unknown): string {

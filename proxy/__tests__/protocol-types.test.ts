@@ -8,6 +8,7 @@ import {
   stripProviderFields,
   stripSystemBillingHeader,
   stripCacheControl,
+  stripDuplicateMessages,
   serializeSSEEvent,
   parseSSEEventData,
   parseSSEEventRaw,
@@ -1468,5 +1469,87 @@ describe('stripCacheControl', () => {
       Record<string, unknown>
     >;
     expect(block[0]).not.toHaveProperty('cache_control');
+  });
+});
+
+// --- stripDuplicateMessages ---
+
+describe('stripDuplicateMessages', () => {
+  test('strips duplicate consecutive tool_result messages', () => {
+    const body: Record<string, unknown> = {
+      messages: [
+        { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'a', content: 'ok' }] },
+        { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'a', content: 'ok' }] },
+        { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'b', content: 'done' }] },
+      ],
+    };
+    expect(stripDuplicateMessages(body)).toBe(true);
+    const msgs = body.messages as Array<Record<string, unknown>>;
+    expect(msgs.length).toBe(2);
+    expect(msgs[1].content).toEqual([{ type: 'tool_result', tool_use_id: 'b', content: 'done' }]);
+  });
+
+  test('keeps non-duplicate messages', () => {
+    const body: Record<string, unknown> = {
+      messages: [
+        { role: 'user', content: 'hello' },
+        { role: 'assistant', content: 'hi there' },
+        { role: 'user', content: 'bye' },
+      ],
+    };
+    expect(stripDuplicateMessages(body)).toBe(false);
+    expect((body.messages as Array<unknown>).length).toBe(3);
+  });
+
+  test('strips only consecutive duplicates (not non-consecutive)', () => {
+    const body: Record<string, unknown> = {
+      messages: [
+        { role: 'user', content: 'A' },
+        { role: 'assistant', content: 'B' },
+        { role: 'user', content: 'A' },
+      ],
+    };
+    expect(stripDuplicateMessages(body)).toBe(false);
+    expect((body.messages as Array<unknown>).length).toBe(3);
+  });
+
+  test('different role, same content → not stripped', () => {
+    const body: Record<string, unknown> = {
+      messages: [
+        { role: 'user', content: 'same text' },
+        { role: 'assistant', content: 'same text' },
+      ],
+    };
+    expect(stripDuplicateMessages(body)).toBe(false);
+    expect((body.messages as Array<unknown>).length).toBe(2);
+  });
+
+  test('empty messages array is no-op', () => {
+    const body: Record<string, unknown> = { messages: [] };
+    expect(stripDuplicateMessages(body)).toBe(false);
+  });
+
+  test('single message is no-op', () => {
+    const body: Record<string, unknown> = { messages: [{ role: 'user', content: 'hi' }] };
+    expect(stripDuplicateMessages(body)).toBe(false);
+  });
+
+  test('strips multiple consecutive duplicate groups', () => {
+    const body: Record<string, unknown> = {
+      messages: [
+        { role: 'user', content: 'A' },
+        { role: 'user', content: 'A' },
+        { role: 'assistant', content: 'B' },
+        { role: 'assistant', content: 'B' },
+        { role: 'user', content: 'C' },
+      ],
+    };
+    expect(stripDuplicateMessages(body)).toBe(true);
+    expect((body.messages as Array<unknown>).length).toBe(3);
+  });
+
+  test('no messages field is no-op', () => {
+    const body: Record<string, unknown> = { model: 'test' };
+    expect(stripDuplicateMessages(body)).toBe(false);
   });
 });
