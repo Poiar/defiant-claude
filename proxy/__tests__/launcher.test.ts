@@ -111,6 +111,35 @@ describe('build-routes (CLI)', () => {
     expect(haikuRoutes[0].provider).toBe('oc');
     expect(haikuRoutes[0].model).toBe('big-pickle');
   });
+
+  test('promptRouter routes TOOL, CHAT, HEAVY to flash for all slots', () => {
+    const routes = runLauncherJson('build-routes', '--name=ds+oc');
+    for (const slot of ['opus', 'sonnet', 'haiku', 'subagent', 'fable']) {
+      const slotRoutes = routes.promptRouter.routes[slot];
+      expect(Array.isArray(slotRoutes)).toBe(true);
+
+      const toolRoute = slotRoutes.find((r) => r.tier === 'TOOL');
+      expect(toolRoute).toBeDefined();
+      expect(toolRoute.provider).toBe('ds');
+      expect(toolRoute.model).toBe('deepseek-v4-flash');
+
+      const chatRoute = slotRoutes.find((r) => r.tier === 'CHAT');
+      expect(chatRoute).toBeDefined();
+      expect(chatRoute.provider).toBe('ds');
+      expect(chatRoute.model).toBe('deepseek-v4-flash');
+
+      const heavyRoute = slotRoutes.find((r) => r.tier === 'HEAVY');
+      expect(heavyRoute).toBeDefined();
+      expect(heavyRoute.provider).toBe('ds');
+      expect(heavyRoute.model).toBe('deepseek-v4-flash');
+
+      // TRIVIAL still routes to oc:big-pickle
+      const trivialRoute = slotRoutes.find((r) => r.tier === 'TRIVIAL');
+      expect(trivialRoute).toBeDefined();
+      expect(trivialRoute.provider).toBe('oc');
+      expect(trivialRoute.model).toBe('big-pickle');
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
