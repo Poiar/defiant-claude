@@ -90,7 +90,7 @@ Config resolution, routes JSON construction, env var computation, slot/thinking 
 ### Test coverage
 
 <!-- AUTO:test-coverage -->
-1808 tests across 54 test files covering all proxy modules — transport errors, concurrency, LRU cache, provider registry validation, error codes, routing, stats, forwarding, server tools, config, protocol translation, thinking cache (including fingerprint-free cross-turn regression tests), reasoning cache, header sanitization, truncation, crypto, friendly errors, SSRF validation, dead stream detection, startup checks, and stream metrics. Run with `npm test`.
+1835 tests across 55 test files covering all proxy modules — transport errors, concurrency, LRU cache, provider registry validation, error codes, routing, stats, forwarding, server tools, config, protocol translation, thinking cache (including fingerprint-free cross-turn regression tests), reasoning cache, header sanitization, truncation, crypto, friendly errors, SSRF validation, dead stream detection, startup checks, and stream metrics. Run with `npm test`.
 <!-- /AUTO:test-coverage -->
 
 ### Pre-commit
@@ -461,6 +461,7 @@ Tip: `deepclaude --install-statusline` automates the manual setup above.
 | `DEEPCLAUDE_DIR` | (undocumented) |
 | `DEEPCLAUDE_DRAIN_GRACE_MS` | (undocumented) |
 | `DEEPCLAUDE_ENCRYPTION_KEY` | Master key for AES-256-GCM API key decryption (used with `--encrypt-key`) |
+| `DEEPCLAUDE_FIRST_BYTE_TIMEOUT_MS` | (undocumented) |
 | `DEEPCLAUDE_LOG_ALL_REQUESTS` | Log all requests to `~/.deepclaude/requests.log` (`true` to enable) |
 | `DEEPCLAUDE_LOG_LEVEL` | Set log level (`debug` for verbose output; defaults to `info`) |
 | `DEEPCLAUDE_MAX_CONCURRENT` | Max concurrent upstream requests for main slots (default: `25`) |
@@ -470,6 +471,7 @@ Tip: `deepclaude --install-statusline` automates the manual setup above.
 | `DEEPCLAUDE_SKIP_STARTUP_CHECK` | Skip provider health checks on proxy startup (`true` to skip) |
 | `DEEPCLAUDE_STREAM_DEADLINE_MS` | Hard wall-clock cap on total streaming duration in ms (default: `300000`) |
 | `DEEPCLAUDE_STREAM_HEARTBEAT_MS` | Stream silence timeout in ms before heartbeat triggers (default: `180000`) |
+| `DEEPCLAUDE_SUBAGENT_FIRST_BYTE_TIMEOUT_MS` | (undocumented) |
 | `DEEPCLAUDE_SUBAGENT_MAX_CONCURRENT` | Max concurrent upstream requests for subagent slots (default: `8`) |
 | `DEEPCLAUDE_SUBAGENT_STREAM_DEADLINE_MS` | Hard wall-clock cap on subagent streaming duration in ms (default: `90000`) |
 | `DEEPCLAUDE_SUBAGENT_STREAM_HEARTBEAT_MS` | Subagent stream heartbeat timeout in ms (default: `90000`) |

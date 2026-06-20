@@ -257,10 +257,11 @@ if (probeIdx >= 2) {
   }
   let providerRegistry: ProviderRegistry | null = null;
   try {
-    providerRegistry = require('./providers.json');
+    const raw = fs.readFileSync(path.join(__dirname, 'providers.json'), 'utf-8');
+    providerRegistry = JSON.parse(raw);
   } catch (e: unknown) {
     const err = e as NodeJS.ErrnoException;
-    if (err.code !== 'MODULE_NOT_FOUND') {
+    if (err.code !== 'ENOENT') {
       console.warn('Warning: providers.json exists but could not be parsed:', err.message);
     }
   }
@@ -681,7 +682,8 @@ if (probeIdx >= 2) {
     req.setTimeout(30000); // Prevent slow-body trickle from starving concurrency slots
 
     // Throttled provider registry refresh — keeps extra headers and display
-    // names in sync with providers.json hot-reloads.
+    // names in sync with providers.json hot-reloads. Uses fs.readFileSync
+    // (not require()) so Node's module cache doesn't return stale data.
     {
       const now = Date.now();
       const REFRESH_MS = 15000;
@@ -689,7 +691,8 @@ if (probeIdx >= 2) {
         // skip — within throttled window
       } else {
         try {
-          const fresh = require('./providers.json');
+          const raw = fs.readFileSync(path.join(__dirname, 'providers.json'), 'utf-8');
+          const fresh = JSON.parse(raw);
           if (fresh && fresh.providers) {
             providerRegistry = fresh;
             providerDisplayNames = {};
@@ -1541,29 +1544,35 @@ if (probeIdx >= 2) {
 
           const constraints = getConstraints(target.providerKey);
 
-          // Strip provider-unsupported fields, Anthropic billing header,
-          // and prompt-cache metadata from the request body. These are
-          // Anthropic-only and would otherwise vary between sessions,
-          // defeating DeepSeek's disk cache ($0.0036/M vs $0.435/M).
-          if (constraints.stripFields && constraints.stripFields.length > 0) {
-            try {
-              const {
-                stripProviderFields,
-                stripSystemBillingHeader,
-                stripCacheControl,
-                stripDuplicateMessages,
-              } = require('./protocol-types');
-              const p = JSON.parse(forwardedBody.toString());
-              const stripped = stripProviderFields(p, constraints);
-              const billingStripped = stripSystemBillingHeader(p);
-              const cacheStripped = stripCacheControl(p);
-              const dedupStripped = stripDuplicateMessages(p);
-              if (stripped || billingStripped || cacheStripped || dedupStripped) {
-                forwardedBody = Buffer.from(JSON.stringify(p));
-              }
-            } catch (_) {
-              /* non-fatal */
+          // Strip Anthropic-only metadata from the request body for ALL
+          // providers. The billing header (system[0]) contains a cch hash
+          // that changes every request — keeping it defeats disk caching.
+          // cache_control markers are Anthropic-only and dead weight for
+          // non-Anthropic providers. Duplicate consecutive messages inflate
+          // the prefix and shift the cache window. These are body-normalization
+          // operations that are always beneficial — NOT gated on stripFields.
+          // Provider-specific field stripping (top_k, metadata, etc.) IS
+          // gated on stripFields since it depends on each provider's schema.
+          try {
+            const {
+              stripProviderFields,
+              stripSystemBillingHeader,
+              stripCacheControl,
+              stripDuplicateMessages,
+            } = require('./protocol-types');
+            const p = JSON.parse(forwardedBody.toString());
+            const billingStripped = stripSystemBillingHeader(p);
+            const cacheStripped = stripCacheControl(p);
+            const dedupStripped = stripDuplicateMessages(p);
+            let stripped = false;
+            if (constraints.stripFields && constraints.stripFields.length > 0) {
+              stripped = stripProviderFields(p, constraints);
             }
+            if (billingStripped || cacheStripped || dedupStripped || stripped) {
+              forwardedBody = Buffer.from(JSON.stringify(p));
+            }
+          } catch (_) {
+            /* non-fatal — body normalization is best-effort */
           }
 
           // Inject thinking mode configuration for models that support it.

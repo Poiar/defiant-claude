@@ -550,7 +550,34 @@ export function computeEnvVars(
   const sub1m = append1m('subagent:' + subagentModel);
   const fable1m = append1m('fable:' + fableModel);
 
-  const ctx = computeContextInfo(opusCtxModel || opusModel);
+  // Compute per-slot compaction/context info. Each slot's model may have
+  // a different context limit and compaction window. We use the MOST
+  // CONSERVATIVE (smallest) compaction window across all slots so that
+  // a slot with limited context (e.g., subagent with 131K model) gets
+  // compacted before overflowing, even when another slot (opus with 1M)
+  // would tolerate much more context.
+  const slotModels = [
+    { slot: 'opus', model: opusCtxModel || opusModel },
+    { slot: 'sonnet', model: sonnetModel },
+    { slot: 'haiku', model: haikuModel },
+    { slot: 'subagent', model: subagentModel },
+    { slot: 'fable', model: fableModel },
+  ];
+  const ctxInfo = slotModels.map((sm) => {
+    const info = computeContextInfo(sm.model);
+    return { slot: sm.slot, ...info };
+  });
+
+  // Pick the most conservative across all slots
+  const compactWindows = ctxInfo
+    .map((c) => (c.autoCompactWindow ? parseInt(c.autoCompactWindow, 10) : null))
+    .filter(Boolean);
+  const hasDisableCompact = ctxInfo.some((c) => c.disableCompact);
+  const maxCtxTokens = ctxInfo
+    .map((c) => (c.maxContextTokens ? parseInt(c.maxContextTokens, 10) : null))
+    .filter(Boolean);
+  const minCompactWindow = compactWindows.length > 0 ? String(Math.min(...compactWindows)) : null;
+  const minMaxCtx = maxCtxTokens.length > 0 ? String(Math.min(...maxCtxTokens)) : null;
 
   const env = {
     ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}`,
@@ -564,12 +591,12 @@ export function computeEnvVars(
     CLAUDE_CONTEXT_COMPRESSION: 'true',
   };
 
-  if (ctx.autoCompactWindow) {
-    env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = ctx.autoCompactWindow;
+  if (minCompactWindow) {
+    env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = minCompactWindow;
   }
-  if (ctx.disableCompact) {
+  if (hasDisableCompact) {
     env.DISABLE_COMPACT = '1';
-    if (ctx.maxContextTokens) env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = ctx.maxContextTokens;
+    if (minMaxCtx) env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = minMaxCtx;
   }
   // Remove ANTHROPIC_API_KEY (proxy handles auth)
   env._unset = ['ANTHROPIC_API_KEY'];

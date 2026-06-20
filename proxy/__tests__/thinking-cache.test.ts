@@ -245,23 +245,20 @@ describe('store + injectThinkingBlocks', () => {
     expect(injectThinkingBlocks(undefined as unknown as Message[])).toBe(0);
   });
 
-  test('messageCount guard: does not inject when stored message count differs', () => {
+  test('injects regardless of message count (messageCount guard was removed as dead code)', () => {
     const messages: Message[] = [
       makeUserMsg('guard test'),
       makeAssistantMsg([{ type: 'tool_use', id: 'toolu_guard', name: 'guard_tool', input: {} }]),
     ];
     const sk = sessionKey({ messages })!;
 
-    // Store with messageCount=99 — far larger than the actual 2 messages
-    store(
-      sk,
-      'toolu_guard',
-      [{ type: 'thinking', thinking: 'should not appear', signature: 'sig_g' }],
-      99,
-    );
+    store(sk, 'toolu_guard', [{ type: 'thinking', thinking: 'should appear', signature: 'sig_g' }]);
 
     const injected = injectThinkingBlocks(messages);
-    expect(injected).toBe(0);
+    expect(injected).toBe(1);
+    const blocks = messages[1].content as MessageBlock[];
+    expect(blocks[0].type).toBe('thinking');
+    expect((blocks[0] as MessageBlock).thinking).toBe('should appear');
   });
 
   test('does not inject when no user message (no session key)', () => {
@@ -552,15 +549,17 @@ describe('kill+resume: disk persistence round-trip', () => {
     dir: string,
     key: string,
     blocks: Array<{ type: string; thinking: string; signature: string }>,
-    msgCount: number,
+    _msgCount?: number,
   ): string {
     realFs.mkdirSync(dir, { recursive: true });
     const fname = hashKey(key) + '.json';
     const fpath = realPath.join(dir, fname);
+    // messageCount was removed from CachedEntry — keep backward compat
+    // by writing a dummy value so old-format files still parse.
     const data = JSON.stringify({
       key,
       blocks,
-      messageCount: msgCount,
+      messageCount: _msgCount ?? -1,
       storedAt: Date.now(),
     });
     realFs.writeFileSync(fpath, data, 'utf-8');
@@ -600,7 +599,7 @@ describe('kill+resume: disk persistence round-trip', () => {
     expect(extracted!.firstToolUseId).toBe('toolu_france_kr');
 
     // Proxy stores the extracted thinking blocks (writes to disk)
-    store(extracted!.sk, extracted!.firstToolUseId, extracted!.blocks, responseMsgs.length);
+    store(extracted!.sk, extracted!.firstToolUseId, extracted!.blocks);
 
     // --- PHASE 2: "Proxy killed" — verify disk file was written ---
     // The real writeToDisk writes hash(key).json with {key, blocks, messageCount, storedAt}
@@ -627,7 +626,7 @@ describe('kill+resume: disk persistence round-trip', () => {
     // CC sends the NEXT request WITHOUT thinking blocks.
     // The new proxy loads the cache from disk and injects.
     // Restore into in-memory LRU (simulating loadFromDisk)
-    store(extracted!.sk, extracted!.firstToolUseId, extracted!.blocks, 3);
+    store(extracted!.sk, extracted!.firstToolUseId, extracted!.blocks);
 
     const resumeMsgs: Message[] = [
       makeUserMsg('what is the capital of France'),

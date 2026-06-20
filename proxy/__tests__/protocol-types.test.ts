@@ -1331,6 +1331,22 @@ describe('stripSystemBillingHeader', () => {
     expect(sys.length).toBe(1);
     expect(sys[0].text).toBe('You are Claude Code.');
   });
+
+  test('strips billing header with NO stripFields (simulates Fireworks provider)', () => {
+    // Fireworks: stripFields=[] (or absent), format=anthropic
+    const body: Record<string, unknown> = {
+      model: 'some-model',
+      system: [
+        { type: 'text', text: 'x-anthropic-billing-header: cch=abc12; version=1.0;' },
+        { type: 'text', text: 'You are a helpful assistant.' },
+      ],
+    };
+    // Should strip regardless of stripFields — this is the bug fix
+    expect(stripSystemBillingHeader(body)).toBe(true);
+    const sys = body.system as Array<Record<string, unknown>>;
+    expect(sys.length).toBe(1);
+    expect(sys[0].text).toBe('You are a helpful assistant.');
+  });
 });
 
 // =========================================================================

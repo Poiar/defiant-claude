@@ -389,8 +389,8 @@ describe('forward constants', () => {
     expect(STREAM_READ_TIMEOUT_MS).toBe(300_000);
   });
 
-  test('FIRST_BYTE_TIMEOUT_MS is 15s', () => {
-    expect(FIRST_BYTE_TIMEOUT_MS).toBe(15_000);
+  test('FIRST_BYTE_TIMEOUT_MS is 30s (was 15s, bumped for DeepSeek extended thinking)', () => {
+    expect(FIRST_BYTE_TIMEOUT_MS).toBe(30_000);
   });
 
   test('STREAM_HEARTBEAT_MS is 180s (3 min)', () => {

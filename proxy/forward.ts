@@ -285,7 +285,10 @@ export const STREAM_READ_TIMEOUT_MS = 300_000;
 
 // First-byte timeout: if the upstream accepts the connection but never sends
 // a single byte within this window, treat it as a dead stream and fail over.
-export const FIRST_BYTE_TIMEOUT_MS = 15_000;
+// Increased to 30s (from 15s) for DeepSeek extended thinking, which can take
+// >15s before emitting the first SSE byte. Configurable via env var.
+export const FIRST_BYTE_TIMEOUT_MS =
+  parseInt(process.env.DEEPCLAUDE_FIRST_BYTE_TIMEOUT_MS || '', 10) || 30_000;
 
 // Per-chunk heartbeat: if no data arrives during active streaming within
 // this window the connection is considered silently dead.  The timer resets
@@ -309,20 +312,23 @@ function getStreamTimeouts(slot: string | null): {
   const defaultHeartbeat =
     parseInt(process.env.DEEPCLAUDE_STREAM_HEARTBEAT_MS || '', 10) || STREAM_HEARTBEAT_MS;
   const defaultDeadline = parseInt(process.env.DEEPCLAUDE_STREAM_DEADLINE_MS || '', 10) || 300_000;
+  const defaultFirstByte = FIRST_BYTE_TIMEOUT_MS;
   const subagentHeartbeat =
     parseInt(process.env.DEEPCLAUDE_SUBAGENT_STREAM_HEARTBEAT_MS || '', 10) || 90_000;
   const subagentDeadline =
     parseInt(process.env.DEEPCLAUDE_SUBAGENT_STREAM_DEADLINE_MS || '', 10) || 90_000;
+  const subagentFirstByte =
+    parseInt(process.env.DEEPCLAUDE_SUBAGENT_FIRST_BYTE_TIMEOUT_MS || '', 10) || 15_000;
   if (slot === 'subagent') {
     return {
-      firstByte: 10_000, // 10s — subagents shouldn't have cold-start delays
+      firstByte: subagentFirstByte,
       heartbeat: subagentHeartbeat,
       deadline: subagentDeadline, // 90s default — matches start-proxy subagent request deadline
       bodyRead: 20_000, // 20s — subagent responses are small (tool results)
     };
   }
   return {
-    firstByte: FIRST_BYTE_TIMEOUT_MS,
+    firstByte: defaultFirstByte,
     heartbeat: defaultHeartbeat,
     deadline: defaultDeadline,
     bodyRead: 30_000, // 30s — default body read timeout
@@ -777,6 +783,32 @@ export function tryForward(
               (streamUsage as Record<string, unknown>)._complete = true;
               if (streamEndedNormally) {
                 log.info(reqId, 'Stream completed normally, total bytes received: ' + streamBytes);
+              } else {
+                // Abnormal stream termination (gzip failure, timeout, etc.).
+                // The 'end' handler never ran, so thinking blocks were not cached.
+                // Try to extract from whatever was accumulated so the client's
+                // retry can hit the DeepSeek cache instead of paying full miss cost.
+                if (!isOpenAI && accumulatedBlocks.length > 0 && parsed && parsed.messages) {
+                  try {
+                    const responseMsg = { role: 'assistant', content: accumulatedBlocks };
+                    const fullMessages = [
+                      ...(parsed.messages as Array<Record<string, unknown>>),
+                      responseMsg,
+                    ];
+                    const tc = extractThinkingBlocks(fullMessages as ThinkingMessage[]);
+                    if (tc) {
+                      store(tc.sk, tc.firstToolUseId, tc.blocks);
+                      log.info(
+                        reqId,
+                        'cached thinking blocks on abnormal stream close (' +
+                          accumulatedBlocks.length +
+                          ' blocks)',
+                      );
+                    }
+                  } catch (_e) {
+                    // non-fatal — best-effort fallback cache
+                  }
+                }
               }
             });
 
@@ -842,15 +874,29 @@ export function tryForward(
                   reqId,
                   'usage buffer exceeded 1MB — discarding accumulated SSE data to prevent unbounded memory growth (possible upstream stream missing SSE delimiters)',
                 );
-                // Malformed upstream stream (missing SSE delimiters) — discard
-                // usage buffer to prevent unbounded memory growth, same guard
-                // as the outStream SSE buffer below, but preserve trailing partial event.
+                // Before discarding, extract usage from the complete events
+                // that will be dropped. The final usage event (token counts)
+                // is typically at the end of the stream — losing it means
+                // zeroed cost tracking. Also reset content block accumulator
+                // since the malformed stream invalidates block reconstruction.
                 const lastSplit = rawUsageBuf.lastIndexOf('\n\n');
                 if (lastSplit >= 0) {
+                  const completeEvents = rawUsageBuf.slice(0, lastSplit);
+                  for (const event of completeEvents.split('\n\n')) {
+                    if (!event.trim()) continue;
+                    const dataLines = [...event.matchAll(/^data: ?(.*)$/gm)];
+                    if (!dataLines.length) continue;
+                    const payload = dataLines.map((m) => m[1]).join('\n');
+                    if (payload === '[DONE]') continue;
+                    extractStreamUsage(payload, streamUsage);
+                  }
                   rawUsageBuf = rawUsageBuf.slice(lastSplit + 2);
                 } else {
                   rawUsageBuf = '';
                 }
+                // Reset block accumulator — we can't trust partial block state
+                pushAccumulatedBlock();
+                blockAccumulator = null;
                 return;
               }
               const parts = rawUsageBuf.split('\n\n');

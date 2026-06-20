@@ -1197,8 +1197,40 @@ describe('computeEnvVars ctx-model override', () => {
       '--subagent=claude-haiku-4-5-20251001',
       '--fable=claude-haiku-4-5-20251001',
     );
-    // 200K model → no [1m], no compaction window
+    // 200K model -> no [1m], no compaction window
     expect(env.ANTHROPIC_MODEL).not.toContain('[1m]');
+  });
+
+  test('per-slot compaction: subagent with 131K model overrides 1M opus compaction window', () => {
+    // Opus = 1M model (deepseek-v4-pro), subagent = 131K model (big-pickle)
+    // The compaction window should use the MINIMUM across all slots
+    const env = runLauncherJson(
+      'env-vars',
+      '--port=58102',
+      '--opus=deepseek-v4-pro',
+      '--sonnet=deepseek-v4-pro',
+      '--haiku=big-pickle',
+      '--subagent=big-pickle',
+      '--fable=deepseek-v4-pro',
+    );
+    // big-pickle (131K) ctxLimit=131072, no compactionWindow -> autoCompactWindow = '131072'
+    // deepseek-v4-pro compactionWindow=950000 -> autoCompactWindow = '950000'
+    // Per-slot fix: min(950000, 131072) = 131072
+    expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('131072');
+  });
+
+  test('per-slot compaction: all 1M models produce 950K window', () => {
+    // All slots use deepseek models with 950K compaction window
+    const env = runLauncherJson(
+      'env-vars',
+      '--port=58103',
+      '--opus=deepseek-v4-pro',
+      '--sonnet=deepseek-v4-pro',
+      '--haiku=deepseek-v4-flash',
+      '--subagent=deepseek-v4-flash',
+      '--fable=deepseek-v4-pro',
+    );
+    expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('950000');
   });
 });
 

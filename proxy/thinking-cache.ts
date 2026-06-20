@@ -7,10 +7,12 @@ import path from 'node:path';
 import { LruCache } from './lru-cache';
 import { sessionKey } from './session-key';
 
-// 30-minute TTL, bounded to 1000 entries. LruCache handles expiry and
+// 24-hour TTL, bounded to 10000 entries. DeepSeek's disk cache persists
+// "hours to days" — a 30-min TTL caused cache misses on idle gaps >30min
+// (50× cost: $0.435/M miss vs $0.0036/M hit). LruCache handles expiry and
 // eviction automatically via its shared cleanup timer.
-const TTL_MS = 30 * 60 * 1000;
-const MAX_ENTRIES = 1000;
+const TTL_MS = 24 * 60 * 60 * 1000;
+const MAX_ENTRIES = 10000;
 
 // Persist to ~/.deepclaude/thinking-cache/ so cached thinking blocks survive
 // proxy restarts. Without this, kill+resume causes DeepSeek prefix cache misses
@@ -54,7 +56,6 @@ interface StoredBlock {
 
 interface CachedEntry {
   blocks: StoredBlock[];
-  messageCount: number;
 }
 
 // --- Disk persistence ---
@@ -70,7 +71,6 @@ function writeToDisk(key: string, entry: CachedEntry): void {
     const data = JSON.stringify({
       key, // store original key so we can reconstruct on load
       blocks: entry.blocks,
-      messageCount: entry.messageCount,
       storedAt: Date.now(),
     });
     const fname = hashKey(key) + '.json';
@@ -112,7 +112,6 @@ function loadFromDisk(): void {
         if (cache.get(data.key)) continue;
         cache.set(data.key, {
           blocks: data.blocks,
-          messageCount: data.messageCount ?? -1,
         });
       } catch {
         try {
@@ -136,7 +135,6 @@ export function store(
   sessionKeyParam: string | null,
   firstToolUseId: string | null,
   blocks: StoredBlock[],
-  messageCount: number = -1,
 ): void {
   if (!blocks || blocks.length === 0 || !firstToolUseId) return;
   const key = `${sessionKeyParam}|${firstToolUseId}`;
@@ -146,7 +144,6 @@ export function store(
       thinking: b.thinking,
       signature: b.signature || '',
     })),
-    messageCount,
   };
   cache.set(key, entry);
   writeToDisk(key, entry);
@@ -155,12 +152,9 @@ export function store(
 function retrieve(
   sessionKeyParam: string | null,
   firstToolUseId: string | null,
-  currentMsgCount: number = -1,
 ): StoredBlock[] | null {
   const entry = cache.get(`${sessionKeyParam}|${firstToolUseId}`);
   if (!entry) return null;
-  if (entry.messageCount > 0 && currentMsgCount >= 0 && entry.messageCount !== currentMsgCount)
-    return null;
   return entry.blocks;
 }
 
@@ -182,7 +176,7 @@ export function injectThinkingBlocks(messages: Message[]): number {
     if (toolUses.length === 0) continue;
 
     const firstId = toolUses[0].id;
-    const cached = retrieve(sk, firstId!, messages.length);
+    const cached = retrieve(sk, firstId!);
     if (cached) {
       msg.content = [...cached, ...(msg.content as MessageBlock[])];
       injected++;
