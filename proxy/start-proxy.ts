@@ -37,6 +37,7 @@ import {
   type CanaryConfig,
 } from './canary';
 import { tryForward, addFallbackHeaders, sseHeaders, type ForwardResult } from './forward';
+import { checkCache, replayCachedStream, hashBody, createSseCollector } from './response-cache';
 import { sendProbe } from './probe';
 import type { ProbeSlot } from './probe';
 import {
@@ -1873,6 +1874,18 @@ if (probeIdx >= 2) {
           const transport = target.targetUrl.protocol === 'https:' ? https : http;
           const t0 = Date.now();
 
+          // Response cache: check if we've seen this exact forwarded body before.
+          // Claude Code sometimes retries tool calls with identical requests —
+          // replaying a cached SSE stream skips the upstream round-trip entirely.
+          const bodyHash = hashBody(
+            typeof forwardedBody === 'string' ? Buffer.from(forwardedBody) : forwardedBody,
+          );
+          const cachedEvents = checkCache(bodyHash);
+          if (cachedEvents) {
+            replayCachedStream(res, cachedEvents, reqId);
+            return;
+          }
+
           // Per-provider retry loop: retry transport errors with exponential
           // backoff before moving to the next fallback provider.
           // Flash-tier requests skip retries (already on cheapest paid model).
@@ -2173,7 +2186,12 @@ if (probeIdx >= 2) {
                     /* socket may already be destroyed */
                   }
                 });
-                pipeline(result.stream, res, (err: Error | null) => {
+                // Collect SSE events for response cache while streaming to client.
+                // The Transform sits between upstream and res, collecting events
+                // without buffering. On completion, cached events replay instantly
+                // on identical retry requests.
+                const sseCollector = createSseCollector(bodyHash, reqId);
+                pipeline(result.stream, sseCollector, res, (err: Error | null) => {
                   if (result.streamTimings) {
                     const streamMetrics = finalizeMetrics(
                       result.streamTimings,
