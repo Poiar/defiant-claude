@@ -97,6 +97,7 @@ const SERVER_TOOL_PREFIXES: string[] = [
   'web_search_',
   'web_fetch_',
   'url_fetch_',
+  'reddit_search_',
   'computer_',
   'bash_',
   'text_editor_',
@@ -134,6 +135,25 @@ const WEB_FETCH_SCHEMA: WebFetchSchema = {
   required: ['url'],
 };
 
+interface RedditSearchSchema {
+  type: string;
+  properties: {
+    query: { type: string; description: string };
+  };
+  required: string[];
+}
+const REDDIT_SEARCH_SCHEMA: RedditSearchSchema = {
+  type: 'object',
+  properties: {
+    query: {
+      type: 'string',
+      description:
+        'The topic to search Reddit for. Searches posts and returns the top result with full content.',
+    },
+  },
+  required: ['query'],
+};
+
 // --- Types ---
 
 interface ToolDef {
@@ -146,6 +166,7 @@ interface ConvertResult {
   tools: ToolDef[];
   hasWebSearch: boolean;
   hasWebFetch: boolean;
+  hasRedditSearch: boolean;
 }
 interface PendingToolResult {
   needsPopulation: boolean;
@@ -187,11 +208,13 @@ export function isNativeAnthropicProvider(providerKey: string, hostname?: string
 
 export function convertServerTools(tools: ToolDef[] | null | undefined): ConvertResult {
   if (tools === null || tools === undefined)
-    return { tools: [], hasWebSearch: false, hasWebFetch: false };
-  if (!Array.isArray(tools)) return { tools, hasWebSearch: false, hasWebFetch: false };
+    return { tools: [], hasWebSearch: false, hasWebFetch: false, hasRedditSearch: false };
+  if (!Array.isArray(tools))
+    return { tools, hasWebSearch: false, hasWebFetch: false, hasRedditSearch: false };
 
   let hasWebSearch = false;
   let hasWebFetch = false;
+  let hasRedditSearch = false;
 
   const converted: ToolDef[] = tools.map((tool) => {
     if (!tool || typeof tool !== 'object') return tool;
@@ -214,10 +237,19 @@ export function convertServerTools(tools: ToolDef[] | null | undefined): Convert
         input_schema: WEB_FETCH_SCHEMA as unknown as Record<string, unknown>,
       };
     }
+    if (type.startsWith('reddit_search_')) {
+      hasRedditSearch = true;
+      return {
+        name: 'reddit_search',
+        description:
+          'Search Reddit for discussions on a topic. Returns matching post titles, snippets, and the full content of the top result including comments.',
+        input_schema: REDDIT_SEARCH_SCHEMA as unknown as Record<string, unknown>,
+      };
+    }
     return tool;
   });
 
-  return { tools: converted, hasWebSearch, hasWebFetch };
+  return { tools: converted, hasWebSearch, hasWebFetch, hasRedditSearch };
 }
 
 // --- Request body preprocessing for non-Anthropic providers ---
@@ -240,6 +272,8 @@ export interface PreprocessResult {
   hadWebSearch: boolean;
   /** Whether the original request contained web fetch tools */
   hadWebFetch: boolean;
+  /** Whether the original request contained reddit search tools */
+  hadRedditSearch: boolean;
 }
 
 const WEB_TOOL_PREFIXES = ['web_search_', 'web_fetch_', 'url_fetch_'];
@@ -252,15 +286,17 @@ export function preprocessServerTools(
   let modified = false;
   let hadWebSearch = false;
   let hadWebFetch = false;
+  let hadRedditSearch = false;
 
   if (!body.tools || !Array.isArray(body.tools)) {
-    return { modified: false, hadWebSearch: false, hadWebFetch: false };
+    return { modified: false, hadWebSearch: false, hadWebFetch: false, hadRedditSearch: false };
   }
 
   // Step 1: Convert Anthropic server-side tool types to generic custom tools
   const conv = convertServerTools(body.tools);
   hadWebSearch = conv.hasWebSearch;
   hadWebFetch = conv.hasWebFetch;
+  hadRedditSearch = conv.hasRedditSearch;
   if (conv.tools !== body.tools) {
     body.tools = conv.tools;
     modified = true;
@@ -291,7 +327,7 @@ export function preprocessServerTools(
   // is set — see the hadWebSearch/hadWebFetch return values.
   if (constraints && 'tool_choice' in body) {
     if (constraints.forbidsToolChoiceWithThinking) {
-      if (hadWebSearch || hadWebFetch) {
+      if (hadWebSearch || hadWebFetch || hadRedditSearch) {
         // Keep tool_choice — web search needs it to force the tool invocation.
         // modified=true signals the caller to skip thinking injection.
         modified = true;
@@ -306,7 +342,7 @@ export function preprocessServerTools(
     modified = true;
   }
 
-  return { modified, hadWebSearch, hadWebFetch };
+  return { modified, hadWebSearch, hadWebFetch, hadRedditSearch };
 }
 // --- Web search execution (DuckDuckGo -- free, no API key) ---
 
@@ -1132,6 +1168,198 @@ export async function webFetch(
     releaseFetchSlot();
   }
 }
+// --- Reddit search ---
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+interface RedditSearchResult {
+  title: string | null;
+  body: string;
+  score: string;
+  commentCount: string;
+  comments: string[];
+}
+
+/**
+ * Clean HTML entities and tags from a string.
+ */
+function cleanHtml(str: string): string {
+  return str
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&#32;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Fetch a URL via HTTP/HTTPS and return status code + body as text.
+ * Returns null on error or timeout.
+ */
+function simpleHttpGet(
+  url: string,
+  headers: Record<string, string> = {},
+  timeoutMs: number = 15000,
+): Promise<{ status: number; data: string } | null> {
+  return new Promise((resolve) => {
+    const transport = url.startsWith('https://') ? https : http;
+    const req = transport.get(url, { headers, timeout: timeoutMs }, (res) => {
+      let data = '';
+      res.on('data', (chunk: Buffer) => {
+        data += chunk.toString();
+      });
+      res.on('end', () => {
+        resolve({ status: res.statusCode || 0, data });
+      });
+      res.on('error', () => resolve(null));
+    });
+    req.on('error', () => resolve(null));
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(null);
+    });
+  });
+}
+
+const BROWSER_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
+
+/**
+ * Search Reddit via SearXNG and fetch the top result's full content from old.reddit.com.
+ *
+ * 1. Queries local SearXNG with "site:reddit.com <query>"
+ * 2. Returns top results with titles + snippets
+ * 3. For the #1 result, fetches full post content + comments from old.reddit.com
+ */
+export async function redditSearch(query: string): Promise<string> {
+  if (!query || typeof query !== 'string') {
+    return 'Error: No query provided for Reddit search.';
+  }
+
+  // Step 1: Search via SearXNG
+  const searxngUrl =
+    'http://localhost:8888/search?format=json&q=' + encodeURIComponent('site:reddit.com ' + query);
+
+  const searchRes = await simpleHttpGet(searxngUrl, {
+    'User-Agent': BROWSER_UA,
+    Accept: 'application/json',
+  });
+
+  if (!searchRes) {
+    return 'Error: SearXNG search failed (connection error or timeout).';
+  }
+  if (searchRes.status !== 200) {
+    return 'Error: SearXNG returned HTTP ' + searchRes.status;
+  }
+
+  let results: Array<{ title?: string; url?: string; content?: string }> = [];
+  try {
+    const json = JSON.parse(searchRes.data);
+    results = (json.results || []).filter(
+      (r: { url?: string }) => r.url && r.url.includes('reddit.com'),
+    );
+  } catch {
+    return 'Error: Failed to parse SearXNG response.';
+  }
+
+  if (results.length === 0) {
+    return 'No Reddit results found for: ' + query;
+  }
+
+  // Build result listing
+  const lines: string[] = [];
+  lines.push('🔍 Reddit search results for: "' + query + '"');
+  lines.push('');
+
+  const topN = results.slice(0, 5);
+  topN.forEach((r, i) => {
+    lines.push('  ' + (i + 1) + '. ' + (r.title || '(no title)'));
+    lines.push('     ' + (r.url || ''));
+    if (r.content) {
+      lines.push('     ' + r.content.slice(0, 120));
+    }
+    lines.push('');
+  });
+
+  // Step 2: Fetch full content for the top result
+  const top = results[0];
+  if (!top || !top.url) {
+    return lines.join('\n') + '\n(no further details available)';
+  }
+
+  lines.push('─'.repeat(60));
+  lines.push('📄 Full post: ' + (top.title || ''));
+  lines.push('   ' + top.url);
+  lines.push('');
+
+  const oldUrl = top.url.replace('www.reddit.com', 'old.reddit.com');
+  const postRes = await simpleHttpGet(oldUrl, {
+    'User-Agent': BROWSER_UA,
+  });
+
+  if (!postRes || postRes.status !== 200) {
+    lines.push('(failed to fetch post content)');
+    return lines.join('\n');
+  }
+
+  const html = postRes.data;
+
+  // Find post title
+  const titleMatch = html.match(/<a class="title may-blank[^"]*"[^>]*>([^<]+)<\/a>/);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const title = titleMatch ? titleMatch[1].trim() : '(no title)';
+
+  // Find post self-text: look for form with thing_id="t3_..." then .md inside
+  let body = '(no text content)';
+  const postFormMatch = html.match(
+    /<input type="hidden" name="thing_id" value="t3_[^"]*"[^>]*\/>([\s\S]*?)<\/form>/,
+  );
+  if (postFormMatch) {
+    const mdMatch = postFormMatch[1].match(/<div class="md"[^>]*>([\s\S]*?)<\/div>/);
+    if (mdMatch) {
+      body = cleanHtml(mdMatch[1]);
+    }
+  }
+
+  // Find top-level comments
+  const comments: string[] = [];
+  const commentFormRegex =
+    /<input type="hidden" name="thing_id" value="t1_[^"]*"[^>]*\/>([\s\S]*?)<\/form>/g;
+  let cfMatch: RegExpExecArray | null;
+  while ((cfMatch = commentFormRegex.exec(html)) !== null) {
+    const mdMatch = cfMatch[1].match(/<div class="md"[^>]*>([\s\S]*?)<\/div>/);
+    if (mdMatch) {
+      const text = cleanHtml(mdMatch[1]);
+      if (text && text.length > 20) comments.push(text);
+    }
+  }
+
+  // Score and comment count
+  const scoreMatch = html.match(/data-score="(\d+)"/);
+  const score = scoreMatch ? scoreMatch[1] : '?';
+  const ccMatch = html.match(/data-comments-count="(\d+)"/);
+  const commentCount = ccMatch ? ccMatch[1] : '?';
+
+  lines.push('Score: ' + score + ' · Comments: ' + commentCount);
+  lines.push('');
+  lines.push(body.slice(0, 2000));
+
+  if (comments.length > 0) {
+    lines.push('');
+    lines.push('─'.repeat(40));
+    lines.push('💬 Top comments (' + comments.length + '):');
+    lines.push('');
+    comments.slice(0, 5).forEach((c, i) => {
+      lines.push('  ' + (i + 1) + '. ' + c.slice(0, 300));
+      lines.push('');
+    });
+  }
+
+  return lines.join('\n');
+}
 // --- Tool result population ---
 
 export function hasPendingToolResult(messages: Message[]): PendingToolResult {
@@ -1147,10 +1375,12 @@ export function hasPendingToolResult(messages: Message[]): PendingToolResult {
         block.type === 'tool_use' &&
         (block.name === 'web_search' ||
           block.name === 'web_fetch' ||
+          block.name === 'reddit_search' ||
           (typeof block.name === 'string' &&
             (block.name.startsWith('web_search_') ||
               block.name.startsWith('web_fetch_') ||
-              block.name.startsWith('url_fetch_'))))
+              block.name.startsWith('url_fetch_') ||
+              block.name.startsWith('reddit_search_'))))
       ) {
         toolUseIds.set(block.id!, { name: block.name, input: block.input || {} });
       }
@@ -1258,6 +1488,12 @@ export async function populateToolResults(messages: Message[]): Promise<boolean>
       const url = (toolInfo.input.url || toolInfo.input.uri || '') as string;
       if (url) {
         const result = await webFetch(url);
+        block.content = result;
+      }
+    } else if (name === 'reddit_search' || name.startsWith('reddit_search_')) {
+      const query = (toolInfo.input.query || '') as string;
+      if (query) {
+        const result = await redditSearch(query);
         block.content = result;
       }
     }
