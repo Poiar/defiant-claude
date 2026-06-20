@@ -51,8 +51,8 @@ var Iu_ = 200000;    // default auto-compact window for 1M-capable models
 var FKK = 0.2;       // precompute buffer fraction (20%)
 ```
 
-## DeepClaude integration points
+## Defiant integration points
 
-- `deepclaude.ps1` lines ~1587-1601 (remote), ~1709-1721 (main): sets `CLAUDE_CODE_AUTO_COMPACT_WINDOW` based on opus slot model's contextLimit from `providers.json`
-- `deepclaude.ps1` Append-1M function: adds `[1m]` suffix to model env vars when context ≥1M
+- `defiant.ps1` lines ~1587-1601 (remote), ~1709-1721 (main): sets `CLAUDE_CODE_AUTO_COMPACT_WINDOW` based on opus slot model's contextLimit from `providers.json`
+- `defiant.ps1` Append-1M function: adds `[1m]` suffix to model env vars when context ≥1M
 - `routing.ts` resolveTarget: strips `[1m]` before route lookup

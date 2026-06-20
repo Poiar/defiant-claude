@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# deepclaude — Use Claude Code with cheap backends. Provider-agnostic.
+# defiant — Use Claude Code with cheap backends. Provider-agnostic.
 # Thin wrapper around scripts/cli.mjs (Node.js unified launcher).
 set -euo pipefail
 

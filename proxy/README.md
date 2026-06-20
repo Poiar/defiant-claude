@@ -1,11 +1,11 @@
-# DeepClaude Proxy
+# Defiant Proxy
 
 HTTP reverse proxy that routes Claude Code to cheap third-party backends. Provider-agnostic — mix models from different APIs in one config. 15 providers, 15 named configs, 625 tests.
 
 ## Architecture
 
 ```
-deepclaude.ps1 / deepclaude.sh          [Thin launchers]
+defiant.ps1 / defiant.sh          [Thin launchers]
   |
   v
 proxy/launcher.mjs                      [Shared engine — CLI parsing, lifecycle]

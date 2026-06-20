@@ -1231,11 +1231,11 @@ describe('webSearch', () => {
     mockHttpGet.mockReset();
     mockHttpRequest.mockReset();
     mockFetch.mockReset();
-    process.env.DEEPCLAUDE_SEARCH_ENGINES = 'ddg';
+    process.env.DEFIANT_SEARCH_ENGINES = 'ddg';
   });
 
   afterEach(() => {
-    delete process.env.DEEPCLAUDE_SEARCH_ENGINES;
+    delete process.env.DEFIANT_SEARCH_ENGINES;
   });
 
   test('returns formatted results from DDG Lite POST (Tier 1)', async () => {
@@ -1332,11 +1332,11 @@ describe('webSearchStructured', () => {
     mockHttpGet.mockReset();
     mockHttpRequest.mockReset();
     mockFetch.mockReset();
-    process.env.DEEPCLAUDE_SEARCH_ENGINES = 'ddg';
+    process.env.DEFIANT_SEARCH_ENGINES = 'ddg';
   });
 
   afterEach(() => {
-    delete process.env.DEEPCLAUDE_SEARCH_ENGINES;
+    delete process.env.DEFIANT_SEARCH_ENGINES;
   });
 
   test('returns SearchResult[] from DDG Lite POST (Tier 1)', async () => {
@@ -1395,14 +1395,14 @@ describe('search engine backends', () => {
   });
 
   afterEach(() => {
-    delete process.env.DEEPCLAUDE_SEARCH_ENGINES;
-    delete process.env.DEEPCLAUDE_BRAVE_API_KEY;
-    delete process.env.DEEPCLAUDE_SEARCH_NO_NETWORK;
+    delete process.env.DEFIANT_SEARCH_ENGINES;
+    delete process.env.DEFIANT_BRAVE_API_KEY;
+    delete process.env.DEFIANT_SEARCH_NO_NETWORK;
   });
 
   test('SearXNG: parses JSON results correctly', async () => {
-    process.env.DEEPCLAUDE_SEARCH_ENGINES = 'searxng';
-    process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
+    process.env.DEFIANT_SEARCH_ENGINES = 'searxng';
+    process.env.DEFIANT_SEARCH_NO_NETWORK = '';
 
     mockHttpsGet.mockImplementation((_url: string, _opts: any, cb: any) => {
       const res = makeMockResponse({ contentType: 'application/json' });
@@ -1431,8 +1431,8 @@ describe('search engine backends', () => {
   });
 
   test('SearXNG: filters results without url or title', async () => {
-    process.env.DEEPCLAUDE_SEARCH_ENGINES = 'searxng';
-    process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
+    process.env.DEFIANT_SEARCH_ENGINES = 'searxng';
+    process.env.DEFIANT_SEARCH_NO_NETWORK = '';
 
     mockHttpsGet.mockImplementation((_url: string, _opts: any, cb: any) => {
       const res = makeMockResponse({ contentType: 'application/json' });
@@ -1460,8 +1460,8 @@ describe('search engine backends', () => {
   });
 
   test('SearXNG: returns empty on malformed JSON', async () => {
-    process.env.DEEPCLAUDE_SEARCH_ENGINES = 'searxng';
-    process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
+    process.env.DEFIANT_SEARCH_ENGINES = 'searxng';
+    process.env.DEFIANT_SEARCH_NO_NETWORK = '';
 
     mockHttpsGet.mockImplementation((_url: string, _opts: any, cb: any) => {
       const res = makeMockResponse({ contentType: 'application/json' });
@@ -1478,10 +1478,10 @@ describe('search engine backends', () => {
   });
 
   test('SearXNG: uses http.get for http:// self-hosted URL', async () => {
-    // When DEEPCLAUDE_SEARXNG_URL is http://, the transport must be http, not https
-    process.env.DEEPCLAUDE_SEARCH_ENGINES = 'searxng';
-    process.env.DEEPCLAUDE_SEARXNG_URL = 'http://localhost:8888/search?format=json&q=';
-    process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
+    // When DEFIANT_SEARXNG_URL is http://, the transport must be http, not https
+    process.env.DEFIANT_SEARCH_ENGINES = 'searxng';
+    process.env.DEFIANT_SEARXNG_URL = 'http://localhost:8888/search?format=json&q=';
+    process.env.DEFIANT_SEARCH_NO_NETWORK = '';
     delete process.env.XNG_SEARXNG_INSTANCES;
 
     mockHttpGet.mockImplementation((_url: string, _opts: any, cb: any) => {
@@ -1516,13 +1516,13 @@ describe('search engine backends', () => {
     // http.get SHOULD have been called
     expect(mockHttpGet).toHaveBeenCalled();
 
-    delete process.env.DEEPCLAUDE_SEARXNG_URL;
+    delete process.env.DEFIANT_SEARXNG_URL;
   });
 
   test('SearXNG: uses https.get for https:// self-hosted URL', async () => {
-    process.env.DEEPCLAUDE_SEARCH_ENGINES = 'searxng';
-    process.env.DEEPCLAUDE_SEARXNG_URL = 'https://searx.example.com/search?format=json&q=';
-    process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
+    process.env.DEFIANT_SEARCH_ENGINES = 'searxng';
+    process.env.DEFIANT_SEARXNG_URL = 'https://searx.example.com/search?format=json&q=';
+    process.env.DEFIANT_SEARCH_NO_NETWORK = '';
     delete process.env.XNG_SEARXNG_INSTANCES;
 
     mockHttpsGet.mockImplementation((_url: string, _opts: any, cb: any) => {
@@ -1551,13 +1551,13 @@ describe('search engine backends', () => {
     // http.get should NOT have been called
     expect(mockHttpGet).not.toHaveBeenCalled();
 
-    delete process.env.DEEPCLAUDE_SEARXNG_URL;
+    delete process.env.DEFIANT_SEARXNG_URL;
   });
 
   test('SearXNG: falls back to hardcoded instances when self-hosted fails', async () => {
-    process.env.DEEPCLAUDE_SEARCH_ENGINES = 'searxng';
-    process.env.DEEPCLAUDE_SEARXNG_URL = 'http://localhost:9999/search?format=json&q=';
-    process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
+    process.env.DEFIANT_SEARCH_ENGINES = 'searxng';
+    process.env.DEFIANT_SEARXNG_URL = 'http://localhost:9999/search?format=json&q=';
+    process.env.DEFIANT_SEARCH_NO_NETWORK = '';
     delete process.env.XNG_SEARXNG_INSTANCES;
 
     // Self-hosted URL fails with error
@@ -1595,13 +1595,13 @@ describe('search engine backends', () => {
     // Should get results from the fallback instance
     expect(results.length).toBeGreaterThanOrEqual(1);
 
-    delete process.env.DEEPCLAUDE_SEARXNG_URL;
+    delete process.env.DEFIANT_SEARXNG_URL;
   });
 
   test('Brave: parses API response correctly', async () => {
-    process.env.DEEPCLAUDE_SEARCH_ENGINES = 'brave';
-    process.env.DEEPCLAUDE_BRAVE_API_KEY = 'test-key-123';
-    process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
+    process.env.DEFIANT_SEARCH_ENGINES = 'brave';
+    process.env.DEFIANT_BRAVE_API_KEY = 'test-key-123';
+    process.env.DEFIANT_SEARCH_NO_NETWORK = '';
 
     mockFetch.mockResolvedValue(
       makeMockFetchResponse({
@@ -1621,8 +1621,8 @@ describe('search engine backends', () => {
   });
 
   test('Brave: skipped when API key not set', async () => {
-    process.env.DEEPCLAUDE_SEARCH_ENGINES = 'brave';
-    process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
+    process.env.DEFIANT_SEARCH_ENGINES = 'brave';
+    process.env.DEFIANT_SEARCH_NO_NETWORK = '';
     const results = await webSearchStructured('test no key');
     expect(results.length).toBe(0);
     // fetch should not have been called (key check comes first)
@@ -1630,9 +1630,9 @@ describe('search engine backends', () => {
   });
 
   test('Brave: returns empty on malformed JSON', async () => {
-    process.env.DEEPCLAUDE_SEARCH_ENGINES = 'brave';
-    process.env.DEEPCLAUDE_BRAVE_API_KEY = 'test-key';
-    process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
+    process.env.DEFIANT_SEARCH_ENGINES = 'brave';
+    process.env.DEFIANT_BRAVE_API_KEY = 'test-key';
+    process.env.DEFIANT_SEARCH_NO_NETWORK = '';
 
     mockFetch.mockRejectedValue(new Error('network error'));
 
@@ -1641,9 +1641,9 @@ describe('search engine backends', () => {
   });
 
   test('Multi-engine: merges DDG + SearXNG + Brave results', async () => {
-    process.env.DEEPCLAUDE_SEARCH_ENGINES = 'ddg,searxng,brave';
-    process.env.DEEPCLAUDE_BRAVE_API_KEY = 'test-key';
-    process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
+    process.env.DEFIANT_SEARCH_ENGINES = 'ddg,searxng,brave';
+    process.env.DEFIANT_BRAVE_API_KEY = 'test-key';
+    process.env.DEFIANT_SEARCH_NO_NETWORK = '';
 
     setupMockRequestHtml(SAMPLE_HTML);
 
@@ -1679,9 +1679,9 @@ describe('search engine backends', () => {
   // =========================================================================
   describe('Exa search', () => {
     test('Exa: parses API response correctly', async () => {
-      process.env.DEEPCLAUDE_SEARCH_ENGINES = 'exa';
+      process.env.DEFIANT_SEARCH_ENGINES = 'exa';
       process.env.EXA_API_KEY = 'test-exa-key';
-      process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
+      process.env.DEFIANT_SEARCH_NO_NETWORK = '';
 
       mockFetch.mockResolvedValue(
         makeMockFetchResponse({
@@ -1710,9 +1710,9 @@ describe('search engine backends', () => {
     });
 
     test('Exa: skipped when API key not set', async () => {
-      process.env.DEEPCLAUDE_SEARCH_ENGINES = 'exa';
+      process.env.DEFIANT_SEARCH_ENGINES = 'exa';
       delete process.env.EXA_API_KEY;
-      process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
+      process.env.DEFIANT_SEARCH_NO_NETWORK = '';
 
       const results = await webSearchStructured('test no key');
       expect(results.length).toBe(0);
@@ -1720,9 +1720,9 @@ describe('search engine backends', () => {
     });
 
     test('Exa: returns empty on network error', async () => {
-      process.env.DEEPCLAUDE_SEARCH_ENGINES = 'exa';
+      process.env.DEFIANT_SEARCH_ENGINES = 'exa';
       process.env.EXA_API_KEY = 'test-exa-key';
-      process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
+      process.env.DEFIANT_SEARCH_NO_NETWORK = '';
 
       mockFetch.mockRejectedValue(new Error('network error'));
 
@@ -1731,9 +1731,9 @@ describe('search engine backends', () => {
     });
 
     test('Exa: returns empty on non-200 response', async () => {
-      process.env.DEEPCLAUDE_SEARCH_ENGINES = 'exa';
+      process.env.DEFIANT_SEARCH_ENGINES = 'exa';
       process.env.EXA_API_KEY = 'test-exa-key';
-      process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
+      process.env.DEFIANT_SEARCH_NO_NETWORK = '';
 
       mockFetch.mockResolvedValue({
         ok: false,
@@ -1746,9 +1746,9 @@ describe('search engine backends', () => {
     });
 
     test('Exa: filters results without url or title', async () => {
-      process.env.DEEPCLAUDE_SEARCH_ENGINES = 'exa';
+      process.env.DEFIANT_SEARCH_ENGINES = 'exa';
       process.env.EXA_API_KEY = 'test-exa-key';
-      process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
+      process.env.DEFIANT_SEARCH_NO_NETWORK = '';
 
       mockFetch.mockResolvedValue(
         makeMockFetchResponse({
@@ -2078,11 +2078,11 @@ describe('populateToolResults', () => {
     mockHttpGet.mockReset();
     mockHttpRequest.mockReset();
     mockFetch.mockReset();
-    process.env.DEEPCLAUDE_SEARCH_ENGINES = 'ddg';
+    process.env.DEFIANT_SEARCH_ENGINES = 'ddg';
   });
 
   afterEach(() => {
-    delete process.env.DEEPCLAUDE_SEARCH_ENGINES;
+    delete process.env.DEFIANT_SEARCH_ENGINES;
   });
 
   test('populates empty web_search tool_result', async () => {

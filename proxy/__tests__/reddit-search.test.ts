@@ -11,7 +11,7 @@ import {
 
 // --- Mocks ---
 // redditSearch uses simpleHttpGet which calls http.get (SearXNG, port 8888)
-// and https.get (old.reddit.com). We mock both.
+// and https.get (www.reddit.com/.rss RSS feed). We mock both.
 
 const mockHttpGet = jest.fn();
 const mockHttpsGet = jest.fn();
@@ -104,82 +104,75 @@ const SAMPLE_SEARXNG_JSON = JSON.stringify({
   query: 'site:reddit.com deepseek',
   results: [
     {
-      title: 'r/ClaudeCode: DeepClaude: full Claude Code agent loop on DeepSeek V4 Pro',
-      url: 'https://www.reddit.com/r/ClaudeCode/comments/1t3hrcx/deepclaude_full_claude_code_agent_loop_on/',
-      content:
-        'DeepClaude works by intercepting Claude Code environment variables at session start.',
+      title: 'r/ClaudeCode: Defiant: full Claude Code agent loop on DeepSeek V4 Pro',
+      url: 'https://www.reddit.com/r/ClaudeCode/comments/1t3hrcx/defiant_full_claude_code_agent_loop_on/',
+      content: 'Defiant works by intercepting Claude Code environment variables at session start.',
     },
     {
-      title: 'r/ChatGPTCoding: DeepClaude (deepseek + sonnet) ???',
-      url: 'https://www.reddit.com/r/ChatGPTCoding/comments/1ii93ee/deepclaude_deepseek_sonnet/',
+      title: 'r/ChatGPTCoding: Defiant (deepseek + sonnet) ???',
+      url: 'https://www.reddit.com/r/ChatGPTCoding/comments/1ii93ee/defiant_deepseek_sonnet/',
       content: 'Anyone try to develop it from deepseek + sonnet?',
     },
   ],
 });
 
-// Sample old.reddit.com HTML for a post
-const SAMPLE_OLDREDDIT_HTML = `
-<html>
-<body>
-  <a class="title may-blank " data-event-action="title" href="/r/ClaudeCode/comments/1t3hrcx/deepclaude_full_claude_code_agent_loop_on/" tabindex="1">DeepClaude: full Claude Code agent loop on DeepSeek V4 Pro</a>
-  <div data-score="99" data-comments-count="49">
-    <form action="#" class="usertext warn-on-unload" onsubmit="return post_form(this, 'editusertext')" id="form-t3_1t3hrcxuso">
-    <input type="hidden" name="thing_id" value="t3_1t3hrcx"/>
-    <div class="usertext-body may-blank-within md-container ">
-      <div class="md">
-        <p>DeepClaude works by intercepting Claude Code's Anthropic environment variables at session start, routing inference through a local proxy on localhost:3200.</p>
-        <p>The full Claude Code agent loop stays intact.</p>
-      </div>
-    </div>
-    </form>
-  </div>
-  <div class="comment">
-    <form action="#" class="usertext warn-on-unload" onsubmit="return post_form(this, 'editusertext')" id="form-t1_abc123uso">
-    <input type="hidden" name="thing_id" value="t1_abc123"/>
-    <div class="usertext-body may-blank-within md-container ">
-      <div class="md">
-        <p>This is a great solution for saving on API costs.</p>
-      </div>
-    </div>
-    </form>
-  </div>
-  <div class="comment">
-    <form action="#" class="usertext warn-on-unload" onsubmit="return post_form(this, 'editusertext')" id="form-t1_def456uso">
-    <input type="hidden" name="thing_id" value="t1_def456"/>
-    <div class="usertext-body may-blank-within md-container ">
-      <div class="md">
-        <p>How does this compare to just using DeepSeek directly?</p>
-      </div>
-    </div>
-    </form>
-  </div>
-</body>
-</html>
-`;
+// Sample RSS feed XML for a Reddit post with comments
+const SAMPLE_RSS_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+<category term="ClaudeCode" label="r/ClaudeCode"/>
+<updated>2026-06-20T00:00:00+00:00</updated>
+<title>Defiant: full Claude Code agent loop on DeepSeek V4 Pro : ClaudeCode</title>
+<entry>
+<author><name>/u/testuser</name></author>
+<content type="html">&lt;p&gt;Defiant works by intercepting Claude Code&amp;#39;s Anthropic environment variables at session start, routing inference through a local proxy on localhost:3200.&lt;/p&gt;&lt;p&gt;The full Claude Code agent loop stays intact.&lt;/p&gt;</content>
+</entry>
+<entry>
+<content type="html">&lt;p&gt;This is a great solution for saving on API costs.&lt;/p&gt;</content>
+</entry>
+<entry>
+<content type="html">&lt;p&gt;How does this compare to just using DeepSeek directly?&lt;/p&gt;</content>
+</entry>
+</feed>`;
 
-// Sample old.reddit.com HTML for a post with no comments
-const SAMPLE_OLDREDDIT_MINIMAL_HTML = `
-<html>
-<body>
-  <a class="title may-blank " href="/r/test/comments/abc123/test/" tabindex="1">Test Post Title</a>
-  <div data-score="5" data-comments-count="0">
-    <form action="#" class="usertext warn-on-unload" onsubmit="return post_form(this, 'editusertext')" id="form-t3_abc123uso">
-    <input type="hidden" name="thing_id" value="t3_abc123"/>
-    <div class="usertext-body may-blank-within md-container ">
-      <div class="md">
-        <p>This is a test post with no comments.</p>
-      </div>
-    </div>
-    </form>
-  </div>
-</body>
-</html>
-`;
+// Sample RSS feed XML with no comments (just the post)
+const SAMPLE_RSS_MINIMAL_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+<category term="test" label="r/test"/>
+<updated>2026-06-20T00:00:00+00:00</updated>
+<title>Test Post Title : test</title>
+<entry>
+<author><name>/u/testuser</name></author>
+<content type="html">&lt;p&gt;This is a test post with no comments.&lt;/p&gt;</content>
+</entry>
+</feed>`;
+
+// Default fallback mock for http.get — returns empty results.
+// This catches unmatched calls (e.g. the second searchSearxng call in the fallback path).
+const EMPTY_RESULTS_JSON = JSON.stringify({ results: [] });
 
 // --- reset between tests ---
 beforeEach(() => {
   mockHttpGet.mockReset();
   mockHttpsGet.mockReset();
+  // Any http.get call that doesn't match a mockImplementationOnce gets empty results.
+  mockHttpGet.mockImplementation((url: string, opts: any, cb?: any) => {
+    const callback = typeof opts === 'function' ? opts : cb;
+    if (callback && typeof callback === 'function') {
+      const res = {
+        statusCode: 200,
+        headers: { 'content-type': 'application/json' },
+        on: (event: string, handler: (...args: any[]) => void) => {
+          if (event === 'data') handler(Buffer.from(EMPTY_RESULTS_JSON));
+          if (event === 'end') handler();
+          return res;
+        },
+        destroy: () => {},
+      };
+      setTimeout(() => callback(res), 0);
+    }
+    const req = { on: jest.fn().mockReturnThis(), destroy: jest.fn() };
+    return req;
+  });
 });
 
 // ============================================================================
@@ -284,6 +277,7 @@ describe('redditSearch', () => {
   });
 
   it('returns error when SearXNG request fails (http.get returns error)', async () => {
+    // Mock BOTH calls: reddit-html engine + site:reddit.com fallback
     mockHttpGet.mockImplementationOnce((url: string, opts: any, cb?: any) => {
       const callback = typeof opts === 'function' ? opts : cb;
       if (!callback) {
@@ -305,59 +299,108 @@ describe('redditSearch', () => {
     });
 
     const result = await redditSearch('test query');
-    expect(result).toContain('Error');
+    // Both searches fail → No Reddit results found (via the fallback default mock)
+    expect(result).toContain('No Reddit results found');
   });
 
   it('returns error when SearXNG returns non-200', async () => {
+    // Mock BOTH calls to return 500
+    mockHttpGetOnce(/localhost:8888/, 500, 'Internal Server Error');
     mockHttpGetOnce(/localhost:8888/, 500, 'Internal Server Error');
 
     const result = await redditSearch('test');
-    expect(result).toContain('Error');
-    expect(result).toContain('500');
+    // Both SearXNG calls fail → fallback default mock, then No Reddit results
+    expect(result).toContain('No Reddit results found');
   });
 
   it('returns no results when SearXNG returns empty result set', async () => {
-    const emptyJson = JSON.stringify({ query: 'site:reddit.com nothing', results: [] });
+    const emptyJson = JSON.stringify({ results: [] });
+    // Mock both search attempts (reddit-html engine + site:reddit.com fallback)
     mockHttpGetOnce(/localhost:8888/, 200, emptyJson, 'application/json');
+    // The fallback call is caught by the default mock which also returns empty results
 
     const result = await redditSearch('nothing');
     expect(result).toContain('No Reddit results found');
   });
 
-  it('returns search results and fetches top post from old.reddit.com', async () => {
+  it('returns search results and fetches top post via RSS', async () => {
     // Step 1: SearXNG search succeeds
     mockHttpGetOnce(/localhost:8888/, 200, SAMPLE_SEARXNG_JSON, 'application/json');
-    // Step 2: old.reddit.com fetch succeeds
-    mockHttpsGetOnce(/old.reddit.com/, 200, SAMPLE_OLDREDDIT_HTML);
+    // Step 2: RSS feed fetch succeeds
+    mockHttpsGetOnce(/www\.reddit\.com.*\.rss/, 200, SAMPLE_RSS_XML);
 
     const result = await redditSearch('deepseek');
 
     // Check search results appear
     expect(result).toContain('r/ClaudeCode');
-    expect(result).toContain('DeepClaude');
+    expect(result).toContain('Defiant');
     expect(result).toContain('r/ChatGPTCoding');
 
-    // Check full post content
-    expect(result).toContain('DeepClaude works by intercepting');
-    expect(result).toContain('Score: 99');
-    expect(result).toContain('Comments: 49');
+    // Check full post content (from RSS)
+    expect(result).toContain('Defiant works by intercepting');
+    expect(result).toContain('Score: ?');
 
-    // Check comments
+    // Check comments (from RSS)
     expect(result).toContain('great solution for saving on API costs');
     expect(result).toContain('compare to just using DeepSeek');
   });
 
-  it('handles old.reddit.com fetch failure gracefully', async () => {
+  it('handles RSS feed fetch failure gracefully', async () => {
     // Step 1: SearXNG succeeds
     mockHttpGetOnce(/localhost:8888/, 200, SAMPLE_SEARXNG_JSON, 'application/json');
-    // Step 2: old.reddit.com fails
-    mockHttpsGetOnce(/old.reddit.com/, 503, 'Service Unavailable');
+    // Step 2-3: Both RSS retry attempts fail
+    mockHttpsGetOnce(/www\.reddit\.com.*\.rss/, 503, 'Service Unavailable');
+    mockHttpsGetOnce(/www\.reddit\.com.*\.rss/, 503, 'Service Unavailable');
 
     const result = await redditSearch('deepseek');
 
     // Should still show search results
     expect(result).toContain('r/ClaudeCode');
     expect(result).toContain('failed to fetch post content');
+  });
+
+  it('retries RSS feed on 429 with backoff', async () => {
+    // Step 1: SearXNG succeeds
+    mockHttpGetOnce(/localhost:8888/, 200, SAMPLE_SEARXNG_JSON, 'application/json');
+    // Step 2: First RSS attempt returns 429 (rate limited)
+    mockHttpsGetOnce(/www\.reddit\.com.*\.rss/, 429, 'Too Many Requests');
+    // Step 3: Second attempt succeeds
+    mockHttpsGetOnce(/www\.reddit\.com.*\.rss/, 200, SAMPLE_RSS_XML);
+
+    const result = await redditSearch('deepseek');
+
+    // Should show results and full post content (second attempt succeeded)
+    expect(result).toContain('r/ClaudeCode');
+    expect(result).toContain('Defiant works by intercepting');
+    expect(result).not.toContain('failed to fetch post content');
+  });
+
+  it('gives up after retry on persistent 429', async () => {
+    // Step 1: SearXNG succeeds
+    mockHttpGetOnce(/localhost:8888/, 200, SAMPLE_SEARXNG_JSON, 'application/json');
+    // Step 2-3: Both RSS attempts return 429
+    mockHttpsGetOnce(/www\.reddit\.com.*\.rss/, 429, 'Too Many Requests');
+    mockHttpsGetOnce(/www\.reddit\.com.*\.rss/, 429, 'Too Many Requests');
+
+    const result = await redditSearch('deepseek');
+
+    expect(result).toContain('r/ClaudeCode');
+    expect(result).toContain('failed to fetch post content');
+  });
+
+  it('falls back to site:reddit.com search when reddit-html engine returns empty', async () => {
+    // Step 1: First search (reddit-html engine) returns empty results
+    mockHttpGetOnce(/localhost:8888/, 200, JSON.stringify({ results: [] }), 'application/json');
+    // Step 2: Second search (site:reddit.com) returns results
+    mockHttpGetOnce(/localhost:8888/, 200, SAMPLE_SEARXNG_JSON, 'application/json');
+    // Step 3: RSS fetch succeeds
+    mockHttpsGetOnce(/www\.reddit\.com.*\.rss/, 200, SAMPLE_RSS_XML);
+
+    const result = await redditSearch('deepseek');
+
+    // Should still find results via the fallback
+    expect(result).toContain('r/ClaudeCode');
+    expect(result).toContain('Defiant works by intercepting');
   });
 
   it('handles non-reddit URLs being filtered out', async () => {
@@ -372,7 +415,7 @@ describe('redditSearch', () => {
       ],
     });
     mockHttpGetOnce(/localhost:8888/, 200, jsonWithNonReddit, 'application/json');
-    mockHttpsGetOnce(/old.reddit.com/, 200, SAMPLE_OLDREDDIT_MINIMAL_HTML);
+    mockHttpsGetOnce(/www\.reddit\.com.*\.rss/, 200, SAMPLE_RSS_MINIMAL_XML);
 
     const result = await redditSearch('test');
     // Only the Reddit URL should appear
@@ -384,8 +427,10 @@ describe('redditSearch', () => {
     mockHttpGetOnce(/localhost:8888/, 200, 'not valid json{{{', 'application/json');
 
     const result = await redditSearch('deepseek');
-    expect(result).toContain('Error');
-    expect(result).toContain('Failed to parse');
+    // First call (reddit-html engine) fails to parse → null
+    // Second call (site:reddit.com fallback) returns empty via default mock
+    // → No Reddit results found
+    expect(result).toContain('No Reddit results found');
   });
 });
 
@@ -463,7 +508,7 @@ describe('populateToolResults — reddit_search_', () => {
 
     // Mock the network calls that redditSearch will make
     mockHttpGetOnce(/localhost:8888/, 200, SAMPLE_SEARXNG_JSON, 'application/json');
-    mockHttpsGetOnce(/old.reddit.com/, 200, SAMPLE_OLDREDDIT_HTML);
+    mockHttpsGetOnce(/www\.reddit\.com.*\.rss/, 200, SAMPLE_RSS_XML);
 
     const result = await populateToolResults(messages as any);
     expect(result).toBe(true);
@@ -473,7 +518,7 @@ describe('populateToolResults — reddit_search_', () => {
     expect(toolResult.content).toBeDefined();
     expect(typeof toolResult.content).toBe('string');
     expect(toolResult.content).toContain('r/ClaudeCode');
-    expect(toolResult.content).toContain('DeepClaude works by intercepting');
+    expect(toolResult.content).toContain('Defiant works by intercepting');
   });
 
   it('handles no results gracefully', async () => {

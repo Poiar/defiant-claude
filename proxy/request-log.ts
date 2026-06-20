@@ -1,7 +1,7 @@
 'use strict';
 
-// Structured request logging for the DeepClaude proxy.
-// Writes JSON lines (JSONL) to ~/.deepclaude/requests.log with automatic
+// Structured request logging for the Defiant proxy.
+// Writes JSON lines (JSONL) to ~/.defiant/requests.log with automatic
 // rotation at 1MB. By default only failed requests are logged; call
 // setLogAllRequests(true) to log every request.
 //
@@ -38,16 +38,18 @@ export interface RequestLogEntry {
 
 // --- Internal state ---
 
-const LOG_FILE = path.join(os.homedir(), '.deepclaude', 'requests.log');
+const LOG_FILE = path.join(os.homedir(), '.defiant', 'requests.log');
 let LOG_FILE_OVERRIDE: string | null = null;
-function getLogFilePath(): string { return LOG_FILE_OVERRIDE || LOG_FILE; }
+function getLogFilePath(): string {
+  return LOG_FILE_OVERRIDE || LOG_FILE;
+}
 const MAX_LOG_SIZE = 1_048_576; // 1MB
 const MAX_PENDING_ENTRIES = 10_000; // Prevent OOM on persistent disk failure
 
 let logAllEnabled = false;
 const pendingEntries: RequestLogEntry[] = [];
 let flushScheduled = false;
-let writeLock = false;  // Prevent concurrent rotation + write races
+let writeLock = false; // Prevent concurrent rotation + write races
 
 // --- Scheduler ---
 
@@ -66,7 +68,7 @@ function flush(): void {
   // Drain the queue so new entries can be queued even if the write fails.
   const entries = pendingEntries.splice(0, pendingEntries.length);
 
-  if (writeLock) return;  // Another flush is already writing
+  if (writeLock) return; // Another flush is already writing
   writeLock = true;
   try {
     const logDir = path.dirname(getLogFilePath());
@@ -78,7 +80,7 @@ function flush(): void {
     rotateIfNeeded();
 
     // Write all batched entries as one atomic append.
-    const lines = entries.map(e => JSON.stringify(e) + '\n').join('');
+    const lines = entries.map((e) => JSON.stringify(e) + '\n').join('');
     fs.appendFileSync(getLogFilePath(), lines, 'utf-8');
   } catch (_) {
     // Prepend entries back to preserve them on write failure (disk full,
@@ -110,15 +112,20 @@ function rotateIfNeeded(): void {
     // Keep at most MAX_ROTATED_FILES rotated files (remove oldest).
     const dir = path.dirname(logFile);
     const base = path.basename(logFile);
-    const files = fs.readdirSync(dir)
-      .filter(f => f.startsWith(base + '.'))
-      .map(f => path.join(dir, f))
+    const files = fs
+      .readdirSync(dir)
+      .filter((f) => f.startsWith(base + '.'))
+      .map((f) => path.join(dir, f))
       .sort()
       .reverse();
     while (files.length > MAX_ROTATED_FILES) {
       const oldFile = files.pop();
       if (oldFile) {
-        try { fs.unlinkSync(oldFile); } catch (_) { /* best effort */ }
+        try {
+          fs.unlinkSync(oldFile);
+        } catch (_) {
+          /* best effort */
+        }
       }
     }
   } catch (_) {

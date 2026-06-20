@@ -599,9 +599,9 @@ export async function webSearchStructured(query: string): Promise<SearchResult[]
 
   // Env-controlled engine selection.
   // Default: searxng first (local Docker, fastest), then ddg (free, no key).
-  // Add 'brave' when DEEPCLAUDE_BRAVE_API_KEY is set (2000 free calls/mo).
+  // Add 'brave' when DEFIANT_BRAVE_API_KEY is set (2000 free calls/mo).
   // Add 'exa' when EXA_API_KEY is set (20,000 free requests/mo).
-  const engines = (envWithRegistry('DEEPCLAUDE_SEARCH_ENGINES') || 'searxng,ddg')
+  const engines = (envWithRegistry('DEFIANT_SEARCH_ENGINES') || 'searxng,ddg')
     .toLowerCase()
     .split(',')
     .map((s) => s.trim());
@@ -630,7 +630,7 @@ export async function webSearchStructured(query: string): Promise<SearchResult[]
 
 /** DDG Lite — POST scraper with GET fallback. */
 async function searchDDG(query: string): Promise<SearchResult[]> {
-  if (process.env.DEEPCLAUDE_SEARCH_NO_NETWORK) {
+  if (process.env.DEFIANT_SEARCH_NO_NETWORK) {
     return [
       {
         title: `Search: ${query}`,
@@ -652,7 +652,7 @@ async function searchDDG(query: string): Promise<SearchResult[]> {
 /** SearXNG — self-hosted or public instance, JSON API, no key needed.
  *
  *  Priority:
- *  1. DEEPCLAUDE_SEARXNG_URL — self-hosted (e.g. http://localhost:8888/search?format=json&q=)
+ *  1. DEFIANT_SEARXNG_URL — self-hosted (e.g. http://localhost:8888/search?format=json&q=)
  *     Run `docker run -d -p 8888:8080 searxng/searxng` once, always available, no rate limits.
  *  2. XNG_SEARXNG_INSTANCES — comma-separated fallback URLs
  *  3. Public instance discovery via searx.space (cached 24h)
@@ -661,9 +661,9 @@ async function searchDDG(query: string): Promise<SearchResult[]> {
  *  Total deadline: 8s. First valid JSON response wins.
  */
 async function searchSearXNG(query: string): Promise<SearchResult[]> {
-  if (process.env.DEEPCLAUDE_SEARCH_NO_NETWORK) return [];
+  if (process.env.DEFIANT_SEARCH_NO_NETWORK) return [];
 
-  const selfHosted = envWithRegistry('DEEPCLAUDE_SEARXNG_URL');
+  const selfHosted = envWithRegistry('DEFIANT_SEARXNG_URL');
   const fallbackEnv = process.env.XNG_SEARXNG_INSTANCES;
 
   // Build instance list: self-hosted first, then env overrides, then hardcoded.
@@ -747,7 +747,7 @@ async function searchSearXNG(query: string): Promise<SearchResult[]> {
 
   // Try instances sequentially until one returns results.
   // Each has a 3s per-instance timeout; first success returns immediately.
-  // Self-hosted DEEPCLAUDE_SEARXNG_URL is tried first (near-instant when local).
+  // Self-hosted DEFIANT_SEARXNG_URL is tried first (near-instant when local).
   for (const url of urls.slice(0, 4)) {
     try {
       const result = await fetchOne(url);
@@ -759,10 +759,10 @@ async function searchSearXNG(query: string): Promise<SearchResult[]> {
   return [];
 }
 
-/** Brave Search API — requires DEEPCLAUDE_BRAVE_API_KEY env var, 2000 free calls/month. */
+/** Brave Search API — requires DEFIANT_BRAVE_API_KEY env var, 2000 free calls/month. */
 async function searchBrave(query: string): Promise<SearchResult[]> {
-  if (process.env.DEEPCLAUDE_SEARCH_NO_NETWORK) return [];
-  const apiKey = envWithRegistry('DEEPCLAUDE_BRAVE_API_KEY');
+  if (process.env.DEFIANT_SEARCH_NO_NETWORK) return [];
+  const apiKey = envWithRegistry('DEFIANT_BRAVE_API_KEY');
   if (!apiKey) return [];
 
   try {
@@ -775,7 +775,7 @@ async function searchBrave(query: string): Promise<SearchResult[]> {
         headers: {
           Accept: 'application/json',
           'X-Subscription-Token': apiKey,
-          'User-Agent': 'deepclaude-proxy/1.0',
+          'User-Agent': 'defiant-proxy/1.0',
         },
         signal: controller.signal,
       },
@@ -804,7 +804,7 @@ async function searchBrave(query: string): Promise<SearchResult[]> {
 
 /** Exa Search API — requires EXA_API_KEY env var, 20,000 free requests/month. */
 async function searchExa(query: string): Promise<SearchResult[]> {
-  if (process.env.DEEPCLAUDE_SEARCH_NO_NETWORK) return [];
+  if (process.env.DEFIANT_SEARCH_NO_NETWORK) return [];
   const apiKey = envWithRegistry('EXA_API_KEY');
   if (!apiKey) return [];
 
@@ -817,7 +817,7 @@ async function searchExa(query: string): Promise<SearchResult[]> {
       headers: {
         'Content-Type': 'application/json',
         'x-api-key': apiKey,
-        'User-Agent': 'deepclaude-proxy/1.0',
+        'User-Agent': 'defiant-proxy/1.0',
       },
       body: JSON.stringify({
         query,
@@ -914,7 +914,7 @@ export async function webSearch(query: string): Promise<string> {
     const result = await new Promise<string>((resolve) => {
       const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&no_redirect=1`;
       https
-        .get(url, { headers: { 'User-Agent': 'deepclaude-proxy/1.0' }, timeout: 15000 }, (res) => {
+        .get(url, { headers: { 'User-Agent': 'defiant-proxy/1.0' }, timeout: 15000 }, (res) => {
           let data = '';
           let dataSize = 0;
           res.on('data', (chunk: Buffer) => {
@@ -997,7 +997,7 @@ async function tryAddress(
     port: parsedUrl.port ? parseInt(parsedUrl.port, 10) : isHttps ? 443 : 80,
     path: parsedUrl.pathname + parsedUrl.search || '/',
     method: 'GET',
-    headers: { 'User-Agent': 'deepclaude-proxy/1.0' },
+    headers: { 'User-Agent': 'defiant-proxy/1.0' },
     timeout: 20000,
     lookup(_hostname, _opts, callback) {
       callback(null, address, family);
@@ -1229,22 +1229,6 @@ interface RedditSearchResult {
 }
 
 /**
- * Clean HTML entities and tags from a string.
- */
-function cleanHtml(str: string): string {
-  return str
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&#39;/g, "'")
-    .replace(/&quot;/g, '"')
-    .replace(/&#32;/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-/**
  * Fetch a URL via HTTP/HTTPS and return status code + body as text.
  * Returns null on error or timeout.
  */
@@ -1273,48 +1257,163 @@ function simpleHttpGet(
   });
 }
 
-const BROWSER_UA =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
-
 /**
- * Search Reddit via SearXNG and fetch the top result's full content from old.reddit.com.
+ * Search Reddit via SearXNG and fetch the top result's full content from Reddit's RSS feed.
  *
  * 1. Queries local SearXNG with "site:reddit.com <query>"
  * 2. Returns top results with titles + snippets
- * 3. For the #1 result, fetches full post content + comments from old.reddit.com
+ * 3. For the #1 result, fetches full post content + comments from www.reddit.com/.../.rss
  */
+
+// Browser User-Agent used for HTTP requests
+const REDDIT_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36';
+
+/** Search SearXNG with a given query string, returns raw results array or null. */
+async function searchSearxng(
+  searchQuery: string,
+): Promise<Array<{ title?: string; url?: string; content?: string }> | null> {
+  const url = 'http://localhost:8888/search?format=json&q=' + encodeURIComponent(searchQuery);
+  const res = await simpleHttpGet(url, {
+    'User-Agent': REDDIT_UA,
+    Accept: 'application/json',
+  });
+  if (!res || res.status !== 200) return null;
+  try {
+    const json = JSON.parse(res.data);
+    return (json.results || []).filter(
+      (r: { url?: string }) => r.url && r.url.includes('reddit.com'),
+    );
+  } catch {
+    return null;
+  }
+}
+
+/** Convert any Reddit URL to RSS feed URL. */
+function toRssUrl(url: string): string | null {
+  const normalized = url.replace('old.reddit.com', 'www.reddit.com').replace(/\/$/, '');
+  const match = normalized.match(/\/r\/([^/]+)\/comments\/([^/]+)/);
+  if (!match) return null;
+  return `https://www.reddit.com/r/${match[1]}/comments/${match[2]}/.rss`;
+}
+
+/** Fetch a Reddit post's content + comments via its RSS feed. */
+async function fetchRedditPostViaRss(url: string): Promise<{
+  title: string;
+  body: string;
+  score: string;
+  commentCount: string;
+  comments: string[];
+  ok: boolean;
+}> {
+  const rssUrl = toRssUrl(url);
+  if (!rssUrl) {
+    return {
+      title: '(invalid URL)',
+      body: 'Not a valid Reddit post URL.',
+      score: '?',
+      commentCount: '?',
+      comments: [],
+      ok: false,
+    };
+  }
+
+  // Try fetching RSS with retry on 429/503
+  let res: { status: number; data: string } | null = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    res = await simpleHttpGet(rssUrl, { 'User-Agent': REDDIT_UA });
+    if (res && (res.status === 429 || res.status === 503)) {
+      await new Promise((r) => setTimeout(r, 1000));
+      continue;
+    }
+    break;
+  }
+  if (!res || res.status !== 200) {
+    const reason =
+      res && res.status === 429 ? 'rate-limited' : `HTTP ${res ? res.status : 'error'}`;
+    return {
+      title: '(failed to fetch)',
+      body: `Reddit RSS feed returned "${reason}".`,
+      score: '?',
+      commentCount: '?',
+      comments: [],
+      ok: false,
+    };
+  }
+
+  const xml = res.data;
+
+  // Title from <title> (before <entry>)
+  const titleMatch = xml.match(/<title>(.*?)<\/title>/);
+  const title = titleMatch ? xmlDecode(titleMatch[1].trim()) : '(no title)';
+
+  // Extract content blocks: first = post, rest = comments
+  const contentRegex = /<content type="html">(.*?)<\/content>/g;
+  const blocks: string[] = [];
+  let cm: RegExpExecArray | null;
+  while ((cm = contentRegex.exec(xml)) !== null) {
+    blocks.push(xmlDecode(cm[1]));
+  }
+
+  // Post body
+  const body = blocks.length > 0 ? stripHtml(blocks[0]) : '(no text content)';
+
+  // Comments (skip first block = post, filter short text)
+  const comments = blocks.slice(1).filter((c) => {
+    const text = stripHtml(c);
+    return text.length > 20;
+  });
+
+  // Try to extract upvote score
+  let score = '?';
+  const scoreMatch = xml.match(/score["']?\s*[:=]\s*["']?(\d+)/);
+  if (scoreMatch) score = scoreMatch[1];
+
+  const commentCount = comments.length > 0 ? String(comments.length) : '?';
+
+  return {
+    title,
+    body,
+    score,
+    commentCount,
+    comments: comments.slice(0, 5),
+    ok: true,
+  };
+}
+
+function xmlDecode(str: string): string {
+  return str
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&#x?[a-fA-F0-9]+;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function stripHtml(str: string): string {
+  return str
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export async function redditSearch(query: string): Promise<string> {
   if (!query || typeof query !== 'string') {
     return 'Error: No query provided for Reddit search.';
   }
 
-  // Step 1: Search via SearXNG
-  const searxngUrl =
-    'http://localhost:8888/search?format=json&q=' + encodeURIComponent('site:reddit.com ' + query);
+  // Step 1: Try the dedicated reddit-html engine via SearXNG first
+  let results = await searchSearxng(query + '&engines=reddit-html');
 
-  const searchRes = await simpleHttpGet(searxngUrl, {
-    'User-Agent': BROWSER_UA,
-    Accept: 'application/json',
-  });
-
-  if (!searchRes) {
-    return 'Error: SearXNG search failed (connection error or timeout).';
-  }
-  if (searchRes.status !== 200) {
-    return 'Error: SearXNG returned HTTP ' + searchRes.status;
+  // Step 2: Fallback — general SearXNG search with site:reddit.com
+  if (!results || results.length === 0) {
+    results = await searchSearxng('site:reddit.com ' + query);
   }
 
-  let results: Array<{ title?: string; url?: string; content?: string }> = [];
-  try {
-    const json = JSON.parse(searchRes.data);
-    results = (json.results || []).filter(
-      (r: { url?: string }) => r.url && r.url.includes('reddit.com'),
-    );
-  } catch {
-    return 'Error: Failed to parse SearXNG response.';
-  }
-
-  if (results.length === 0) {
+  if (!results || results.length === 0) {
     return 'No Reddit results found for: ' + query;
   }
 
@@ -1333,7 +1432,7 @@ export async function redditSearch(query: string): Promise<string> {
     lines.push('');
   });
 
-  // Step 2: Fetch full content for the top result
+  // Step 3: Fetch full content for the top result via RSS
   const top = results[0];
   if (!top || !top.url) {
     return lines.join('\n') + '\n(no further details available)';
@@ -1344,64 +1443,25 @@ export async function redditSearch(query: string): Promise<string> {
   lines.push('   ' + top.url);
   lines.push('');
 
-  const oldUrl = top.url.replace('www.reddit.com', 'old.reddit.com');
-  const postRes = await simpleHttpGet(oldUrl, {
-    'User-Agent': BROWSER_UA,
-  });
+  const post = await fetchRedditPostViaRss(top.url);
 
-  if (!postRes || postRes.status !== 200) {
-    lines.push('(failed to fetch post content)');
+  if (!post.ok) {
+    lines.push(
+      '(failed to fetch post content — ' + post.body + ' Results above are still usable.)',
+    );
     return lines.join('\n');
   }
 
-  const html = postRes.data;
-
-  // Find post title
-  const titleMatch = html.match(/<a class="title may-blank[^"]*"[^>]*>([^<]+)<\/a>/);
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const title = titleMatch ? titleMatch[1].trim() : '(no title)';
-
-  // Find post self-text: look for form with thing_id="t3_..." then .md inside
-  let body = '(no text content)';
-  const postFormMatch = html.match(
-    /<input type="hidden" name="thing_id" value="t3_[^"]*"[^>]*\/>([\s\S]*?)<\/form>/,
-  );
-  if (postFormMatch) {
-    const mdMatch = postFormMatch[1].match(/<div class="md"[^>]*>([\s\S]*?)<\/div>/);
-    if (mdMatch) {
-      body = cleanHtml(mdMatch[1]);
-    }
-  }
-
-  // Find top-level comments
-  const comments: string[] = [];
-  const commentFormRegex =
-    /<input type="hidden" name="thing_id" value="t1_[^"]*"[^>]*\/>([\s\S]*?)<\/form>/g;
-  let cfMatch: RegExpExecArray | null;
-  while ((cfMatch = commentFormRegex.exec(html)) !== null) {
-    const mdMatch = cfMatch[1].match(/<div class="md"[^>]*>([\s\S]*?)<\/div>/);
-    if (mdMatch) {
-      const text = cleanHtml(mdMatch[1]);
-      if (text && text.length > 20) comments.push(text);
-    }
-  }
-
-  // Score and comment count
-  const scoreMatch = html.match(/data-score="(\d+)"/);
-  const score = scoreMatch ? scoreMatch[1] : '?';
-  const ccMatch = html.match(/data-comments-count="(\d+)"/);
-  const commentCount = ccMatch ? ccMatch[1] : '?';
-
-  lines.push('Score: ' + score + ' · Comments: ' + commentCount);
+  lines.push('Score: ' + post.score + ' · Comments: ' + post.commentCount);
   lines.push('');
-  lines.push(body.slice(0, 2000));
+  lines.push(post.body.slice(0, 2000));
 
-  if (comments.length > 0) {
+  if (post.comments.length > 0) {
     lines.push('');
     lines.push('─'.repeat(40));
-    lines.push('💬 Top comments (' + comments.length + '):');
+    lines.push('💬 Top comments (' + post.comments.length + '):');
     lines.push('');
-    comments.slice(0, 5).forEach((c, i) => {
+    post.comments.forEach((c, i) => {
       lines.push('  ' + (i + 1) + '. ' + c.slice(0, 300));
       lines.push('');
     });

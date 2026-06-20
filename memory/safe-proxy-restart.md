@@ -13,7 +13,7 @@ Killing the proxy = killing your session. Verified multiple times.
 
 ## Hot-swap mechanism
 
-1. Write new port to `~/.deepclaude/next-proxy.port`
+1. Write new port to `~/.defiant/next-proxy.port`
 2. Start new proxy on that port (detached, with `--port <NEW_PORT>`)
 3. Old proxy polls every 5s, detects signal, verifies new proxy `/health`
 4. Old proxy enters forwarding mode — all requests proxy to new instance

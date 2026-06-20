@@ -40,7 +40,7 @@ function readLogFile(): RequestLogEntry[] {
     if (!fs.existsSync(logFile)) return [];
     const raw = fs.readFileSync(logFile, 'utf-8').trim();
     if (!raw) return [];
-    return raw.split('\n').map(line => JSON.parse(line));
+    return raw.split('\n').map((line) => JSON.parse(line));
   } catch (_) {
     return [];
   }
@@ -73,17 +73,29 @@ let tempLogDir: string;
 
 function removeLogFile(): void {
   const logFile = _getLogFilePath();
-  try { fs.unlinkSync(logFile); } catch (_) { /* may not exist */ }
-  try { fs.unlinkSync(logFile + '.1'); } catch (_) { /* may not exist */ }
+  try {
+    fs.unlinkSync(logFile);
+  } catch (_) {
+    /* may not exist */
+  }
+  try {
+    fs.unlinkSync(logFile + '.1');
+  } catch (_) {
+    /* may not exist */
+  }
 }
 
 beforeAll(() => {
-  tempLogDir = fs.mkdtempSync(path.join(os.tmpdir(), 'deepclaude-test-'));
+  tempLogDir = fs.mkdtempSync(path.join(os.tmpdir(), 'defiant-test-'));
   _setLogFilePath(path.join(tempLogDir, 'requests.log'));
 });
 
 afterAll(() => {
-  try { fs.rmSync(tempLogDir, { recursive: true, force: true }); } catch (_) { /* cleanup */ }
+  try {
+    fs.rmSync(tempLogDir, { recursive: true, force: true });
+  } catch (_) {
+    /* cleanup */
+  }
 });
 
 beforeEach(() => {
@@ -101,7 +113,9 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('logRequest writes to log file', () => {
-  beforeEach(() => { setLogAllRequests(true); });
+  beforeEach(() => {
+    setLogAllRequests(true);
+  });
 
   test('writes a JSON line to the log file', () => {
     logRequest(makeEntry());
@@ -141,23 +155,27 @@ describe('logRequest writes to log file', () => {
 });
 
 describe('entry contains all required fields', () => {
-  beforeEach(() => { setLogAllRequests(true); });
+  beforeEach(() => {
+    setLogAllRequests(true);
+  });
 
   test('all required fields are present in written entry', () => {
-    logRequest(makeEntry({
-      timestamp: '2026-06-08T12:00:00.000Z',
-      requestId: 42,
-      method: 'POST',
-      url: '/v1/messages',
-      model: 'deepseek-v4-pro',
-      providerKey: 'ds',
-      slot: 'opus',
-      status: 200,
-      success: true,
-      fallbackUsed: false,
-      fallbackChain: ['ds'],
-      latencyMs: 150,
-    }));
+    logRequest(
+      makeEntry({
+        timestamp: '2026-06-08T12:00:00.000Z',
+        requestId: 42,
+        method: 'POST',
+        url: '/v1/messages',
+        model: 'deepseek-v4-pro',
+        providerKey: 'ds',
+        slot: 'opus',
+        status: 200,
+        success: true,
+        fallbackUsed: false,
+        fallbackChain: ['ds'],
+        latencyMs: 150,
+      }),
+    );
     _flush();
 
     const entries = readLogFile();
@@ -189,12 +207,14 @@ describe('entry contains all required fields', () => {
   });
 
   test('entry contains optional error fields when provided', () => {
-    logRequest(makeEntry({
-      success: false,
-      status: 502,
-      errorCode: 'ECONNREFUSED',
-      errorSummary: 'Connection refused by upstream',
-    }));
+    logRequest(
+      makeEntry({
+        success: false,
+        status: 502,
+        errorCode: 'ECONNREFUSED',
+        errorSummary: 'Connection refused by upstream',
+      }),
+    );
     _flush();
 
     const entries = readLogFile();
@@ -203,11 +223,13 @@ describe('entry contains all required fields', () => {
   });
 
   test('entry contains deadStream fields when provided', () => {
-    logRequest(makeEntry({
-      success: false,
-      deadStream: true,
-      deadStreamReason: 'first_byte_timeout',
-    }));
+    logRequest(
+      makeEntry({
+        success: false,
+        deadStream: true,
+        deadStreamReason: 'first_byte_timeout',
+      }),
+    );
     _flush();
 
     const entries = readLogFile();
@@ -242,9 +264,14 @@ describe('default filtering', () => {
   });
 
   test('successful request with fallback IS logged by default', () => {
-    logRequest(makeEntry({
-      success: true, status: 200, fallbackUsed: true, fallbackChain: ['ds', 'oc'],
-    }));
+    logRequest(
+      makeEntry({
+        success: true,
+        status: 200,
+        fallbackUsed: true,
+        fallbackChain: ['ds', 'oc'],
+      }),
+    );
     _flush();
 
     const entries = readLogFile();
@@ -252,9 +279,14 @@ describe('default filtering', () => {
   });
 
   test('successful request with dead stream IS logged by default', () => {
-    logRequest(makeEntry({
-      success: false, status: 502, deadStream: true, deadStreamReason: 'first_byte_timeout',
-    }));
+    logRequest(
+      makeEntry({
+        success: false,
+        status: 502,
+        deadStream: true,
+        deadStreamReason: 'first_byte_timeout',
+      }),
+    );
     _flush();
 
     const entries = readLogFile();
@@ -295,7 +327,9 @@ describe('setLogAllRequests', () => {
 });
 
 describe('file rotation', () => {
-  beforeEach(() => { setLogAllRequests(true); });
+  beforeEach(() => {
+    setLogAllRequests(true);
+  });
 
   test('rotation renames file when exceeding 1MB and starts fresh', () => {
     const logFile = _getLogFilePath();
@@ -311,7 +345,7 @@ describe('file rotation', () => {
     // Verify a timestamped backup exists and is the expected size.
     const logDir = path.dirname(logFile);
     const base = path.basename(logFile);
-    const backups = fs.readdirSync(logDir).filter(f => f.startsWith(base + '.'));
+    const backups = fs.readdirSync(logDir).filter((f) => f.startsWith(base + '.'));
     expect(backups.length).toBeGreaterThanOrEqual(1);
     const backupContent = fs.readFileSync(path.join(logDir, backups[0]), 'utf-8');
     expect(backupContent.length).toBeGreaterThanOrEqual(1_048_576);
@@ -337,7 +371,7 @@ describe('file rotation', () => {
       _flush();
     }
 
-    const backups = fs.readdirSync(logDir).filter(f => f.startsWith(base + '.'));
+    const backups = fs.readdirSync(logDir).filter((f) => f.startsWith(base + '.'));
     expect(backups.length).toBeLessThanOrEqual(5);
   });
 });
@@ -361,7 +395,9 @@ describe('write failures are silently discarded', () => {
 });
 
 describe('pending entries are flushed', () => {
-  beforeEach(() => { setLogAllRequests(true); });
+  beforeEach(() => {
+    setLogAllRequests(true);
+  });
 
   test('entries are batched and flushed on explicit _flush()', () => {
     logRequest(makeEntry({ requestId: 1 }));
@@ -390,7 +426,9 @@ describe('pending entries are flushed', () => {
 });
 
 describe('sanitization', () => {
-  beforeEach(() => { setLogAllRequests(true); });
+  beforeEach(() => {
+    setLogAllRequests(true);
+  });
 
   test('entry does not contain raw header fields', () => {
     logRequest(makeEntry({ userAgent: 'test-agent' }));

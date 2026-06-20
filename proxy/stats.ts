@@ -473,7 +473,7 @@ export function getFullHealthSnapshot(
   base.lastFallback = lastFallback || undefined;
 
   // Budget warning: yellow flag when session spend passes threshold
-  const budgetWarn = process.env.DEEPCLAUDE_BUDGET_WARNING;
+  const budgetWarn = process.env.DEFIANT_BUDGET_WARNING;
   if (budgetWarn) {
     const limit = parseFloat(budgetWarn);
     if (!isNaN(limit) && limit > 0) {
@@ -509,7 +509,7 @@ export function buildPrometheusMetrics(
   rateLimiterStatus: unknown,
 ): string {
   const lines: string[] = [];
-  const pf = 'deepclaude';
+  const pf = 'defiant';
   const now = Date.now();
 
   // Uptime
@@ -690,12 +690,10 @@ export function recordStreamMetrics(providerKey: string, metrics: StreamMetrics)
 
 // --- Spend tracking ---
 
-// Respect DEEPCLAUDE_DIR / DEEPCLAUDE_CONFIG_DIR so the proxy and statusline
+// Respect DEFIANT_DIR / DEFIANT_CONFIG_DIR so the proxy and statusline
 // agree on the config directory. Mutable for testing (setSpendFilePath).
 let ccSessionDir =
-  process.env.DEEPCLAUDE_CONFIG_DIR ||
-  process.env.DEEPCLAUDE_DIR ||
-  path.join(os.homedir(), '.deepclaude');
+  process.env.DEFIANT_CONFIG_DIR || process.env.DEFIANT_DIR || path.join(os.homedir(), '.defiant');
 
 let spendFile = path.join(ccSessionDir, 'spend.json');
 const spendJournalFile = spendFile + '.journal';
@@ -1165,7 +1163,7 @@ export async function recordSpend(
   // Check budget notification thresholds
   try {
     const { checkBudgetNotifications } = require('./notify');
-    const dailyBudget = parseFloat(process.env.DEEPCLAUDE_DAILY_BUDGET || '0');
+    const dailyBudget = parseFloat(process.env.DEFIANT_DAILY_BUDGET || '0');
     if (dailyBudget > 0) {
       checkBudgetNotifications(getDailySpend(), dailyBudget, 'daily budget');
     }

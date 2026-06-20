@@ -116,7 +116,7 @@ describe('isProviderHealthy', () => {
 describe('recordStat — HTTP 429 handling', () => {
   afterEach(() => {
     // Clean up env if we changed it
-    delete process.env.DEEPCLAUDE_BUDGET_WARNING;
+    delete process.env.defiant_BUDGET_WARNING;
   });
 
   test('429 status does NOT count as failure and does NOT open breaker', () => {
@@ -674,7 +674,7 @@ describe('getHealthSnapshot extended', () => {
 
 describe('getFullHealthSnapshot — structure', () => {
   afterEach(() => {
-    delete process.env.DEEPCLAUDE_BUDGET_WARNING;
+    delete process.env.defiant_BUDGET_WARNING;
   });
 
   test('includes base health data plus version', () => {
@@ -715,7 +715,7 @@ describe('getFullHealthSnapshot — structure', () => {
   });
 
   test('includes budgetWarning at red level when session exceeds budget', () => {
-    process.env.DEEPCLAUDE_BUDGET_WARNING = '1.0';
+    process.env.defiant_BUDGET_WARNING = '1.0';
     _setSessionTotal(1.5);
     const snap = getFullHealthSnapshot({}, {});
     expect(snap.budgetWarning).toBeDefined();
@@ -725,7 +725,7 @@ describe('getFullHealthSnapshot — structure', () => {
   });
 
   test('includes budgetWarning at yellow level when session >= 75% of budget', () => {
-    process.env.DEEPCLAUDE_BUDGET_WARNING = '1.0';
+    process.env.defiant_BUDGET_WARNING = '1.0';
     _setSessionTotal(0.8);
     const snap = getFullHealthSnapshot({}, {});
     expect(snap.budgetWarning).toBeDefined();
@@ -734,7 +734,7 @@ describe('getFullHealthSnapshot — structure', () => {
   });
 
   test('includes budgetWarning at info level when session >= 50% of budget', () => {
-    process.env.DEEPCLAUDE_BUDGET_WARNING = '1.0';
+    process.env.defiant_BUDGET_WARNING = '1.0';
     _setSessionTotal(0.55);
     const snap = getFullHealthSnapshot({}, {});
     expect(snap.budgetWarning).toBeDefined();
@@ -743,13 +743,13 @@ describe('getFullHealthSnapshot — structure', () => {
   });
 
   test('no budgetWarning when budget is not set', () => {
-    delete process.env.DEEPCLAUDE_BUDGET_WARNING;
+    delete process.env.defiant_BUDGET_WARNING;
     const snap = getFullHealthSnapshot({}, {});
     expect(snap.budgetWarning).toBeUndefined();
   });
 
   test('no budgetWarning when session is below 50% of budget', () => {
-    process.env.DEEPCLAUDE_BUDGET_WARNING = '10.0';
+    process.env.defiant_BUDGET_WARNING = '10.0';
     _setSessionTotal(1.0);
     const snap = getFullHealthSnapshot({}, {});
     expect(snap.budgetWarning).toBeUndefined();
@@ -797,9 +797,9 @@ describe('buildPrometheusMetrics', () => {
   test('returns Prometheus-format metrics string', () => {
     const metrics = buildPrometheusMetrics({}, {});
     expect(typeof metrics).toBe('string');
-    expect(metrics).toContain('# HELP deepclaude_uptime_seconds');
-    expect(metrics).toContain('# TYPE deepclaude_uptime_seconds gauge');
-    expect(metrics).toContain('deepclaude_active_connections');
+    expect(metrics).toContain('# HELP defiant_uptime_seconds');
+    expect(metrics).toContain('# TYPE defiant_uptime_seconds gauge');
+    expect(metrics).toContain('defiant_active_connections');
     expect(metrics.endsWith('\n')).toBe(true);
   });
 
@@ -807,32 +807,32 @@ describe('buildPrometheusMetrics', () => {
     recordStat('prom-prov-test', true, 100);
     const metrics = buildPrometheusMetrics({}, {});
     expect(metrics).toContain('provider="prom-prov-test"');
-    expect(metrics).toContain('deepclaude_requests_total');
-    expect(metrics).toContain('deepclaude_circuit_breaker_state');
+    expect(metrics).toContain('defiant_requests_total');
+    expect(metrics).toContain('defiant_circuit_breaker_state');
   });
 
   test('includes concurrency metrics when provided', () => {
     const cs = { main: { active: 3, waiting: 2, limit: 10 } };
     const metrics = buildPrometheusMetrics(cs, {});
-    expect(metrics).toContain('# HELP deepclaude_concurrency_active');
+    expect(metrics).toContain('# HELP defiant_concurrency_active');
     expect(metrics).toContain('pool="main"}');
   });
 
   test('includes rate limiter metrics when provided', () => {
     const rs = { tracked: 42 };
     const metrics = buildPrometheusMetrics({}, rs);
-    expect(metrics).toContain('deepclaude_rate_limit_tracked 42');
+    expect(metrics).toContain('defiant_rate_limit_tracked 42');
   });
 
   test('includes memory and event loop lag metrics', () => {
     const metrics = buildPrometheusMetrics({}, {});
-    expect(metrics).toContain('deepclaude_memory_bytes');
-    expect(metrics).toContain('deepclaude_event_loop_lag_ms');
+    expect(metrics).toContain('defiant_memory_bytes');
+    expect(metrics).toContain('defiant_event_loop_lag_ms');
   });
 
   test('includes session spend metric', () => {
     const metrics = buildPrometheusMetrics({}, {});
-    expect(metrics).toContain('deepclaude_spend_session_dollars');
+    expect(metrics).toContain('defiant_spend_session_dollars');
   });
 });
 
@@ -846,7 +846,7 @@ describe('recordSpend — pricing edge cases', () => {
     // The module already ran require('./providers.json') at import time,
     // so pricingData should be populated.
     // Also set up a temp spend file so writes don't pollute real data.
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'deepclaude-test-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'defiant-test-'));
     tmpFile = path.join(tmpDir, 'spend.json');
     setSpendFilePath(tmpFile);
     // Load fresh pricing data from providers.json so lookups work
@@ -1302,7 +1302,7 @@ describe('spend history and model breakdown', () => {
   });
 
   test('getSpendHistory returns empty array when no spend file', () => {
-    setSpendFilePath('/nonexistent/deepclaude-spend-test.json');
+    setSpendFilePath('/nonexistent/defiant-spend-test.json');
     const history = getSpendHistory();
     expect(Array.isArray(history)).toBe(true);
     expect(history.length).toBe(0);

@@ -1,20 +1,20 @@
-# DeepClaude vs Manifest — Feature Comparison
+# Defiant vs Manifest — Feature Comparison
 
 **Date**: 2026-06-16  
-**DeepClaude**: v1.0.0, MIT, 17 providers, TypeScript, local proxy  
+**Defiant**: v1.0.0, MIT, 17 providers, TypeScript, local proxy  
 **Manifest**: v6.9.2, MIT, 18 providers, TypeScript monorepo (NestJS + SolidJS)
 
 ---
 
 ## TL;DR
 
-Manifest is a **full observability platform with smart routing**. DeepClaude is a **protocol-translating proxy with per-slot routing**. Manifest wins on UI/analytics, multi-tenancy, auth, alerting, and deployment polish. DeepClaude wins on protocol translation, thinking/reasoning cache, canary deployments, and Claude Code integration.
+Manifest is a **full observability platform with smart routing**. Defiant is a **protocol-translating proxy with per-slot routing**. Manifest wins on UI/analytics, multi-tenancy, auth, alerting, and deployment polish. Defiant wins on protocol translation, thinking/reasoning cache, canary deployments, and Claude Code integration.
 
 ---
 
 ## 1. Architecture & Scope
 
-| Aspect | DeepClaude | Manifest |
+| Aspect | Defiant | Manifest |
 |--------|-----------|----------|
 | **Type** | Local per-session HTTP proxy | Centralized API server + dashboard |
 | **Language** | TypeScript (Node.js) | TypeScript (NestJS 11 + SolidJS) |
@@ -30,7 +30,7 @@ Manifest is a **full observability platform with smart routing**. DeepClaude is 
 
 ## 2. Provider & Model Support
 
-| Aspect | DeepClaude | Manifest |
+| Aspect | Defiant | Manifest |
 |--------|-----------|----------|
 | **Provider count** | 17 | 18 + OpenRouter (300+ models) |
 | **Local providers** | ❌ None | ✅ Ollama, LM Studio, llama.cpp |
@@ -43,7 +43,7 @@ Manifest is a **full observability platform with smart routing**. DeepClaude is 
 
 ### Provider Overlap
 
-| Provider | DeepClaude | Manifest |
+| Provider | Defiant | Manifest |
 |----------|-----------|----------|
 | Anthropic (direct) | ✅ | ✅ |
 | OpenAI (direct) | ❌ | ✅ |
@@ -72,7 +72,7 @@ Manifest is a **full observability platform with smart routing**. DeepClaude is 
 
 ## 3. Routing & Model Selection
 
-| Aspect | DeepClaude | Manifest |
+| Aspect | Defiant | Manifest |
 |--------|-----------|----------|
 | **Routing model** | Slot-based: each CC model slot → provider:model | Complexity-based: scores request → tier → model |
 | **Complexity scoring** | Simple (5 tiers: TRIVIAL/CHAT/CODE/TOOL/HEAVY) | **28+ dimensions** with trie-based keyword scanner, sigmoid normalization |
@@ -89,7 +89,7 @@ Manifest is a **full observability platform with smart routing**. DeepClaude is 
 
 ## 4. Protocol Translation
 
-| Aspect | DeepClaude | Manifest |
+| Aspect | Defiant | Manifest |
 |--------|-----------|----------|
 | **Anthropic ↔ OpenAI** | ✅ Full bidirectional (request + response + SSE streaming) | ✅ Basic (via adapter pattern) |
 | **Anthropic ↔ Gemini** | ✅ Full bidirectional | ✅ Google adapter |
@@ -98,13 +98,13 @@ Manifest is a **full observability platform with smart routing**. DeepClaude is 
 | **Server tool use injection** | ✅ `server_tool_use` content block | ❌ |
 | **Tool_choice with thinking** | ✅ Strips for providers that reject it | ✅ Validation guard |
 
-**Verdict**: DeepClaude's translation is deeper and more complete. Manifest has equivalent caching but uses it for dashboard deduplication rather than protocol compliance.
+**Verdict**: Defiant's translation is deeper and more complete. Manifest has equivalent caching but uses it for dashboard deduplication rather than protocol compliance.
 
 ---
 
 ## 5. Caching
 
-| Aspect | DeepClaude | Manifest |
+| Aspect | Defiant | Manifest |
 |--------|-----------|----------|
 | **Thinking block cache** | ✅ `sessionKey:toolUseId`, 30min TTL, 1000 entries | ✅ `ThinkingBlockCache` + `ThoughtSignatureCache` |
 | **Reasoning cache** | ✅ `sessionKey:firstToolCallId`, 30min TTL | ✅ `ReasoningContentCache` |
@@ -114,7 +114,7 @@ Manifest is a **full observability platform with smart routing**. DeepClaude is 
 | **Dashboard cache** | ❌ None | ✅ Per-user URL-keyed cache (30s) + model prices (5min) + public stats (24h) |
 | **Configuration hot-reload** | ✅ 1s poll with mtime check | ✅ NestJS cache-manager with TTL |
 
-**Verdict**: Manifest has more comprehensive caching for server workloads. DeepClaude's caching is laser-focused on protocol compliance (thinking cache is mission-critical for DeepSeek).
+**Verdict**: Manifest has more comprehensive caching for server workloads. Defiant's caching is laser-focused on protocol compliance (thinking cache is mission-critical for DeepSeek).
 
 ---
 
@@ -122,7 +122,7 @@ Manifest is a **full observability platform with smart routing**. DeepClaude is 
 
 This is Manifest's **strongest advantage**.
 
-| Aspect | DeepClaude | Manifest |
+| Aspect | Defiant | Manifest |
 |--------|-----------|----------|
 | **Dashboard** | Embedded HTML (381 lines, no deps) | Full SolidJS SPA |
 | **Cost analytics** | Per-session spend, daily budget, 7-day projection | Per-agent, per-model, hourly/daily cost tracking |
@@ -143,13 +143,13 @@ This is Manifest's **strongest advantage**.
 
 ## 7. Authentication & Security
 
-| Aspect | DeepClaude | Manifest |
+| Aspect | Defiant | Manifest |
 |--------|-----------|----------|
 | **User authentication** | ❌ None (local only) | ✅ Better Auth: email/password + Google/GitHub/Discord OAuth |
 | **Session management** | ❌ None | ✅ Better Auth cookies + SessionGuard |
 | **API key auth** | ❌ None (direct key in env) | ✅ `mnfst_` prefixed tokens, scrypt hashing, LRU cache |
 | **API key encryption** | ✅ AES-256-GCM with scrypt derivation | ✅ AES-256-GCM with configurable `MANIFEST_ENCRYPTION_KEY` |
-| **Master secret** | `DEEPCLAUDE_MASTER_SECRET` | `BETTER_AUTH_SECRET` (32+ chars) |
+| **Master secret** | `DEFIANT_MASTER_SECRET` | `BETTER_AUTH_SECRET` (32+ chars) |
 | **Rate limiting** | Per-IP fixed window (500/min, 2 pools) | Per-endpoint ThrottlerGuard (login, signup, password reset, etc.) |
 | **SSRF protection** | ✅ DNS pinning, IP blocklist, TOCTOU defense | ✅ DNS-based validation |
 | **Credential scrubbing** | ✅ 20 regex patterns in logs/errors | ✅ (via nestjs-pino sanitizers) |
@@ -163,9 +163,9 @@ This is Manifest's **strongest advantage**.
 
 ## 8. CLI & Developer Experience
 
-| Aspect | DeepClaude | Manifest |
+| Aspect | Defiant | Manifest |
 |--------|-----------|----------|
-| **CLI entry** | `deepclaude` / `dc` with 30+ flags | `npm start` / Docker / Railway |
+| **CLI entry** | `defiant` / `dc` with 30+ flags | `npm start` / Docker / Railway |
 | **Statusline** | ✅ CC status bar with slot, spend, health, circuit breakers | ❌ None (has SSE dashboard instead) |
 | **Flag parsing** | 1259-line `cli.mjs` with subcommands | N/A (server, not CLI) |
 | **Doctor** | ✅ `--doctor` (checks Node, CC version, env vars, providers, connectivity) | ❌ None |
@@ -187,7 +187,7 @@ This is Manifest's **strongest advantage**.
 
 ## 9. Streaming & Performance
 
-| Aspect | DeepClaude | Manifest |
+| Aspect | Defiant | Manifest |
 |--------|-----------|----------|
 | **SSE streaming** | ✅ Full implementation with per-event buffer guard | ✅ SSE with gzip exclusion filter |
 | **Non-streaming** | ✅ (for tool calls) | ✅ `buffered` response mode |
@@ -203,7 +203,7 @@ This is Manifest's **strongest advantage**.
 
 ## 10. Testing
 
-| Aspect | DeepClaude | Manifest |
+| Aspect | Defiant | Manifest |
 |--------|-----------|----------|
 | **Framework** | Jest (via babel-jest) | Jest (backend) + Vitest (frontend) |
 | **Test count** | ~1386 tests, 47 suites | ~250+ spec files across monorepo |
@@ -218,7 +218,7 @@ This is Manifest's **strongest advantage**.
 
 ## 11. Deployment & Infrastructure
 
-| Aspect | DeepClaude | Manifest |
+| Aspect | Defiant | Manifest |
 |--------|-----------|----------|
 | **Docker** | ❌ None | ✅ Multi-stage distroless (non-root, no shell, read-only FS) |
 | **Docker Compose** | ❌ None | ✅ Postgres + app + health checks |
@@ -235,7 +235,7 @@ This is Manifest's **strongest advantage**.
 
 ## 12. Documentation
 
-| Aspect | DeepClaude | Manifest |
+| Aspect | Defiant | Manifest |
 |--------|-----------|----------|
 | **CLAUDE.md** | Project-focused (~150 lines) | **40KB, 1700+ lines** — comprehensive dev guide |
 | **README** | Auto-generated from template + live data | Concise value prop + quick start |
@@ -250,9 +250,9 @@ This is Manifest's **strongest advantage**.
 
 ---
 
-## 13. Unique DeepClaude Features (Not in Manifest)
+## 13. Unique Defiant Features (Not in Manifest)
 
-These are places where DeepClaude leads:
+These are places where Defiant leads:
 
 1. **Per-slot concurrent multi-provider routing** — each Claude Code model slot independently routed to different providers
 2. **Protocol translation depth** — Anthropic ↔ OpenAI ↔ Gemini with SSE stream transformation, not just request/response mapping
@@ -260,7 +260,7 @@ These are places where DeepClaude leads:
 4. **Canary deployments** — Gradual rollout with automatic promotion/rollback via deterministic hash routing
 5. **Session momentum** — Biases toward historically successful providers per conversation
 6. **Hot-swap proxy restart** — Zero-downtime proxy replacement without killing active sessions
-7. **Per-session isolated proxy** — Each `deepclaude` invocation gets its own proxy on a unique port
+7. **Per-session isolated proxy** — Each `defiant` invocation gets its own proxy on a unique port
 8. **Write-ahead spend journal** — Crash-safe spend tracking with startup replay
 9. **Server-side tool execution** — Web search (DuckDuckGo, no API key) + web fetch with comprehensive SSRF
 10. **Compact-at-950K** — DeepSeek's disk cache lasts hours; strategic compaction preserves 50× cache discount
@@ -280,5 +280,5 @@ This comparison was conducted on 2026-06-16 by:
 - Cross-referencing provider lists, feature sets, and architectural patterns
 - Neither codebase was executed; analysis is static/structural only
 
-**DeepClaude files read**: ~45 files across `proxy/`, `scripts/`, `statusline/`, root  
+**Defiant files read**: ~45 files across `proxy/`, `scripts/`, `statusline/`, root  
 **Manifest files read**: ~60+ files across `packages/backend/`, `packages/frontend/`, `packages/shared/`, `docker/`, root

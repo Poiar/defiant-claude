@@ -368,7 +368,7 @@ More content.`;
     const input = `You are an assistant.
 <system-reminder>
 # claudeMd
-Project: DeepClaude
+Project: Defiant
 Language: TypeScript
 </system-reminder>
 <system-reminder>
@@ -381,7 +381,7 @@ The task tools haven't been used recently.
 End of prompt.`;
     const result = stripAnthropicSkills(input);
     // claudeMd preserved
-    expect(result).toContain('Project: DeepClaude');
+    expect(result).toContain('Project: Defiant');
     expect(result).toContain('Language: TypeScript');
     // Volatile system-reminders stripped
     expect(result).not.toContain('Available agent types');

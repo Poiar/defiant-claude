@@ -25,8 +25,8 @@ http://localhost:63342/qodana.ide/idea.html?projectKey=d3ba4650b7715fd1a93c3c273
 
 ```bash
 docker run --rm -it \
-  -v C:\OC\deepclaude:/data/project \
-  -v C:\OC\deepclaude\qodana-results:/data/results \
+  -v C:\OC\defiant:/data/project \
+  -v C:\OC\defiant\qodana-results:/data/results \
   jetbrains/qodana-js:2026.1
 ```
 

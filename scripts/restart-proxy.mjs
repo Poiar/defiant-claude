@@ -11,12 +11,12 @@ import { homedir, platform } from 'os';
 import { spawn } from 'child_process';
 import { get } from 'http';
 
-const DEEPCLAUDE_DIR = join(homedir(), '.deepclaude');
-const PORT_FILE = join(DEEPCLAUDE_DIR, 'proxy.port');
-const NEXT_PORT_FILE = join(DEEPCLAUDE_DIR, 'next-proxy.port');
-const ROUTES_FILE = join(DEEPCLAUDE_DIR, 'current-routes.json');
-const OVERRIDES_FILE = join(DEEPCLAUDE_DIR, 'slot-overrides.json');
-const THINKING_OVERRIDES_FILE = join(DEEPCLAUDE_DIR, 'thinking-overrides.json');
+const DEFIANT_DIR = join(homedir(), '.defiant');
+const PORT_FILE = join(DEFIANT_DIR, 'proxy.port');
+const NEXT_PORT_FILE = join(DEFIANT_DIR, 'next-proxy.port');
+const ROUTES_FILE = join(DEFIANT_DIR, 'current-routes.json');
+const OVERRIDES_FILE = join(DEFIANT_DIR, 'slot-overrides.json');
+const THINKING_OVERRIDES_FILE = join(DEFIANT_DIR, 'thinking-overrides.json');
 
 const REPO_DIR = join(import.meta.dirname, '..');
 
@@ -71,7 +71,7 @@ async function main() {
     args.push('--thinking-overrides', THINKING_OVERRIDES_FILE);
 
   // 4. Write signal file
-  mkdirSync(DEEPCLAUDE_DIR, { recursive: true });
+  mkdirSync(DEFIANT_DIR, { recursive: true });
   writeFileSync(NEXT_PORT_FILE, String(newPort));
   console.log('Signal file written: ' + NEXT_PORT_FILE);
 

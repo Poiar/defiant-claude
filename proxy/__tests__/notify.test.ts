@@ -14,7 +14,7 @@ describe('notify', () => {
   beforeEach(() => {
     mockExec.mockClear();
     _resetFiredThresholds();
-    delete process.env.DEEPCLAUDE_BUDGET_WARNING;
+    delete process.env.DEFIANT_BUDGET_WARNING;
   });
 
   describe('sendNotification', () => {
@@ -73,22 +73,22 @@ describe('notify', () => {
   });
 
   describe('checkBudgetNotifications', () => {
-    test('returns false when DEEPCLAUDE_BUDGET_WARNING is not set', () => {
+    test('returns false when DEFIANT_BUDGET_WARNING is not set', () => {
       expect(checkBudgetNotifications(5, 10, 'test budget')).toBe(false);
     });
 
     test('returns false when budget cap is <= 0', () => {
-      process.env.DEEPCLAUDE_BUDGET_WARNING = '50,75,100';
+      process.env.DEFIANT_BUDGET_WARNING = '50,75,100';
       expect(checkBudgetNotifications(5, 0, 'test budget')).toBe(false);
     });
 
     test('returns false when warn env has invalid values only', () => {
-      process.env.DEEPCLAUDE_BUDGET_WARNING = 'abc,xyz';
+      process.env.DEFIANT_BUDGET_WARNING = 'abc,xyz';
       expect(checkBudgetNotifications(5, 10, 'test budget')).toBe(false);
     });
 
     test('fires notification at 50% threshold', () => {
-      process.env.DEEPCLAUDE_BUDGET_WARNING = '50,75,100';
+      process.env.DEFIANT_BUDGET_WARNING = '50,75,100';
       checkBudgetNotifications(5.5, 10, 'daily budget');
       expect(mockExec).toHaveBeenCalledTimes(1);
       const cmd = mockExec.mock.calls[0][0] as string;
@@ -96,7 +96,7 @@ describe('notify', () => {
     });
 
     test('fires multiple notifications at different thresholds', () => {
-      process.env.DEEPCLAUDE_BUDGET_WARNING = '50,75,100';
+      process.env.DEFIANT_BUDGET_WARNING = '50,75,100';
       checkBudgetNotifications(5, 10, 'daily budget'); // 50%
       mockExec.mockClear();
       checkBudgetNotifications(8, 10, 'daily budget'); // 80% → crosses 75%
@@ -106,7 +106,7 @@ describe('notify', () => {
     });
 
     test('does not fire duplicate notifications for same threshold', () => {
-      process.env.DEEPCLAUDE_BUDGET_WARNING = '50,75,100';
+      process.env.DEFIANT_BUDGET_WARNING = '50,75,100';
       checkBudgetNotifications(6, 10, 'daily budget'); // 60% → crosses 50%
       expect(mockExec).toHaveBeenCalledTimes(1);
       mockExec.mockClear();
@@ -115,25 +115,25 @@ describe('notify', () => {
     });
 
     test('fires at 100% with exhausted message', () => {
-      process.env.DEEPCLAUDE_BUDGET_WARNING = '100';
+      process.env.DEFIANT_BUDGET_WARNING = '100';
       checkBudgetNotifications(10, 10, 'daily budget');
       const cmd = mockExec.mock.calls[0][0] as string;
       expect(cmd).toContain('exhausted');
     });
 
     test('handles invalid threshold values gracefully', () => {
-      process.env.DEEPCLAUDE_BUDGET_WARNING = '50,abc,100';
+      process.env.DEFIANT_BUDGET_WARNING = '50,abc,100';
       expect(checkBudgetNotifications(8, 10, 'daily budget')).toBe(true);
       expect(mockExec).toHaveBeenCalledTimes(1); // fired at 50, skipped invalid
     });
 
     test('handles edge case: exactly at threshold boundary', () => {
-      process.env.DEEPCLAUDE_BUDGET_WARNING = '50';
+      process.env.DEFIANT_BUDGET_WARNING = '50';
       expect(checkBudgetNotifications(5.0, 10, 'test')).toBe(true);
     });
 
     test('handles edge case: just below threshold', () => {
-      process.env.DEEPCLAUDE_BUDGET_WARNING = '50';
+      process.env.DEFIANT_BUDGET_WARNING = '50';
       expect(checkBudgetNotifications(4.99, 10, 'test')).toBe(false);
     });
   });

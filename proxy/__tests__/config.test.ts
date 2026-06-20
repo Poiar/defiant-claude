@@ -267,7 +267,7 @@ describe('resolveKey', () => {
   const { decrypt } = require('../crypto');
 
   beforeEach(() => {
-    delete process.env.DEEPCLAUDE_ENCRYPTION_KEY;
+    delete process.env.DEFIANT_ENCRYPTION_KEY;
     decrypt.mockReset();
   });
 
@@ -299,7 +299,7 @@ describe('resolveKey', () => {
   });
 
   test('encrypted key with env var and successful decrypt', async () => {
-    process.env.DEEPCLAUDE_ENCRYPTION_KEY = 'my-secret';
+    process.env.DEFIANT_ENCRYPTION_KEY = 'my-secret';
     decrypt.mockResolvedValue('decrypted-key-value');
     const result = await resolveKey('$aes256gcm:salt:iv:tag:cipher');
     expect(result).toBe('decrypted-key-value');
@@ -307,7 +307,7 @@ describe('resolveKey', () => {
   });
 
   test('encrypted key with env var and decryption failure', async () => {
-    process.env.DEEPCLAUDE_ENCRYPTION_KEY = 'my-secret';
+    process.env.DEFIANT_ENCRYPTION_KEY = 'my-secret';
     decrypt.mockRejectedValue(new Error('decrypt error'));
     const result = await resolveKey('$aes256gcm:salt:iv:tag:cipher');
     expect(result).toBeNull();

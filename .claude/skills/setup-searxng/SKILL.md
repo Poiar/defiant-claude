@@ -1,16 +1,16 @@
 ---
 name: setup-searxng
-description: Set up a local SearXNG instance via Docker for DeepClaude web search — free, no API key, unlimited queries. Already installed and configured on this machine.
+description: Set up a local SearXNG instance via Docker for Defiant Claude web search — free, no API key, unlimited queries. Already installed and configured on this machine.
 ---
 
-# Setup SearXNG for DeepClaude Web Search
+# Setup SearXNG for Defiant Claude Web Search
 
-Sets up a self-hosted SearXNG search engine that DeepClaude uses for web search. SearXNG aggregates results from multiple engines (Google, DuckDuckGo, Brave, etc.) and bypasses their CAPTCHAs. No API keys, no rate limits, no cost.
+Sets up a self-hosted SearXNG search engine that Defiant Claude uses for web search. SearXNG aggregates results from multiple engines (Google, DuckDuckGo, Brave, etc.) and bypasses their CAPTCHAs. No API keys, no rate limits, no cost.
 
 ## Current state (this machine)
 
 - ✅ Docker Desktop installed, SearXNG container running on port 8888
-- ✅ `DEEPCLAUDE_SEARXNG_URL` set in `HKCU:\Environment` → `http://localhost:8888/search?format=json&q=`
+- ✅ `DEFIANT_SEARXNG_URL` set in `HKCU:\Environment` → `http://localhost:8888/search?format=json&q=`
 - ✅ Default engines in code: `searxng,ddg` (`proxy/server-tools.ts:567`)
 - ✅ `http` transport works (fixed — was hardcoded to `https` before 2026-06-18)
 - ✅ Registry reads use PowerShell (not `reg.exe`) to avoid MSYS2 path mangling
@@ -19,7 +19,7 @@ Sets up a self-hosted SearXNG search engine that DeepClaude uses for web search.
 ## Prerequisites
 
 - Docker Desktop must be running
-- DeepClaude project at `C:\Dev\deepclaude`
+- Defiant Claude project at `C:\Dev\defiant`
 
 ## Quick Setup (new machine)
 
@@ -38,7 +38,7 @@ mkdir -p ~/searxng-config
 cat > ~/searxng-config/settings.yml << 'YML'
 use_default_settings: true
 server:
-  secret_key: "searxng-local-deepclaude-$(date +%s)"
+  secret_key: "searxng-local-defiant-$(date +%s)"
   bind_address: "0.0.0.0"
   limiter: false
 search:
@@ -72,33 +72,33 @@ curl -s "http://localhost:8888/search?format=json&q=test" | python3 -c "import s
 
 Should print something like `20 results`.
 
-### 5. Configure DeepClaude
+### 5. Configure Defiant Claude
 
 Set the SearXNG URL in Windows Registry (or shell profile):
 
 ```powershell
-Set-ItemProperty -Path 'HKCU:\Environment' -Name 'DEEPCLAUDE_SEARXNG_URL' -Value 'http://localhost:8888/search?format=json&q=' -Type String
+Set-ItemProperty -Path 'HKCU:\Environment' -Name 'DEFIANT_SEARXNG_URL' -Value 'http://localhost:8888/search?format=json&q=' -Type String
 ```
 
 Or in `.env` / shell profile:
 ```bash
-export DEEPCLAUDE_SEARXNG_URL="http://localhost:8888/search?format=json&q="
+export DEFIANT_SEARXNG_URL="http://localhost:8888/search?format=json&q="
 ```
 
-No need to set `DEEPCLAUDE_SEARCH_ENGINES` — the code default is `searxng,ddg` which puts SearXNG first.
+No need to set `DEFIANT_SEARCH_ENGINES` — the code default is `searxng,ddg` which puts SearXNG first.
 
-### 6. Restart DeepClaude
+### 6. Restart Defiant Claude
 
 Exit Claude Code and run `dc` again from PowerShell. The proxy reads `HKCU:\Environment` on startup via PowerShell.
 
 ## How it works
 
-The DeepClaude proxy reads `DEEPCLAUDE_SEARCH_ENGINES` (comma-separated engine list) and queries each enabled engine in parallel, merges results, and deduplicates by URL. Default order: `searxng,ddg` (SearXNG first since DDG is broken by CAPTCHA).
+The Defiant Claude proxy reads `DEFIANT_SEARCH_ENGINES` (comma-separated engine list) and queries each enabled engine in parallel, merges results, and deduplicates by URL. Default order: `searxng,ddg` (SearXNG first since DDG is broken by CAPTCHA).
 
 | Engine | Requires | Free tier |
 |--------|----------|-----------|
-| `searxng` | Docker (or `DEEPCLAUDE_SEARXNG_URL`) | Unlimited |
-| `brave` | `DEEPCLAUDE_BRAVE_API_KEY` | 2000/mo |
+| `searxng` | Docker (or `DEFIANT_SEARXNG_URL`) | Unlimited |
+| `brave` | `DEFIANT_BRAVE_API_KEY` | 2000/mo |
 | `ddg` | Nothing | Broken (CAPTCHA) |
 
 The proxy selects `http` or `https` transport based on the URL scheme — `http://localhost` uses the `http` module, remote instances use `https`.
@@ -121,7 +121,7 @@ Docker Desktop must be running. Start it from the Start Menu or via `Start-Proce
 
 ### 0 results from SearXNG
 Common causes:
-- `DEEPCLAUDE_SEARCH_NO_NETWORK` is set (even empty string from some shells) — unset it with `delete process.env.DEEPCLAUDE_SEARCH_NO_NETWORK`
+- `DEFIANT_SEARCH_NO_NETWORK` is set (even empty string from some shells) — unset it with `delete process.env.DEFIANT_SEARCH_NO_NETWORK`
 - SearXNG container not running → `docker ps | grep searxng`
 - Proxy not restarted after setting registry → exit and restart `dc`
 - Port conflict → check with `curl http://localhost:8888/search?format=json&q=test`

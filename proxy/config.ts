@@ -222,10 +222,7 @@ function safeReadJson(filePath: string, schema: JsonSchema): Record<string, unkn
     for (const [modelId, entry] of Object.entries(thinking)) {
       if (entry !== null && typeof entry === 'object') {
         if (typeof (entry as Record<string, unknown>).type !== 'string') {
-          log.warn(
-            null,
-            'hot-reload skipped: thinking.' + modelId + '.type must be a string',
-          );
+          log.warn(null, 'hot-reload skipped: thinking.' + modelId + '.type must be a string');
           return null;
         }
         if (typeof (entry as Record<string, unknown>).budget_tokens !== 'number') {
@@ -531,7 +528,10 @@ export async function checkReload(state: ConfigState, parsed: ParsedArgs): Promi
             log.warn(
               null,
               'thinking config changed — this invalidates DeepSeek cache prefix (50x cost increase on next request). ' +
-                'Old: ' + old.slice(0, 200) + ' New: ' + newThinking.slice(0, 200),
+                'Old: ' +
+                old.slice(0, 200) +
+                ' New: ' +
+                newThinking.slice(0, 200),
             );
             state.thinkingConfig = providersData.thinking;
             changed = true;
@@ -550,7 +550,10 @@ export async function checkReload(state: ConfigState, parsed: ParsedArgs): Promi
       const stat = fs.statSync(state.thinkingOverridesFile);
       if (stat.mtimeMs >= state.thinkingOverridesMtime) {
         const oldStr = JSON.stringify(state.thinkingConfig);
-        state.thinkingConfig = applyThinkingOverrides(state.thinkingConfig, state.thinkingOverridesFile);
+        state.thinkingConfig = applyThinkingOverrides(
+          state.thinkingConfig,
+          state.thinkingOverridesFile,
+        );
         const newStr = JSON.stringify(state.thinkingConfig);
         if (oldStr !== newStr) {
           log.warn(
@@ -624,7 +627,10 @@ export async function checkReload(state: ConfigState, parsed: ParsedArgs): Promi
               null,
               'slot overrides changed — this may change the upstream model in the request body, ' +
                 'invalidating DeepSeek cache prefix (50x cost increase on next request). ' +
-                'Old: ' + oldOverrides.slice(0, 200) + ' New: ' + newOverridesStr.slice(0, 200),
+                'Old: ' +
+                oldOverrides.slice(0, 200) +
+                ' New: ' +
+                newOverridesStr.slice(0, 200),
             );
           }
           state.slotOverrides = overridesData as Record<string, string>;
@@ -694,7 +700,7 @@ export function validateConfig(state: ConfigState): string[] {
   return warnings;
 }
 // --- Key resolution with encryption support ---
-// If a key value starts with $aes256gcm:, decrypt it using DEEPCLAUDE_ENCRYPTION_KEY.
+// If a key value starts with $aes256gcm:, decrypt it using DEFIANT_ENCRYPTION_KEY.
 // Plaintext keys are returned as-is for backwards compatibility.
 
 export async function resolveKey(rawKey: string | null | undefined): Promise<string | null> {
@@ -705,10 +711,9 @@ export async function resolveKey(rawKey: string | null | undefined): Promise<str
   if (typeof rawKey !== 'string' || !rawKey.startsWith('$aes256gcm:')) {
     return rawKey;
   }
-  const masterSecret =
-    process.env.DEEPCLAUDE_ENCRYPTION_KEY || readWinReg('DEEPCLAUDE_ENCRYPTION_KEY');
+  const masterSecret = process.env.DEFIANT_ENCRYPTION_KEY || readWinReg('DEFIANT_ENCRYPTION_KEY');
   if (!masterSecret) {
-    log.warn(null, 'Encrypted key found but DEEPCLAUDE_ENCRYPTION_KEY is not set');
+    log.warn(null, 'Encrypted key found but DEFIANT_ENCRYPTION_KEY is not set');
     return null;
   }
   try {

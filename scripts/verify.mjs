@@ -56,7 +56,7 @@ const argv = process.argv.slice(2);
 const skipLint = argv.includes('--no-lint') || argv.includes('--skip-lint');
 const skipTests = argv.includes('--no-tests') || argv.includes('--skip-tests');
 
-console.log(`${BOLD}DeepClaude verification${RESET}\n`);
+console.log(`${BOLD}Defiant Claude verification${RESET}\n`);
 
 let failed = false;
 

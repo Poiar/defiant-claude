@@ -56,7 +56,7 @@ let tmpDir: string;
 beforeEach(() => {
   tmpDir = join(
     tmpdir(),
-    `deepclaude-statusline-render-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    `defiant-statusline-render-${Date.now()}-${Math.random().toString(36).slice(2)}`,
   );
   mkdirSync(tmpDir, { recursive: true });
 });
@@ -84,7 +84,7 @@ describe('statusline location group', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: '',
         PATH: process.env.PATH || '',
       },
@@ -106,7 +106,7 @@ describe('statusline location group', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: '',
         PATH: process.env.PATH || '',
       },
@@ -121,7 +121,7 @@ describe('statusline location group', () => {
       stdin: makeCcJson(),
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'feature/cool-stuff',
         PATH: process.env.PATH || '',
       },
@@ -144,7 +144,7 @@ describe('statusline location group', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: '',
         PATH: process.env.PATH || '',
       },
@@ -175,7 +175,7 @@ describe('statusline model & slot overrides', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -209,7 +209,7 @@ describe('statusline model & slot overrides', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -239,7 +239,7 @@ describe('statusline model & slot overrides', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -264,7 +264,7 @@ describe('statusline context window', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -287,7 +287,7 @@ describe('statusline context window', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -310,7 +310,7 @@ describe('statusline context window', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -338,7 +338,7 @@ describe('statusline context window', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -361,7 +361,7 @@ describe('statusline context window', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -393,7 +393,7 @@ describe('statusline DeepSeek milestone tags', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -419,7 +419,7 @@ describe('statusline DeepSeek milestone tags', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -446,7 +446,7 @@ describe('statusline DeepSeek milestone tags', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -471,7 +471,7 @@ describe('statusline DeepSeek milestone tags', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -496,7 +496,7 @@ describe('statusline DeepSeek milestone tags', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -521,7 +521,7 @@ describe('statusline DeepSeek milestone tags', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -546,7 +546,7 @@ describe('statusline DeepSeek milestone tags', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -571,7 +571,7 @@ describe('statusline DeepSeek milestone tags', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -593,7 +593,7 @@ describe('statusline proxy port', () => {
       env: {
         ...process.env,
         ANTHROPIC_BASE_URL: 'http://127.0.0.1:49999',
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -604,15 +604,15 @@ describe('statusline proxy port', () => {
     expect(plain).toContain('49999');
   });
 
-  test('shows proxy port from DEEPCLAUDE_PROXY_PORT fallback', () => {
+  test('shows proxy port from DEFIANT_PROXY_PORT fallback', () => {
     writeFileSync(join(tmpDir, 'spend.json'), JSON.stringify({}));
 
     const result = runStatusline({
       stdin: makeCcJson(),
       env: {
         ...process.env,
-        DEEPCLAUDE_PROXY_PORT: '50123',
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_PROXY_PORT: '50123',
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -632,7 +632,7 @@ describe('statusline proxy port', () => {
       env: {
         ...process.env,
         ANTHROPIC_BASE_URL: 'http://127.0.0.1:51000',
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         CLAUDE_CODE_SESSION_ID: '',
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
@@ -651,7 +651,7 @@ describe('statusline output format', () => {
       stdin: makeCcJson(),
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -662,7 +662,7 @@ describe('statusline output format', () => {
     expect(stripAnsi(result.stdout)).not.toMatch(/\s{2,}/);
   });
 
-  test('output follows deepclaude <branch> <slot> <model> <effort> <context> <$session> <$today> <port>', () => {
+  test('output follows defiant <branch> <slot> <model> <effort> <context> <$session> <$today> <port>', () => {
     const d2 = new Date();
     const todayKey = `${d2.getFullYear()}-${String(d2.getMonth() + 1).padStart(2, '0')}-${String(d2.getDate()).padStart(2, '0')}`;
     const spendJson = {
@@ -681,7 +681,7 @@ describe('statusline output format', () => {
     writeFileSync(join(tmpDir, 'cc-spend-test-fmt.json'), '0.45');
 
     const ccJson = JSON.stringify({
-      workspace: { current_dir: '/home/user/deepclaude' },
+      workspace: { current_dir: '/home/user/defiant' },
       model: { id: 'fable:deepseek-v4-pro' },
       effort: { level: 'max' },
       context_window: { total_input_tokens: 91000, max_input_tokens: 1000000 },
@@ -692,7 +692,7 @@ describe('statusline output format', () => {
       env: {
         ...process.env,
         ANTHROPIC_BASE_URL: 'http://127.0.0.1:50000',
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         CLAUDE_CODE_SESSION_ID: 'test-fmt',
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
@@ -702,8 +702,8 @@ describe('statusline output format', () => {
     expect(result.status).toBe(0);
     const plain = stripAnsi(result.stdout);
     // Rough structure: dir branch slot model effort context $session $today port
-    // Exact match: deepclaude main f ds:deepseek-v4-pro max 91k/9% $0.45 $1.23 50000
-    expect(plain).toBe('deepclaude main f ds:deepseek-v4-pro max 91k/9% $0.45 $1.23 50000');
+    // Exact match: defiant main f ds:deepseek-v4-pro max 91k/9% $0.45 $1.23 50000
+    expect(plain).toBe('defiant main f ds:deepseek-v4-pro max 91k/9% $0.45 $1.23 50000');
   });
 
   test('no doubled spaces when spend group has only session (today is 0)', () => {
@@ -719,7 +719,7 @@ describe('statusline output format', () => {
       stdin: makeCcJson(),
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         CLAUDE_CODE_SESSION_ID: 'test-no-today',
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
@@ -739,7 +739,7 @@ describe('statusline output format', () => {
       env: {
         ...process.env,
         ANTHROPIC_BASE_URL: 'http://127.0.0.1:50000',
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -766,7 +766,7 @@ describe('statusline output assembly', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -793,7 +793,7 @@ describe('statusline output assembly', () => {
         stdin: ccJson,
         env: {
           ...process.env,
-          DEEPCLAUDE_DIR: tmpDir,
+          DEFIANT_DIR: tmpDir,
           GIT_BRANCH: 'main',
           PATH: process.env.PATH || '',
         },
@@ -823,7 +823,7 @@ describe('statusline output assembly', () => {
         stdin: ccJson,
         env: {
           ...process.env,
-          DEEPCLAUDE_DIR: tmpDir,
+          DEFIANT_DIR: tmpDir,
           GIT_BRANCH: 'main',
           PATH: process.env.PATH || '',
         },
@@ -847,7 +847,7 @@ describe('statusline model display_name fallback', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -876,7 +876,7 @@ describe('statusline model display_name fallback', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -906,7 +906,7 @@ describe('statusline slot variants', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -933,7 +933,7 @@ describe('statusline slot variants', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -962,7 +962,7 @@ describe('statusline slot variants', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -989,7 +989,7 @@ describe('statusline slot variants', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -1015,7 +1015,7 @@ describe('statusline context window edge cases', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -1038,7 +1038,7 @@ describe('statusline context window edge cases', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -1061,7 +1061,7 @@ describe('statusline context window edge cases', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -1084,7 +1084,7 @@ describe('statusline context window edge cases', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -1113,7 +1113,7 @@ describe('statusline context window edge cases', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -1147,7 +1147,7 @@ describe('statusline modelLookup [1m] suffix stripping', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -1178,7 +1178,7 @@ describe('statusline modelLookup [1m] suffix stripping', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -1200,7 +1200,7 @@ describe('statusline malformed / missing file resilience', () => {
       stdin: makeCcJson(),
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         CLAUDE_CODE_SESSION_ID: 'test-malformed',
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
@@ -1219,7 +1219,7 @@ describe('statusline malformed / missing file resilience', () => {
       stdin: makeCcJson(),
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -1244,7 +1244,7 @@ describe('statusline malformed / missing file resilience', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -1267,7 +1267,7 @@ describe('statusline malformed / missing file resilience', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -1288,7 +1288,7 @@ describe('statusline malformed / missing file resilience', () => {
       stdin: makeCcJson(),
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         CLAUDE_CODE_SESSION_ID: 'test-garbage',
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
@@ -1312,7 +1312,7 @@ describe('statusline malformed / missing file resilience', () => {
       stdin: makeCcJson(),
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         CLAUDE_CODE_SESSION_ID: 'test-zero-today',
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
@@ -1332,7 +1332,7 @@ describe('statusline stdin edge cases', () => {
       stdin: '',
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -1347,7 +1347,7 @@ describe('statusline stdin edge cases', () => {
       stdin: 'not json at all {{{',
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -1374,7 +1374,7 @@ describe('statusline proxy config edge cases', () => {
       stdin: makeCcJson(),
       env: {
         ...cleanEnv,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -1393,7 +1393,7 @@ describe('statusline proxy config edge cases', () => {
       env: {
         ...process.env,
         ANTHROPIC_BASE_URL: 'http://127.0.0.1',
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -1412,7 +1412,7 @@ describe('statusline proxy config edge cases', () => {
       env: {
         ...process.env,
         ANTHROPIC_BASE_URL: 'http://127.0.0.1:0',
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -1432,7 +1432,7 @@ describe('statusline proxy config edge cases', () => {
       env: {
         ...process.env,
         ANTHROPIC_BASE_URL: 'http://127.0.0.1:50999',
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -1456,7 +1456,7 @@ describe('statusline cc-spend file edge cases', () => {
       stdin: makeCcJson(),
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         CLAUDE_CODE_SESSION_ID: 'test-empty',
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
@@ -1483,7 +1483,7 @@ describe('statusline missing optional fields in CC JSON', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -1508,7 +1508,7 @@ describe('statusline missing optional fields in CC JSON', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -1536,7 +1536,7 @@ describe('statusline cc-active.json heartbeat', () => {
       stdin: makeCcJson(),
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         CLAUDE_CODE_SESSION_ID: 'test-heartbeat-write',
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
@@ -1568,7 +1568,7 @@ describe('statusline cc-active.json heartbeat', () => {
       stdin: makeCcJson(),
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         CLAUDE_CODE_SESSION_ID: '',
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
@@ -1580,8 +1580,8 @@ describe('statusline cc-active.json heartbeat', () => {
   });
 });
 
-describe('statusline DEEPCLAUDE_PROXY_PORT precedence', () => {
-  test('DEEPCLAUDE_PROXY_PORT overrides ANTHROPIC_BASE_URL when both are set', () => {
+describe('statusline DEFIANT_PROXY_PORT precedence', () => {
+  test('DEFIANT_PROXY_PORT overrides ANTHROPIC_BASE_URL when both are set', () => {
     writeFileSync(join(tmpDir, 'spend.json'), JSON.stringify({}));
 
     const result = runStatusline({
@@ -1589,8 +1589,8 @@ describe('statusline DEEPCLAUDE_PROXY_PORT precedence', () => {
       env: {
         ...process.env,
         ANTHROPIC_BASE_URL: 'http://127.0.0.1:50999',
-        DEEPCLAUDE_PROXY_PORT: '50998',
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_PROXY_PORT: '50998',
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -1603,15 +1603,15 @@ describe('statusline DEEPCLAUDE_PROXY_PORT precedence', () => {
     expect(plain).not.toContain('50999');
   });
 
-  test('DEEPCLAUDE_PROXY_PORT with non-numeric value is ignored gracefully', () => {
+  test('DEFIANT_PROXY_PORT with non-numeric value is ignored gracefully', () => {
     writeFileSync(join(tmpDir, 'spend.json'), JSON.stringify({}));
 
     const result = runStatusline({
       stdin: makeCcJson(),
       env: {
         ...process.env,
-        DEEPCLAUDE_PROXY_PORT: 'not-a-port',
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_PROXY_PORT: 'not-a-port',
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -1637,7 +1637,7 @@ describe('statusline context window: zero-token edge case', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -1663,7 +1663,7 @@ describe('statusline model key: hex stripping edge cases', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -1687,7 +1687,7 @@ describe('statusline model key: hex stripping edge cases', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -1721,7 +1721,7 @@ describe('statusline modelLookup suffix stripping', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -1750,7 +1750,7 @@ describe('statusline modelLookup suffix stripping', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -1779,7 +1779,7 @@ describe('statusline empty output edge case', () => {
       stdin: JSON.stringify({}),
       env: {
         ...cleanEnv,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: '',
         PATH: process.env.PATH || '',
       },
@@ -1803,7 +1803,7 @@ describe('statusline branch detection edge cases', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: '',
         PATH: process.env.PATH || '',
       },
@@ -1831,7 +1831,7 @@ describe('statusline branch detection edge cases', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'explicit-env-branch',
         PATH: process.env.PATH || '',
       },
@@ -1856,7 +1856,7 @@ describe('statusline branch detection edge cases', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -1881,7 +1881,7 @@ describe('statusline cc-spend file whitespace resilience', () => {
       stdin: makeCcJson(),
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         CLAUDE_CODE_SESSION_ID: 'test-whitespace',
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
@@ -1904,7 +1904,7 @@ describe('statusline cc-spend file whitespace resilience', () => {
       stdin: makeCcJson(),
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         CLAUDE_CODE_SESSION_ID: 'test-newline',
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
@@ -1929,7 +1929,7 @@ describe('statusline spend.json edge-case structures', () => {
       stdin: makeCcJson(),
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         CLAUDE_CODE_SESSION_ID: 'test-missing-today',
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
@@ -1950,7 +1950,7 @@ describe('statusline spend.json edge-case structures', () => {
       stdin: makeCcJson(),
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         CLAUDE_CODE_SESSION_ID: 'test-no-daily-key',
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
@@ -1970,7 +1970,7 @@ describe('statusline spend.json edge-case structures', () => {
       stdin: makeCcJson(),
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         CLAUDE_CODE_SESSION_ID: 'test-empty-object',
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
@@ -1993,7 +1993,7 @@ describe('statusline proxy port boundary values', () => {
       env: {
         ...process.env,
         ANTHROPIC_BASE_URL: 'http://127.0.0.1:65535',
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -2012,7 +2012,7 @@ describe('statusline proxy port boundary values', () => {
       env: {
         ...process.env,
         ANTHROPIC_BASE_URL: 'http://127.0.0.1:65536',
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -2031,7 +2031,7 @@ describe('statusline proxy port boundary values', () => {
       env: {
         ...process.env,
         ANTHROPIC_BASE_URL: 'http://127.0.0.1:-1',
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -2062,7 +2062,7 @@ describe('statusline subagent: slot prefix variant', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -2092,7 +2092,7 @@ describe('statusline modelKey provider-prefix stripping', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -2118,7 +2118,7 @@ describe('statusline modelKey provider-prefix stripping', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -2136,7 +2136,7 @@ describe('statusline main() error suppression', () => {
       stdin: '{broken json',
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -2151,7 +2151,7 @@ describe('statusline main() error suppression', () => {
       stdin: '',
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -2177,7 +2177,7 @@ describe('statusline current-routes.json without contextLimits', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -2212,7 +2212,7 @@ describe('statusline subagent-model.json malformed', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
       },
@@ -2236,7 +2236,7 @@ describe('statusline locationGroup: branch without dir', () => {
       stdin: ccJson,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         GIT_BRANCH: 'standalone-branch',
         PATH: process.env.PATH || '',
       },

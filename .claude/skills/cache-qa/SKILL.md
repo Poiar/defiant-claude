@@ -2,12 +2,12 @@
 name: cache-qa
 description: >-
   Re-run the cache QA audit workflow to detect cache-invalidation and
-  cost-inefficiency issues in the DeepClaude proxy.
+  cost-inefficiency issues in the Defiant Claude proxy.
 ---
 
 # Cache QA
 
-Invokes the multi-agent QA workflow that analyzes DeepClaude's caching
+Invokes the multi-agent QA workflow that analyzes Defiant Claude's caching
 pipeline for bugs that can invalidate DeepSeek's disk cache or inflate costs.
 
 Run this after making changes to:

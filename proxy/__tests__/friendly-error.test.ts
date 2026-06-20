@@ -1,107 +1,112 @@
 'use strict';
 
-import {
-    buildFriendlyResponse,
-    buildFriendlyStreamEvents,
-} from '../friendly-error';
+import { buildFriendlyResponse, buildFriendlyStreamEvents } from '../friendly-error';
 
 describe('buildFriendlyResponse', () => {
-    test('returns 200 status', () => {
-        const resp = buildFriendlyResponse(502, 'claude-sonnet-4', [{ providerKey: 'anthropic' }]);
-        expect(resp.status).toBe(200);
-    });
+  test('returns 200 status', () => {
+    const resp = buildFriendlyResponse(502, 'claude-sonnet-4', [{ providerKey: 'anthropic' }]);
+    expect(resp.status).toBe(200);
+  });
 
-    test('body is valid JSON with message structure', () => {
-        const resp = buildFriendlyResponse(502, 'claude-sonnet-4', [{ providerKey: 'anthropic' }]);
-        const body = JSON.parse(resp.body);
-        expect(body.type).toBe('message');
-        expect(body.role).toBe('assistant');
-        expect(Array.isArray(body.content)).toBe(true);
-        expect(body.content[0].type).toBe('text');
-        expect(body.stop_reason).toBe('end_turn');
-    });
+  test('body is valid JSON with message structure', () => {
+    const resp = buildFriendlyResponse(502, 'claude-sonnet-4', [{ providerKey: 'anthropic' }]);
+    const body = JSON.parse(resp.body);
+    expect(body.type).toBe('message');
+    expect(body.role).toBe('assistant');
+    expect(Array.isArray(body.content)).toBe(true);
+    expect(body.content[0].type).toBe('text');
+    expect(body.stop_reason).toBe('end_turn');
+  });
 
-    test('includes attempted providers in text', () => {
-        const resp = buildFriendlyResponse(502, 'claude-sonnet-4', [
-            { providerKey: 'anthropic' },
-            { providerKey: 'openai' },
-        ]);
-        const body = JSON.parse(resp.body);
-        expect(body.content[0].text).toContain('anthropic');
-        expect(body.content[0].text).toContain('openai');
-    });
+  test('includes attempted providers in text', () => {
+    const resp = buildFriendlyResponse(502, 'claude-sonnet-4', [
+      { providerKey: 'anthropic' },
+      { providerKey: 'openai' },
+    ]);
+    const body = JSON.parse(resp.body);
+    expect(body.content[0].text).toContain('anthropic');
+    expect(body.content[0].text).toContain('openai');
+  });
 
-    test('includes model name', () => {
-        const resp = buildFriendlyResponse(502, 'claude-sonnet-4', [{ providerKey: 'anthropic' }]);
-        const body = JSON.parse(resp.body);
-        expect(body.model).toBe('claude-sonnet-4');
-    });
+  test('includes model name', () => {
+    const resp = buildFriendlyResponse(502, 'claude-sonnet-4', [{ providerKey: 'anthropic' }]);
+    const body = JSON.parse(resp.body);
+    expect(body.model).toBe('claude-sonnet-4');
+  });
 
-    test('includes x-fallback-exhausted header', () => {
-        const resp = buildFriendlyResponse(502, 'claude-sonnet-4', [{ providerKey: 'anthropic' }]);
-        expect(resp.headers['x-fallback-exhausted']).toBe('true');
-    });
+  test('includes x-fallback-exhausted header', () => {
+    const resp = buildFriendlyResponse(502, 'claude-sonnet-4', [{ providerKey: 'anthropic' }]);
+    expect(resp.headers['x-fallback-exhausted']).toBe('true');
+  });
 
-    test('includes x-attempted-providers header', () => {
-        const resp = buildFriendlyResponse(502, 'claude-sonnet-4', [
-            { providerKey: 'anthropic' },
-            { providerKey: 'openrouter' },
-        ]);
-        expect(resp.headers['x-attempted-providers']).toBe('anthropic, openrouter');
-    });
+  test('includes x-attempted-providers header', () => {
+    const resp = buildFriendlyResponse(502, 'claude-sonnet-4', [
+      { providerKey: 'anthropic' },
+      { providerKey: 'openrouter' },
+    ]);
+    expect(resp.headers['x-attempted-providers']).toBe('anthropic, openrouter');
+  });
 
-    test('handles empty attemptedProviders', () => {
-        const resp = buildFriendlyResponse(502, 'claude-sonnet-4', []);
-        const body = JSON.parse(resp.body);
-        expect(body.content[0].text).toContain('all configured providers');
-    });
+  test('handles empty attemptedProviders', () => {
+    const resp = buildFriendlyResponse(502, 'claude-sonnet-4', []);
+    const body = JSON.parse(resp.body);
+    expect(body.content[0].text).toContain('all configured providers');
+  });
 
-    test('handles null lastStatus', () => {
-        const resp = buildFriendlyResponse(null, 'claude-sonnet-4', [{ providerKey: 'anthropic' }]);
-        const body = JSON.parse(resp.body);
-        expect(body.content[0].text).toContain('connection failure');
-    });
+  test('handles null lastStatus', () => {
+    const resp = buildFriendlyResponse(null, 'claude-sonnet-4', [{ providerKey: 'anthropic' }]);
+    const body = JSON.parse(resp.body);
+    expect(body.content[0].text).toContain('connection failure');
+  });
 });
 
 describe('buildFriendlyStreamEvents', () => {
-    test('returns SSE-formatted string', () => {
-        const events = buildFriendlyStreamEvents(502, 'claude-sonnet-4', [{ providerKey: 'anthropic' }]);
-        expect(events).toContain('event: error');
-        expect(events).toContain('event: message_stop');
-    });
+  test('returns SSE-formatted string', () => {
+    const events = buildFriendlyStreamEvents(502, 'claude-sonnet-4', [
+      { providerKey: 'anthropic' },
+    ]);
+    expect(events).toContain('event: error');
+    expect(events).toContain('event: message_stop');
+  });
 
-    test('includes error_code E012', () => {
-        const events = buildFriendlyStreamEvents(502, 'claude-sonnet-4', [{ providerKey: 'anthropic' }]);
-        expect(events).toContain('E012');
-    });
+  test('includes error_code E012', () => {
+    const events = buildFriendlyStreamEvents(502, 'claude-sonnet-4', [
+      { providerKey: 'anthropic' },
+    ]);
+    expect(events).toContain('E012');
+  });
 
-    test('ends with [DONE]', () => {
-        const events = buildFriendlyStreamEvents(502, 'claude-sonnet-4', [{ providerKey: 'anthropic' }]);
-        expect(events.trim().endsWith('data: [DONE]')).toBe(true);
-    });
+  test('ends with [DONE]', () => {
+    const events = buildFriendlyStreamEvents(502, 'claude-sonnet-4', [
+      { providerKey: 'anthropic' },
+    ]);
+    expect(events.trim().endsWith('data: [DONE]')).toBe(true);
+  });
 
-    test('includes attempted providers in error message', () => {
-        const events = buildFriendlyStreamEvents(502, 'claude-sonnet-4', [
-            { providerKey: 'anthropic' },
-            { providerKey: 'openai' },
-        ]);
-        expect(events).toContain('anthropic');
-        expect(events).toContain('openai');
-    });
+  test('includes attempted providers in error message', () => {
+    const events = buildFriendlyStreamEvents(502, 'claude-sonnet-4', [
+      { providerKey: 'anthropic' },
+      { providerKey: 'openai' },
+    ]);
+    expect(events).toContain('anthropic');
+    expect(events).toContain('openai');
+  });
 
-    test('has valid JSON in error event data', () => {
-        const events = buildFriendlyStreamEvents(502, 'claude-sonnet-4', [{ providerKey: 'anthropic' }]);
-        // Find the error event (now preceded by message_start)
-        const dataLines = [...events.matchAll(/data: (.+)/g)];
-        expect(dataLines.length).toBeGreaterThanOrEqual(3);
-        const errorLine = dataLines.find(d => d[1].includes('"error_code"'));
-        expect(errorLine).not.toBeUndefined();
-        const parsed = JSON.parse(errorLine![1]);
-        expect(parsed.type).toBe('error');
-        expect(parsed.error.type).toBe('api_error');
-        expect(parsed._deepclaude.error_code).toBe('E012');
-        // Verify message_start is present
-        const msgStartLine = dataLines.find(d => d[1].includes('"message_start"'));
-        expect(msgStartLine).not.toBeUndefined();
-    });
+  test('has valid JSON in error event data', () => {
+    const events = buildFriendlyStreamEvents(502, 'claude-sonnet-4', [
+      { providerKey: 'anthropic' },
+    ]);
+    // Find the error event (now preceded by message_start)
+    const dataLines = [...events.matchAll(/data: (.+)/g)];
+    expect(dataLines.length).toBeGreaterThanOrEqual(3);
+    const errorLine = dataLines.find((d) => d[1].includes('"error_code"'));
+    expect(errorLine).not.toBeUndefined();
+    const parsed = JSON.parse(errorLine![1]);
+    expect(parsed.type).toBe('error');
+    expect(parsed.error.type).toBe('api_error');
+    expect(parsed._defiant.error_code).toBe('E012');
+    // Verify message_start is present
+    const msgStartLine = dataLines.find((d) => d[1].includes('"message_start"'));
+    expect(msgStartLine).not.toBeUndefined();
+  });
 });

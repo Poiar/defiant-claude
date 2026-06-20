@@ -1,7 +1,7 @@
-# GitLeaks config for DeepClaude CI/CD
+# GitLeaks config for Defiant Claude CI/CD
 # Catches API keys before they land on main.
 
-title = "DeepClaude"
+title = "Defiant Claude"
 
 [allowlist]
   description = "Test files and known-safe patterns"

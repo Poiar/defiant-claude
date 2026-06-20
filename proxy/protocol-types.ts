@@ -731,6 +731,34 @@ export const PROVIDER_CONSTRAINTS: Record<string, ProviderConstraints> = {
     noAutoFallback: true,
   },
 
+  // --- LM Studio (local) ---
+  ls: {
+    key: 'ls',
+    format: 'openai',
+    nativeServerTools: false,
+    nativeServerToolUse: false,
+    requiresModelRewrite: true,
+    forbidsToolChoiceWithThinking: false,
+    requiresThinkingEcho: false,
+    thinkingFormat: null,
+    stripFields: ['top_k', 'metadata'],
+    noAutoFallback: true,
+  },
+
+  // --- llama.cpp (local) ---
+  lc: {
+    key: 'lc',
+    format: 'openai',
+    nativeServerTools: false,
+    nativeServerToolUse: false,
+    requiresModelRewrite: true,
+    forbidsToolChoiceWithThinking: false,
+    requiresThinkingEcho: false,
+    thinkingFormat: null,
+    stripFields: ['top_k', 'metadata'],
+    noAutoFallback: true,
+  },
+
   // --- Google Gemini ---
   gm: {
     key: 'gm',

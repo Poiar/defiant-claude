@@ -11,7 +11,7 @@ metadata:
 
 ## The problem
 
-The proxy (`start-proxy.ts`) runs as a persistent daemon on `localhost:0` (OS-assigned port). It writes its PID:PORT to `~/.deepclaude/proxy.pid`. CC sessions connect to it via `ANTHROPIC_BASE_URL=http://127.0.0.1:$port`.
+The proxy (`start-proxy.ts`) runs as a persistent daemon on `localhost:0` (OS-assigned port). It writes its PID:PORT to `~/.defiant/proxy.pid`. CC sessions connect to it via `ANTHROPIC_BASE_URL=http://127.0.0.1:$port`.
 
 **Closing a CC terminal does NOT kill the proxy.** Each new CC session may reuse an existing proxy or start a new one. Over hours/days, dozens of stale proxy processes accumulate — some 10+ hours old — all running different code versions.
 
@@ -35,7 +35,7 @@ Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
   ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 
 # 2. Delete stale PID file
-Remove-Item ~/.deepclaude/proxy.pid -Force
+Remove-Item ~/.defiant/proxy.pid -Force
 
 # 3. CC auto-starts fresh proxy on next request
 ```

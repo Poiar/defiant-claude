@@ -30,8 +30,8 @@ import type {
 describe('ProviderConstraints', () => {
   const providers = Object.entries(PROVIDER_CONSTRAINTS);
 
-  test('all 20 providers are configured', () => {
-    expect(Object.keys(PROVIDER_CONSTRAINTS).length).toBe(20);
+  test('all 22 providers are configured', () => {
+    expect(Object.keys(PROVIDER_CONSTRAINTS).length).toBe(22);
   });
 
   test.each(providers)('%s has required fields', (_key, c: ProviderConstraints) => {
@@ -120,6 +120,30 @@ describe('ProviderConstraints', () => {
     expect(lo.requiresThinkingEcho).toBe(false);
     expect(lo.thinkingFormat).toBeNull();
     expect(lo.noAutoFallback).toBe(true);
+  });
+
+  test('ls (LM Studio local) has correct values', () => {
+    const ls = PROVIDER_CONSTRAINTS.ls;
+    expect(ls.format).toBe('openai');
+    expect(ls.nativeServerTools).toBe(false);
+    expect(ls.nativeServerToolUse).toBe(false);
+    expect(ls.requiresModelRewrite).toBe(true);
+    expect(ls.forbidsToolChoiceWithThinking).toBe(false);
+    expect(ls.requiresThinkingEcho).toBe(false);
+    expect(ls.thinkingFormat).toBeNull();
+    expect(ls.noAutoFallback).toBe(true);
+  });
+
+  test('lc (llama.cpp local) has correct values', () => {
+    const lc = PROVIDER_CONSTRAINTS.lc;
+    expect(lc.format).toBe('openai');
+    expect(lc.nativeServerTools).toBe(false);
+    expect(lc.nativeServerToolUse).toBe(false);
+    expect(lc.requiresModelRewrite).toBe(true);
+    expect(lc.forbidsToolChoiceWithThinking).toBe(false);
+    expect(lc.requiresThinkingEcho).toBe(false);
+    expect(lc.thinkingFormat).toBeNull();
+    expect(lc.noAutoFallback).toBe(true);
   });
 
   test('all non-Anthropic providers have nativeServerTools: false', () => {

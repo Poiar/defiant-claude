@@ -1,4 +1,4 @@
-# deepclaude
+# Defiant Claude
 
 <!-- AUTO:tagline -->
 Provider-agnostic Claude Code wrapper. Route each model slot (Opus, Sonnet, Haiku, subagent) to a different provider. Mix Alibaba, BytePlus, DeepSeek, Fireworks, Groq, Kimi, Mimo, MiniMax, Mistral, Novita, OpenCode, OpenRouter, SiliconFlow, Umans, Z.ai, gm, lc, lo, ls, oa, xa, Anthropic in one session.
@@ -6,11 +6,11 @@ Provider-agnostic Claude Code wrapper. Route each model slot (Opus, Sonnet, Haik
 
 ## Architecture
 
-DeepClaude runs a local HTTP routing proxy that intercepts Claude Code's Anthropic API calls and dispatches each model slot (Opus, Sonnet, Haiku, subagent) to a different upstream provider.
+Defiant runs a local HTTP routing proxy that intercepts Claude Code's Anthropic API calls and dispatches each model slot (Opus, Sonnet, Haiku, subagent) to a different upstream provider.
 
 **Direct DeepSeek (`ds`) uses the `/anthropic` endpoint** — DeepSeek offers an Anthropic-compatible API surface that speaks Claude's protocol natively. The proxy passes messages through unchanged: no format translation, no content flattening, no lossy conversion. Thinking mode (`{type: "enabled", budget_tokens: N}`), structured content blocks, tool use, and streaming all work without transformation. OpenAI-format translation only activates when routing through third-party providers (OpenRouter, Kimi, Mistral, etc.) that don't offer an Anthropic-compatible endpoint.
 
-**Thinking block echo** — When DeepSeek's thinking mode is enabled, every assistant response that contains a tool_use also includes a `thinking` block. DeepSeek requires these thinking blocks to be echoed back verbatim in every subsequent request — if missing, it returns HTTP 400 ("content[].thinking must be passed back to the API"). The proxy's `thinking-cache.ts` handles this automatically: it extracts thinking blocks from responses, caches them keyed by `sessionKey:toolUseId` (the tool_use UUID is globally unique, so no conversation fingerprint is needed), and re-injects them into the next request before forwarding. **Caches now persist to `~/.deepclaude/thinking-cache/` and survive proxy restarts** — kill+resume no longer burns cache-miss tokens at 120× cost. Same pattern applies to reasoning content via `reasoning-cache.ts` and provider momentum via `momentum.ts`.
+**Thinking block echo** — When DeepSeek's thinking mode is enabled, every assistant response that contains a tool_use also includes a `thinking` block. DeepSeek requires these thinking blocks to be echoed back verbatim in every subsequent request — if missing, it returns HTTP 400 ("content[].thinking must be passed back to the API"). The proxy's `thinking-cache.ts` handles this automatically: it extracts thinking blocks from responses, caches them keyed by `sessionKey:toolUseId` (the tool_use UUID is globally unique, so no conversation fingerprint is needed), and re-injects them into the next request before forwarding. **Caches now persist to `~/.defiant/thinking-cache/` and survive proxy restarts** — kill+resume no longer burns cache-miss tokens at 120× cost. Same pattern applies to reasoning content via `reasoning-cache.ts` and provider momentum via `momentum.ts`.
 
 ### Proxy modules (`proxy/`)
 
@@ -30,8 +30,8 @@ DeepClaude runs a local HTTP routing proxy that intercepts Claude Code's Anthrop
 | `friendly-error.ts` | Conversational error responses for exhausted fallback chains |
 | `header-sanitizer.ts` | Request header sanitization before logging (drops auth, cookies, noise) |
 | `hot-swap-headers.ts` | (undocumented) |
-| `launcher.mjs` | Unified Node.js engine shared by deepclaude.ps1, deepclaude.sh, and scripts/cli.mjs — config resolution, routes JSON, env vars with [1m] suffix and compaction window, slot/thinking overrides, proxy state, pricing/model/key data. Zero npm deps, single source of truth. |
-| `log.ts` | Structured logger with per-module namespacing, request IDs, and env-gated debug level (`DEEPCLAUDE_DEBUG=true`) |
+| `launcher.mjs` | Unified Node.js engine shared by defiant.ps1, defiant.sh, and scripts/cli.mjs — config resolution, routes JSON, env vars with [1m] suffix and compaction window, slot/thinking overrides, proxy state, pricing/model/key data. Zero npm deps, single source of truth. |
+| `log.ts` | Structured logger with per-module namespacing, request IDs, and env-gated debug level (`DEFIANT_DEBUG=true`) |
 | `lru-cache.ts` | TTL cache with LRU eviction using delete-then-set MRU promotion and lazy shared cleanup |
 | `model-trust.ts` | (undocumented) |
 | `momentum.ts` | Session-based provider stickiness (tracks last 5 provider decisions) |
@@ -43,7 +43,7 @@ DeepClaude runs a local HTTP routing proxy that intercepts Claude Code's Anthrop
 | `protocol-types.ts` | (undocumented) |
 | `rate-limiter.ts` | Per-IP fixed-window rate limiter with LRU eviction |
 | `reasoning-cache.ts` | OpenAI-format reasoning content cache with session-keyed LRU and re-injection — same UUID-keyed architecture as thinking-cache.ts, no conversation fingerprint (only for OpenAI-format providers; `ds` handles this natively) |
-| `request-log.ts` | Opt-in request logging to `~/.deepclaude/requests.log` (`--log-all` or `DEEPCLAUDE_LOG_ALL_REQUESTS=true`) |
+| `request-log.ts` | Opt-in request logging to `~/.defiant/requests.log` (`--log-all` or `DEFIANT_LOG_ALL_REQUESTS=true`) |
 | `response-cache.ts` | (undocumented) |
 | `routing.ts` | Slot-based routing with prefix matching, fallback chain construction, circuit breaker |
 | `server-tools.ts` | Anthropic server tool conversion (web_search, web_fetch, url_fetch, computer, bash, text_editor, memory, tool_search_tool), DuckDuckGo web search, SSRF-protected web fetch, tool result population |
@@ -63,7 +63,7 @@ DeepClaude runs a local HTTP routing proxy that intercepts Claude Code's Anthrop
 
 ### Data-driven provider registry
 
-The proxy and CLI read from `proxy/providers.json`. The launcher (`proxy/launcher.mjs`) generates `~/.deepclaude/current-routes.json` from it, which the proxy and `statusline.mjs` load at runtime. Config resolution, route construction, and context-limit lookups are centralized in `proxy/launcher.mjs` — a zero-dependency Node.js module shared by `deepclaude.ps1`, `deepclaude.sh`, and `scripts/cli.mjs`. This eliminates duplicated provider, config, and context-limit definitions across languages and guarantees behavioral parity.
+The proxy and CLI read from `proxy/providers.json`. The launcher (`proxy/launcher.mjs`) generates `~/.defiant/current-routes.json` from it, which the proxy and `statusline.mjs` load at runtime. Config resolution, route construction, and context-limit lookups are centralized in `proxy/launcher.mjs` — a zero-dependency Node.js module shared by `defiant.ps1`, `defiant.sh`, and `scripts/cli.mjs`. This eliminates duplicated provider, config, and context-limit definitions across languages and guarantees behavioral parity.
 
 <!-- AUTO:providers-schema -->
 ```
@@ -82,15 +82,15 @@ providers.json
 
 **`scripts/cli.mjs`** is the single entry point (Node.js) — handles all flag parsing, config resolution, proxy launch, and CC spawn. All subcommands (`--status`, `--models`, `--cost`, `--doctor`, `--dry-run`, etc.) are dispatched from here.
 
-- **`deepclaude.ps1`** — 15-line PowerShell wrapper, just resolves Node.js and invokes `node scripts/cli.mjs @args`
-- **`deepclaude.sh`** — 10-line Bash wrapper, `exec node scripts/cli.mjs "$@"`
+- **`defiant.ps1`** — 15-line PowerShell wrapper, just resolves Node.js and invokes `node scripts/cli.mjs @args`
+- **`defiant.sh`** — 10-line Bash wrapper, `exec node scripts/cli.mjs "$@"`
 
 Config resolution, routes JSON construction, env var computation, slot/thinking overrides, and context window calculation live in **`proxy/launcher.mjs`** — a zero-dependency Node.js module shared across all entry points. This eliminates the ~1800 lines of duplicated PS1/SH logic and guarantees behavioral parity across platforms.
 
 ### Test coverage
 
 <!-- AUTO:test-coverage -->
-1883 tests across 56 test files covering all proxy modules — transport errors, concurrency, LRU cache, provider registry validation, error codes, routing, stats, forwarding, server tools, config, protocol translation, thinking cache (including fingerprint-free cross-turn regression tests), reasoning cache, header sanitization, truncation, crypto, friendly errors, SSRF validation, dead stream detection, startup checks, and stream metrics. Run with `npm test`.
+1886 tests across 56 test files covering all proxy modules — transport errors, concurrency, LRU cache, provider registry validation, error codes, routing, stats, forwarding, server tools, config, protocol translation, thinking cache (including fingerprint-free cross-turn regression tests), reasoning cache, header sanitization, truncation, crypto, friendly errors, SSRF validation, dead stream detection, startup checks, and stream metrics. Run with `npm test`.
 <!-- /AUTO:test-coverage -->
 
 ### Pre-commit
@@ -99,7 +99,7 @@ Husky v9 + lint-staged: syntax check on staged files, TypeScript compilation gua
 
 ### Web Search
 
-DeepClaude intercepts web search requests BEFORE they reach any model provider. Claude Code's WebSearch harness sends `web_search_20250305` tool requests — the proxy runs DuckDuckGo locally and returns results inline, bypassing the model entirely.
+Defiant intercepts web search requests BEFORE they reach any model provider. Claude Code's WebSearch harness sends `web_search_20250305` tool requests — the proxy runs DuckDuckGo locally and returns results inline, bypassing the model entirely.
 
 ```
 CC sends: {tools: [{type: "web_search_20250305"}], messages: [{text: "Perform a web search for the query: ..."}]}
@@ -131,15 +131,15 @@ See [[web-search-tool-result-format]] and [[web-search-guardrails]] for the exac
 setx DEEPSEEK_API_KEY "sk-your-key"          # Windows
 export DEEPSEEK_API_KEY="sk-your-key"        # macOS/Linux
 
-# Option 1: npm link (creates global deepclaude command)
+# Option 1: npm link (creates global defiant command)
 npm install -g .
 
 # Option 2: Add repo directory to PATH manually
-# Windows: setx PATH "%PATH%;C:\path\to\deepclaude"
-# macOS/Linux: export PATH="$PATH:/path/to/deepclaude"
+# Windows: setx PATH "%PATH%;C:\path\to\defiant"
+# macOS/Linux: export PATH="$PATH:/path/to/defiant"
 
-deepclaude                                    # Launch with DeepSeek V4 Pro
-dc                                            # Shortcut — same as deepclaude (Windows: dc.cmd, macOS/Linux: alias)
+defiant                                    # Launch with DeepSeek V4 Pro
+dc                                            # Shortcut — same as defiant (Windows: dc.cmd, macOS/Linux: alias)
 ```
 
 ## Requirements
@@ -163,28 +163,28 @@ npm test               # Run test suite
 
 ```
 <!-- AUTO:named-configs -->
-deepclaude                  # ds (default) — DeepSeek V4 Pro
-deepclaude -b bp              # BytePlus Doubao 1.5 Pro
-deepclaude -b ds+an           # DeepSeek + Anthropic Haiku
-deepclaude -b ds+oc           # DeepSeek + OpenCode subs
-deepclaude -b fw              # Fireworks AI
-deepclaude -b gr              # Groq (Llama 4 Maverick)
-deepclaude -b km              # Kimi K2.6
-deepclaude -b lc              # llama.cpp (local)
-deepclaude -b ls              # LM Studio (local)
-deepclaude -b mx              # MiniMax M1
-deepclaude -b mt              # Mistral Large
-deepclaude -b nv              # Novita (DeepSeek V4 Pro)
-deepclaude -b lo              # Ollama (local)
-deepclaude -b oa              # OpenAI (direct)
-deepclaude -b oc              # OpenCode Zen
-deepclaude -b or              # OpenRouter (DeepSeek)
-deepclaude -b sf              # SiliconFlow (DeepSeek V4 Pro)
-deepclaude -b um              # Umans Coder (Kimi K2.6)
-deepclaude -b xa              # xAI / Grok
-deepclaude -b mm              # Xiaomi Mimo V2.5 Pro
-deepclaude -b za              # Z.ai GLM 4.5
-deepclaude -b anthropic     # Normal Claude Code
+defiant                  # ds (default) — DeepSeek V4 Pro
+defiant -b bp              # BytePlus Doubao 1.5 Pro
+defiant -b ds+an           # DeepSeek + Anthropic Haiku
+defiant -b ds+oc           # DeepSeek + OpenCode subs
+defiant -b fw              # Fireworks AI
+defiant -b gr              # Groq (Llama 4 Maverick)
+defiant -b km              # Kimi K2.6
+defiant -b lc              # llama.cpp (local)
+defiant -b ls              # LM Studio (local)
+defiant -b mx              # MiniMax M1
+defiant -b mt              # Mistral Large
+defiant -b nv              # Novita (DeepSeek V4 Pro)
+defiant -b lo              # Ollama (local)
+defiant -b oa              # OpenAI (direct)
+defiant -b oc              # OpenCode Zen
+defiant -b or              # OpenRouter (DeepSeek)
+defiant -b sf              # SiliconFlow (DeepSeek V4 Pro)
+defiant -b um              # Umans Coder (Kimi K2.6)
+defiant -b xa              # xAI / Grok
+defiant -b mm              # Xiaomi Mimo V2.5 Pro
+defiant -b za              # Z.ai GLM 4.5
+defiant -b anthropic     # Normal Claude Code
 <!-- /AUTO:named-configs -->
 ```
 
@@ -203,11 +203,11 @@ Pass 1–5 `providerKey:modelId` specs. Each spec is assigned to consecutive slo
 Slot order: opus, sonnet, haiku, subagent, fable. When you provide fewer specs than slots, the last spec fills all remaining slots.
 
 ```
-deepclaude ds:deepseek-v4-pro                                              # 1 spec → all 5 slots
-deepclaude ds:deepseek-v4-pro oc:big-pickle                                # 2 specs → opus/sonnet/haiku=ds, sub/fable=oc
-deepclaude ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free       # 3 specs → opus=ds, sonnet/haiku/sub=oc, fable=or
-deepclaude ds:deepseek-v4-pro ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free  # 4 specs → sub/fable share last
-deepclaude ds:deepseek-v4-pro ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free mm:mimo-v2.5-pro  # 5 specs → direct 1:1
+defiant ds:deepseek-v4-pro                                              # 1 spec → all 5 slots
+defiant ds:deepseek-v4-pro oc:big-pickle                                # 2 specs → opus/sonnet/haiku=ds, sub/fable=oc
+defiant ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free       # 3 specs → opus=ds, sonnet/haiku/sub=oc, fable=or
+defiant ds:deepseek-v4-pro ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free  # 4 specs → sub/fable share last
+defiant ds:deepseek-v4-pro ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free mm:mimo-v2.5-pro  # 5 specs → direct 1:1
 ```
 
 ### Flags
@@ -234,9 +234,9 @@ deepclaude ds:deepseek-v4-pro ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-a
 --effort LEVEL  Set Claude Code effort level (default: max). Values: low, medium, high, max.
 --fix-av        Print Windows Defender exclusion commands
 --install-statusline  Install status bar showing model, effort, context (requires restart)
---logs, --tail  Tail the proxy log (~/.deepclaude/proxy.log)
+--logs, --tail  Tail the proxy log (~/.defiant/proxy.log)
 --health        Quick health check (one-line summary)
---log-all       Log all requests to ~/.deepclaude/requests.log (by default only failures are logged)
+--log-all       Log all requests to ~/.defiant/requests.log (by default only failures are logged)
 --stats         Show proxy request stats and provider health
 --skip-startup-check  Skip provider health checks on proxy startup
 --no-thinking   Disable extended thinking for all models (save cost)
@@ -338,12 +338,12 @@ Note: `al` (Alibaba/DashScope) is only available via ad-hoc config and fallback,
 Override individual model slots without changing configs. Survives config switches.
 
 ```
-deepclaude --set-slot haiku or:z-ai/glm-4.5-air:free   # Set haiku to a free OR model
-deepclaude --set-slot subagent oc:big-pickle            # Set subagent to OpenCode
-deepclaude --set-slot sonnet                            # Clear override (reverts to config default)
+defiant --set-slot haiku or:z-ai/glm-4.5-air:free   # Set haiku to a free OR model
+defiant --set-slot subagent oc:big-pickle            # Set subagent to OpenCode
+defiant --set-slot sonnet                            # Clear override (reverts to config default)
 ```
 
-Overrides are stored in `~/.deepclaude/slot-overrides.json`. The proxy reloads them on every request — changes take effect immediately in a running session.
+Overrides are stored in `~/.defiant/slot-overrides.json`. The proxy reloads them on every request — changes take effect immediately in a running session.
 
 Within Claude Code, you can switch the **opus** model directly:
 ```
@@ -374,26 +374,26 @@ DeepSeek V4 models use a `compactionWindow` of 950K tokens to preserve automatic
 
 ### Cost optimization (defaults)
 
-The default config is **`ds+oc`** (DeepSeek for opus/sonnet/fable, free OpenCode for haiku/subagent). Prompt-router sends TRIVIAL requests (greetings, `<50` char) to free providers automatically. A **$25/day budget cap** is on by default — set `DEEPCLAUDE_DAILY_BUDGET=0` to disable. Provider fallback chains prefer free tiers: `ds → oc → um → or`.
+The default config is **`ds+oc`** (DeepSeek for opus/sonnet/fable, free OpenCode for haiku/subagent). Prompt-router sends TRIVIAL requests (greetings, `<50` char) to free providers automatically. A **$25/day budget cap** is on by default — set `DEFIANT_DAILY_BUDGET=0` to disable. Provider fallback chains prefer free tiers: `ds → oc → um → or`.
 
 ## Per-session proxy design
 
-Each `deepclaude` invocation starts its own isolated proxy on a unique port. The proxy lives only as long as the CC session — when CC exits, the proxy is killed. There is no shared proxy, no PID lock, and no `--persist`/`--switch`/`--stop-proxy` flags.
+Each `defiant` invocation starts its own isolated proxy on a unique port. The proxy lives only as long as the CC session — when CC exits, the proxy is killed. There is no shared proxy, no PID lock, and no `--persist`/`--switch`/`--stop-proxy` flags.
 
-**Hot-swap:** To restart the proxy mid-session, write the new port to `~/.deepclaude/next-proxy.port`, start a new proxy on that port (detached, with `--port <N>`), and the old proxy detects the signal and enters forwarding mode. It forwards all traffic to the new proxy and exits when all client connections drain. Then restart CC to pick up the new proxy.
+**Hot-swap:** To restart the proxy mid-session, write the new port to `~/.defiant/next-proxy.port`, start a new proxy on that port (detached, with `--port <N>`), and the old proxy detects the signal and enters forwarding mode. It forwards all traffic to the new proxy and exits when all client connections drain. Then restart CC to pick up the new proxy.
 
 ```
-deepclaude                                    # Starts isolated proxy on a random port
+defiant                                    # Starts isolated proxy on a random port
 
 # Mid-session slot/model changes (use in CC):
 /model oc:big-pickle                         # Switch opus to OpenCode
 /model or:z-ai/glm-4.5-air:free              # Switch opus to a free OR model
 
-deepclaude --set-slot haiku oc:big-pickle    # Change just the haiku slot (from another terminal)
-deepclaude --models                          # List all available models
+defiant --set-slot haiku oc:big-pickle    # Change just the haiku slot (from another terminal)
+defiant --models                          # List all available models
 ```
 
-State files live in `~/.deepclaude/`:
+State files live in `~/.defiant/`:
 <!-- AUTO:state-files -->
 - `proxy.port` — port number of most recently started proxy (diagnostics)
 - `current-routes.json` — active routing table (reloaded on every request)
@@ -408,10 +408,10 @@ State files live in `~/.deepclaude/`:
 ## Remote control (`--remote`)
 
 ```
-deepclaude --remote                 # Default config via proxy
-deepclaude --remote -b ds+oc        # Named config
-deepclaude --remote ds:deepseek-v4-pro oc:big-pickle  # Ad-hoc
-deepclaude --remote -b anthropic    # Anthropic direct
+defiant --remote                 # Default config via proxy
+defiant --remote -b ds+oc        # Named config
+defiant --remote ds:deepseek-v4-pro oc:big-pickle  # Ad-hoc
+defiant --remote -b anthropic    # Anthropic direct
 ```
 
 Starts the routing proxy, prints a `claude.ai/code/session_...` URL. Works on phone, tablet, any browser. Proxy auto-stops on exit.
@@ -421,7 +421,7 @@ Starts the routing proxy, prints a `claude.ai/code/session_...` URL. Works on ph
 System health check — verifies Node.js, proxy script, state directory, API keys, slot overrides, and runs a proxy startup test:
 
 ```
-deepclaude --doctor
+defiant --doctor
 ```
 
 ## Statusline
@@ -437,7 +437,7 @@ Shows the real model, provider, context usage, effort level, and git branch — 
 | `#C864FF` Purple | Slot + model | Slot label (`o`/`s`/`h`/`sub`/`f`) + resolved model ID |
 | `#FF5050` Red / `#FFB432` Orange / `#64A0FF` Blue | Effort | `max`/`high` (red), `medium` (orange), `low` (blue) |
 | `#50C878` Green / `#FFB432` Orange / `#FF5050` Red | Context usage | Token count + percent — green ≤50%, orange 50–79%, red ≥80% |
-| `#FFD250` Gold | Session spend | Current Claude Code session cost from `~/.deepclaude/spend.json` |
+| `#FFD250` Gold | Session spend | Current Claude Code session cost from `~/.defiant/spend.json` |
 | `#787878` Gray | Today spend | Daily total (shown when it exceeds session spend) |
 
 The context gauge shows `tokens/percent` (e.g. `45k/5%` when the max is known). DeepSeek V4 Pro appends milestone tags: **SR** (300K+, purple) and **FBR** (400K+, magenta). Circuit breakers show **✕** (open, red), **◐** (half-open, orange), or **·** (closed, green). A recent fallback appends **↳**provider (orange).
@@ -450,64 +450,64 @@ The context gauge shows `tokens/percent` (e.g. `45k/5%` when the max is known). 
   { "statusLine": { "type": "command", "command": "node ~/.claude/statusline.mjs" } }
 ```
 
-Resolves slot overrides from `~/.deepclaude/slot-overrides.json` and context limits from `~/.deepclaude/current-routes.json`, so the token gauge and model display always reflect reality.
+Resolves slot overrides from `~/.defiant/slot-overrides.json` and context limits from `~/.defiant/current-routes.json`, so the token gauge and model display always reflect reality.
 
-Tip: `deepclaude --install-statusline` automates the manual setup above.
+Tip: `defiant --install-statusline` automates the manual setup above.
 
 ## Environment
 
 <!-- AUTO:env-vars -->
 | Variable | Purpose |
 |---|---|
-| `DEEPCLAUDE_BRAVE_API_KEY` | (undocumented) |
-| `DEEPCLAUDE_BUDGET_WARNING` | Fraction of daily budget at which to emit warnings (default: unset) |
-| `DEEPCLAUDE_CONFIG_DIR` | (undocumented) |
-| `DEEPCLAUDE_DAILY_BUDGET` | Daily spending cap in dollars (proxy rejects requests when exceeded) |
-| `DEEPCLAUDE_DASHBOARD_KEY` | Shared secret for `/dashboard` and `/health/stream` endpoints (unset = no auth) |
-| `DEEPCLAUDE_DEBUG` | Enable debug-level log output (`true`, `1`, or `yes`, case-insensitive) |
-| `DEEPCLAUDE_DEFAULT_BACKEND` | Default config name (falls back to `ds`; legacy `CHEAPCLAUDE_DEFAULT_BACKEND` also accepted) |
-| `DEEPCLAUDE_DEV` | Development mode — more verbose error details in responses (`1` or `true`) |
-| `DEEPCLAUDE_DIR` | (undocumented) |
-| `DEEPCLAUDE_DRAIN_GRACE_MS` | (undocumented) |
-| `DEEPCLAUDE_ENCRYPTION_KEY` | Master key for AES-256-GCM API key decryption (used with `--encrypt-key`) |
-| `DEEPCLAUDE_FIRST_BYTE_TIMEOUT_MS` | (undocumented) |
-| `DEEPCLAUDE_LOG_ALL_REQUESTS` | Log all requests to `~/.deepclaude/requests.log` (`true` to enable) |
-| `DEEPCLAUDE_LOG_LEVEL` | Set log level (`debug` for verbose output; defaults to `info`) |
-| `DEEPCLAUDE_MAX_CONCURRENT` | Max concurrent upstream requests for main slots (default: `25`) |
-| `DEEPCLAUDE_SEARCH_ENGINES` | (undocumented) |
-| `DEEPCLAUDE_SEARCH_NO_NETWORK` | (undocumented) |
-| `DEEPCLAUDE_SEARXNG_URL` | (undocumented) |
-| `DEEPCLAUDE_SKIP_STARTUP_CHECK` | Skip provider health checks on proxy startup (`true` to skip) |
-| `DEEPCLAUDE_STREAM_DEADLINE_MS` | Hard wall-clock cap on total streaming duration in ms (default: `300000`) |
-| `DEEPCLAUDE_STREAM_HEARTBEAT_MS` | Stream silence timeout in ms before heartbeat triggers (default: `180000`) |
-| `DEEPCLAUDE_SUBAGENT_FIRST_BYTE_TIMEOUT_MS` | (undocumented) |
-| `DEEPCLAUDE_SUBAGENT_MAX_CONCURRENT` | Max concurrent upstream requests for subagent slots (default: `8`) |
-| `DEEPCLAUDE_SUBAGENT_STREAM_DEADLINE_MS` | Hard wall-clock cap on subagent streaming duration in ms (default: `90000`) |
-| `DEEPCLAUDE_SUBAGENT_STREAM_HEARTBEAT_MS` | Subagent stream heartbeat timeout in ms (default: `90000`) |
-| `DEEPCLAUDE_UPSTREAM_PROXY` | (undocumented) |
-| `DEEPCLAUDE_UPSTREAM_PROXY_CA` | (undocumented) |
+| `DEFIANT_BRAVE_API_KEY` | (undocumented) |
+| `DEFIANT_BUDGET_WARNING` | Fraction of daily budget at which to emit warnings (default: unset) |
+| `DEFIANT_CONFIG_DIR` | (undocumented) |
+| `DEFIANT_DAILY_BUDGET` | Daily spending cap in dollars (proxy rejects requests when exceeded) |
+| `DEFIANT_DASHBOARD_KEY` | Shared secret for `/dashboard` and `/health/stream` endpoints (unset = no auth) |
+| `DEFIANT_DEBUG` | Enable debug-level log output (`true`, `1`, or `yes`, case-insensitive) |
+| `DEFIANT_DEFAULT_BACKEND` | Default config name (falls back to `ds`; legacy `CHEAPCLAUDE_DEFAULT_BACKEND` also accepted) |
+| `DEFIANT_DEV` | Development mode — more verbose error details in responses (`1` or `true`) |
+| `DEFIANT_DIR` | (undocumented) |
+| `DEFIANT_DRAIN_GRACE_MS` | (undocumented) |
+| `DEFIANT_ENCRYPTION_KEY` | Master key for AES-256-GCM API key decryption (used with `--encrypt-key`) |
+| `DEFIANT_FIRST_BYTE_TIMEOUT_MS` | (undocumented) |
+| `DEFIANT_LOG_ALL_REQUESTS` | Log all requests to `~/.defiant/requests.log` (`true` to enable) |
+| `DEFIANT_LOG_LEVEL` | Set log level (`debug` for verbose output; defaults to `info`) |
+| `DEFIANT_MAX_CONCURRENT` | Max concurrent upstream requests for main slots (default: `25`) |
+| `DEFIANT_SEARCH_ENGINES` | (undocumented) |
+| `DEFIANT_SEARCH_NO_NETWORK` | (undocumented) |
+| `DEFIANT_SEARXNG_URL` | (undocumented) |
+| `DEFIANT_SKIP_STARTUP_CHECK` | Skip provider health checks on proxy startup (`true` to skip) |
+| `DEFIANT_STREAM_DEADLINE_MS` | Hard wall-clock cap on total streaming duration in ms (default: `300000`) |
+| `DEFIANT_STREAM_HEARTBEAT_MS` | Stream silence timeout in ms before heartbeat triggers (default: `180000`) |
+| `DEFIANT_SUBAGENT_FIRST_BYTE_TIMEOUT_MS` | (undocumented) |
+| `DEFIANT_SUBAGENT_MAX_CONCURRENT` | Max concurrent upstream requests for subagent slots (default: `8`) |
+| `DEFIANT_SUBAGENT_STREAM_DEADLINE_MS` | Hard wall-clock cap on subagent streaming duration in ms (default: `90000`) |
+| `DEFIANT_SUBAGENT_STREAM_HEARTBEAT_MS` | Subagent stream heartbeat timeout in ms (default: `90000`) |
+| `DEFIANT_UPSTREAM_PROXY` | (undocumented) |
+| `DEFIANT_UPSTREAM_PROXY_CA` | (undocumented) |
 <!-- /AUTO:env-vars -->
 
 All provider API key env vars (see [Providers table](#providers-and-api-keys)) are pushed into the process so the proxy (child process) inherits them.
 
 ## Windows Defender
 
-The proxy starts a local HTTP server and forwards requests — Windows Defender often flags this as suspicious behavior and may **delete or quarantine** the proxy files. This is a catch-22: if deepclaude is deleted, you can't run `deepclaude --fix-av`.
+The proxy starts a local HTTP server and forwards requests — Windows Defender often flags this as suspicious behavior and may **delete or quarantine** the proxy files. This is a catch-22: if defiant is deleted, you can't run `defiant --fix-av`.
 
-**deepclaude writes a standalone rescue script on every launch:** `~/.deepclaude/fix-av.cmd`. Even if AV deletes the entire deepclaude directory, this file survives (it lives in your home directory, not near any executables). Run it as **administrator**:
+**defiant writes a standalone rescue script on every launch:** `~/.defiant/fix-av.cmd`. Even if AV deletes the entire defiant directory, this file survives (it lives in your home directory, not near any executables). Run it as **administrator**:
 
 ```
-~/.deepclaude/fix-av.cmd
+~/.defiant/fix-av.cmd
 ```
 
 Alternatively, run these commands manually in an admin PowerShell window:
 
 ```
-Add-MpPreference -ExclusionPath "C:\path\to\deepclaude\proxy"
+Add-MpPreference -ExclusionPath "C:\path\to\defiant\proxy"
 Add-MpPreference -ExclusionProcess "node.exe"
 ```
 
-After adding exclusions, re-clone or re-install deepclaude if files were quarantined.
+After adding exclusions, re-clone or re-install defiant if files were quarantined.
 
 ## Troubleshooting
 
@@ -521,10 +521,10 @@ Run `npm install` from the project root. The proxy uses tsx to run TypeScript di
 Run `npm test` to check for type errors.
 
 **Proxy fails to start on Windows (port not responding)**
-Windows Defender may be blocking the proxy. Run `~/.deepclaude/fix-av.cmd` as admin (this file is written on every launch and survives AV deletion of the deepclaude directory).
+Windows Defender may be blocking the proxy. Run `~/.defiant/fix-av.cmd` as admin (this file is written on every launch and survives AV deletion of the defiant directory).
 
-**"command not found: deepclaude"**
-The deepclaude directory is not on your PATH. Run `npm install -g .` from the repo directory, or add the repo directory to your PATH manually.
+**"command not found: defiant"**
+The defiant directory is not on your PATH. Run `npm install -g .` from the repo directory, or add the repo directory to your PATH manually.
 
 **"DEEPSEEK_API_KEY not set"**
 At minimum you need one provider's API key. See the [Providers table](#providers-and-api-keys). Set keys via environment variables.
@@ -533,11 +533,11 @@ At minimum you need one provider's API key. See the [Providers table](#providers
 Install jq: `brew install jq` (macOS) or `sudo apt install jq` (Linux).
 
 **Proxy produces no response / Claude Code hangs**
-Run `deepclaude --doctor` to check system health. Check that your provider API key is valid and has credits. The proxy has built-in protection against silent stream drops: gzip decompression for misconfigured CDNs, heartbeat/deadline detection with byte diagnostics (logged to `~/.deepclaude/proxy.log`), and automatic fallback chain retry. Check the proxy log for stream timeout or transport error messages.
+Run `defiant --doctor` to check system health. Check that your provider API key is valid and has credits. The proxy has built-in protection against silent stream drops: gzip decompression for misconfigured CDNs, heartbeat/deadline detection with byte diagnostics (logged to `~/.defiant/proxy.log`), and automatic fallback chain retry. Check the proxy log for stream timeout or transport error messages.
 
 ## Similar projects
 
-DeepClaude occupies a specific niche — per-slot Claude Code routing with protocol translation. These projects in the broader LLM proxy/gateway space have informed DeepClaude's design and are worth knowing about:
+Defiant occupies a specific niche — per-slot Claude Code routing with protocol translation. These projects in the broader LLM proxy/gateway space have informed Defiant's design and are worth knowing about:
 
 | Project | Type | Key strength |
 |---|---|---|
@@ -549,7 +549,7 @@ DeepClaude occupies a specific niche — per-slot Claude Code routing with proto
 | [One API](https://github.com/songquanpeng/one-api) | OSS API management (Go) | Multi-tenant key management, quota tracking, channel load balancing |
 | [Manifest](https://github.com/mnfst/manifest) | AI app framework (TypeScript) | Declarative single-file config, "it just works" DX, provider-agnostic design |
 
-DeepClaude's differentiator: **slot-based routing** — Opus, Sonnet, Haiku, and subagent each dispatched independently. Combined with Anthropic↔OpenAI protocol translation, thinking block caching across providers, and a data-driven provider registry, it's purpose-built for the Claude Code ecosystem rather than general-purpose API forwarding.
+Defiant's differentiator: **slot-based routing** — Opus, Sonnet, Haiku, and subagent each dispatched independently. Combined with Anthropic↔OpenAI protocol translation, thinking block caching across providers, and a data-driven provider registry, it's purpose-built for the Claude Code ecosystem rather than general-purpose API forwarding.
 
 ## License
 

@@ -49,7 +49,7 @@ fi
 
 # Shell
 echo "  bash -n..."
-bash -n "$DIR/deepclaude.sh" || FAIL=1
+bash -n "$DIR/defiant.sh" || FAIL=1
 
 # PowerShell (only on Windows or if pwsh available)
 if command -v pwsh >/dev/null 2>&1; then

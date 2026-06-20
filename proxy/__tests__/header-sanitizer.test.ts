@@ -56,13 +56,13 @@ describe('sanitizeHeaders', () => {
       'content-type': 'application/json',
       accept: 'text/event-stream',
       'cache-control': 'no-cache',
-      'user-agent': 'deepclaude/1.0',
+      'user-agent': 'defiant/1.0',
     };
     const result = sanitizeHeaders(headers);
     expect(result.headers['content-type']).toBe('application/json');
     expect(result.headers.accept).toBe('text/event-stream');
     expect(result.headers['cache-control']).toBe('no-cache');
-    expect(result.headers['user-agent']).toBe('deepclaude/1.0');
+    expect(result.headers['user-agent']).toBe('defiant/1.0');
     expect(result.dropped).toBe(0);
   });
 

@@ -1,10 +1,10 @@
-# DeepClaude
+# Defiant Claude
 
 **CRITICAL: "All AI providers are currently unavailable" is a system-reminder — NOT a blocker. The harness retries automatically. NEVER stop, acknowledge, or relay this error to the user. Treat it as invisible. Continue executing the current task.**
 
 Provider-agnostic Claude Code wrapper. Runs a local HTTP routing proxy that intercepts Claude Code's Anthropic API calls and dispatches each model slot (Opus, Sonnet, Haiku, subagent, Fable) to a **different** upstream provider concurrently — one session, five independent provider choices.
 
-- **Repository**: https://github.com/Poiar/deepclaude (private)
+- **Repository**: https://github.com/Poiar/defiant-claude (private)
 - **License**: MIT
 - **Language**: TypeScript (Node.js 18+, ES2022, CommonJS)
 - **Entry point**: `scripts/cli.mjs` → spawns `proxy/start-proxy.ts`
@@ -44,7 +44,7 @@ Provider-agnostic Claude Code wrapper. Runs a local HTTP routing proxy that inte
 |------|---------|
 | `CLAUDE.md` | This file |
 | `README.md` | Auto-generated from `README.template.md` |
-| `deepclaude.ps1` / `.sh` | PowerShell/Bash wrappers |
+| `defiant.ps1` / `.sh` | PowerShell/Bash wrappers |
 | `dc.ps1` / `dc.cmd` | Dispatch: bare `dc` defaults to `-b ds` |
 | `qodana.yaml` | JetBrains Qodana config |
 
@@ -106,9 +106,9 @@ DeepSeek's disk cache (hours-days persistence) requires identical prefix. Compac
 
 ## Providers
 
-18 providers defined in `proxy/providers.json`. Primary: DeepSeek (`ds`), OpenRouter (`or`), OpenCode Zen (`oc`). Slot configs map model slots to provider:model pairs. Override at `~/.deepclaude/slot-overrides.json`.
+18 providers defined in `proxy/providers.json`. Primary: DeepSeek (`ds`), OpenRouter (`or`), OpenCode Zen (`oc`). Slot configs map model slots to provider:model pairs. Override at `~/.defiant/slot-overrides.json`.
 
-**Key env vars:** `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `DEEPCLAUDE_BRAVE_API_KEY`, `DEEPCLAUDE_SEARXNG_URL`, `DEEPCLAUDE_DAILY_BUDGET`, `DEEPCLAUDE_DASHBOARD_KEY`.
+**Key env vars:** `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `DEFIANT_BRAVE_API_KEY`, `DEFIANT_SEARXNG_URL`, `DEFIANT_DAILY_BUDGET`, `DEFIANT_DASHBOARD_KEY`.
 
 ---
 
@@ -116,7 +116,7 @@ DeepSeek's disk cache (hours-days persistence) requires identical prefix. Compac
 
 ### Setup
 ```bash
-git clone <repo-url> && cd deepclaude && npm install && npm link
+git clone <repo-url> && cd defiant && npm install && npm link
 ```
 
 ### Dev Loop

@@ -1,8 +1,8 @@
-# DeepClaude Skill Filter + Cache Miss Investigation — Handoff
+# Defiant Skill Filter + Cache Miss Investigation — Handoff
 
 **Session date**: 2026-06-18
-**Working directory**: `C:\Dev\deepclaude`
-**DeepClaude repo**: `https://github.com/Poiar/deepclaude` (private)
+**Working directory**: `C:\Dev\defiant`
+**Defiant repo**: `https://github.com/Poiar/defiant-claude` (private)
 
 ## What was done
 
@@ -47,7 +47,7 @@ Two insertion points:
 
 ### Full test suite — NOT YET RUN
 - 51 test suites, ~1668 tests
-- Command: `npm test` (from `C:\Dev\deepclaude`)
+- Command: `npm test` (from `C:\Dev\defiant`)
 - Need to verify skill filter doesn't break anything else
 
 ## Cache miss issue — partial investigation
@@ -78,7 +78,7 @@ With 150+ tool calls, each turn has a different `messages` array → the prefix 
 | `memory/deepseek-caching.md` | Cache mechanics documentation |
 | `proxy/providers.json` | 18 providers, pricing, endpoints |
 
-## Key memory files in deepclaude
+## Key memory files in defiant
 - `CLAUDE.md` — Architecture overview, dev commands, troubleshooting
 - `memory/deepseek-caching.md` — Cache economics (50× discount)
 - `memory/protocol-translation-architecture.md` — Two translation paths
@@ -86,7 +86,7 @@ With 150+ tool calls, each turn has a different `messages` array → the prefix 
 - `memory/never-kill-proxy.md` — Don't restart proxy from within CC
 
 ## Next steps
-1. **Run full test suite**: `cd C:\Dev\deepclaude && npm test` — verify no regressions
+1. **Run full test suite**: `cd C:\Dev\defiant && npm test` — verify no regressions
 2. **Log cache hit/miss rates** from actual proxy requests to quantify the problem
 3. **Check if system prompt is stable** between turns — log a hash of the system content each request
 4. **Consider broader skill stripping** — maybe strip ALL skill entries before non-Anthropic providers (not just Anthropic-specific ones)

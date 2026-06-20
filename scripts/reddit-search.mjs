@@ -1,32 +1,52 @@
 #!/usr/bin/env node
 
 /**
- * reddit-search.mjs — Search Reddit via SearXNG + read full post via old.reddit.com
+ * reddit-search.mjs — Search Reddit via SearXNG + read full post via RSS
  *
  * Usage:
  *   node scripts/reddit-search.mjs <search query>
  *   node scripts/reddit-search.mjs "r/deepseek deepseek v4"
  *   node scripts/reddit-search.mjs --limit 15 "claude code"
  *   node scripts/reddit-search.mjs --raw "deepseek"
+ *   node scripts/reddit-search.mjs --url <reddit-post-url>
+ *   node scripts/reddit-search.mjs --post <reddit-post-url>
  *
- * Behavior:
- *   1. Tries the SearXNG reddit-html engine first (scrapes old.reddit.com HTML)
- *   2. Falls back to SearXNG general search with "site:reddit.com" prefix
- *   3. For the #1 result, fetches full post content + comments from old.reddit.com
+ * Behavior (search mode):
+ *   1. Checks SearXNG is running on localhost:8888
+ *   2. Tries the SearXNG reddit-html engine first
+ *   3. Falls back to SearXNG general search with "site:reddit.com" prefix
+ *   4. For the #1 result, fetches full post content + comments from Reddit's RSS feed
+ *
+ * Behavior (--url/--post mode):
+ *   1. Fetches the given Reddit post via www.reddit.com/.../.rss
+ *   2. Displays post content + comments (no search involved)
+ *
+ * RSS is used instead of old.reddit.com HTML scraping because:
+ *   - old.reddit.com now returns the new Reddit SPA (no content in HTML)
+ *   - old.reddit.com actively blocks automated access (network policy, Cloudflare)
+ *   - www.reddit.com/.rss is open, unblocked, and returns full structured content
  */
 
 import http from 'http';
 import https from 'https';
 
 const SEARXNG_URL = 'http://localhost:8888/search?format=json&q=';
-const TIMEOUT_MS = 10000;
-const BROWSER_UA =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
+const SEARXNG_TIMEOUT_MS = 5000;
+const RSS_TIMEOUT_MS = 15000;
+const BROWSER_UAS = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+];
 
 // --- Parse CLI args ---
 const args = process.argv.slice(2);
 let limit = 5;
 let raw = false;
+let directUrl = null;
 
 const queryTerms = [];
 for (let i = 0; i < args.length; i++) {
@@ -36,6 +56,13 @@ for (let i = 0; i < args.length; i++) {
     if (limit > 25) limit = 25;
   } else if (args[i] === '--raw') {
     raw = true;
+  } else if (args[i] === '--url' || args[i] === '--post') {
+    if (i + 1 < args.length && !args[i + 1].startsWith('--')) {
+      directUrl = args[++i];
+    } else {
+      console.error('Error: --url/--post requires a Reddit post URL as an argument.');
+      process.exit(1);
+    }
   } else {
     queryTerms.push(args[i]);
   }
@@ -43,16 +70,18 @@ for (let i = 0; i < args.length; i++) {
 
 const query = queryTerms.join(' ');
 
-if (!query) {
+if (!query && !directUrl) {
   console.error('Usage: node scripts/reddit-search.mjs [--limit N] [--raw] <search query>');
+  console.error('       node scripts/reddit-search.mjs --url <reddit-post-url>');
+  console.error('       node scripts/reddit-search.mjs --post <reddit-post-url>');
   process.exit(1);
 }
 
 // --- HTTP helper ---
-function httpGet(url, headers = {}) {
+function httpGet(url, headers = {}, timeoutMs = RSS_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
     const transport = url.startsWith('https://') ? https : http;
-    const req = transport.get(url, { headers, timeout: TIMEOUT_MS }, (res) => {
+    const req = transport.get(url, { headers, timeout: timeoutMs }, (res) => {
       let data = '';
       res.on('data', (chunk) => {
         data += chunk;
@@ -67,26 +96,35 @@ function httpGet(url, headers = {}) {
   });
 }
 
-function cleanHtml(str) {
-  return str
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&#39;/g, "'")
-    .replace(/&quot;/g, '"')
-    .replace(/&#32;/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+let _uaIndex = 0;
+function nextUA() {
+  const ua = BROWSER_UAS[_uaIndex % BROWSER_UAS.length];
+  _uaIndex++;
+  return ua;
+}
+
+// --- SearXNG health check ---
+async function checkSearxng() {
+  try {
+    const res = await httpGet(
+      'http://localhost:8888/search?format=json&q=health',
+      { 'User-Agent': nextUA(), Accept: 'application/json' },
+      SEARXNG_TIMEOUT_MS,
+    );
+    return res && res.status === 200;
+  } catch {
+    return false;
+  }
 }
 
 // --- Search via SearXNG reddit-html engine (primary) ---
 async function searchViaRedditEngine(query) {
   const url = SEARXNG_URL + encodeURIComponent(query) + '&engines=reddit-html';
-  const res = await httpGet(url, {
-    'User-Agent': BROWSER_UA,
-    Accept: 'application/json',
-  });
+  const res = await httpGet(
+    url,
+    { 'User-Agent': nextUA(), Accept: 'application/json' },
+    SEARXNG_TIMEOUT_MS,
+  );
   if (res.status !== 200) return null;
   try {
     const json = JSON.parse(res.data);
@@ -101,10 +139,11 @@ async function searchViaRedditEngine(query) {
 // --- Search via SearXNG general + site:reddit.com (fallback) ---
 async function searchViaSiteReddit(query) {
   const url = SEARXNG_URL + encodeURIComponent('site:reddit.com ' + query);
-  const res = await httpGet(url, {
-    'User-Agent': BROWSER_UA,
-    Accept: 'application/json',
-  });
+  const res = await httpGet(
+    url,
+    { 'User-Agent': nextUA(), Accept: 'application/json' },
+    SEARXNG_TIMEOUT_MS,
+  );
   if (res.status !== 200) return [];
   try {
     const json = JSON.parse(res.data);
@@ -114,54 +153,164 @@ async function searchViaSiteReddit(query) {
   }
 }
 
-// --- Fetch full post content from old.reddit.com ---
-async function fetchPostContent(url) {
-  const oldUrl = url
-    .replace('www.reddit.com', 'old.reddit.com')
-    .replace('old.reddit.com', 'old.reddit.com');
+// --- Convert any Reddit URL to RSS feed URL ---
+// Takes: https://www.reddit.com/r/SUBREDDIT/comments/POSTID/SLUG/
+//        https://old.reddit.com/r/SUBREDDIT/comments/POSTID/SLUG/
+// Returns: https://www.reddit.com/r/SUBREDDIT/comments/POSTID/.rss
+function toRssUrl(url) {
+  // Strip trailing slash
+  url = url.replace(/\/$/, '');
+  // Normalize: old.reddit.com -> www.reddit.com, strip slug after POSTID
+  url = url.replace('old.reddit.com', 'www.reddit.com');
+  // Match pattern /r/SUBREDDIT/comments/POSTID
+  const match = url.match(/\/r\/([^/]+)\/comments\/([^/]+)/);
+  if (!match) return null;
+  return `https://www.reddit.com/r/${match[1]}/comments/${match[2]}/.rss`;
+}
 
-  const res = await httpGet(oldUrl, { 'User-Agent': BROWSER_UA });
-  if (res.status !== 200) {
-    return { title: '(failed to fetch)', body: '', score: '?', commentCount: '?', comments: [] };
+// --- Fetch post content from Reddit RSS feed ---
+async function fetchPostViaRss(url) {
+  const rssUrl = toRssUrl(url);
+  if (!rssUrl) {
+    return {
+      title: '(invalid URL)',
+      body: 'Not a valid Reddit post URL. Expected: https://www.reddit.com/r/SUBREDDIT/comments/POSTID/...',
+      score: '?',
+      commentCount: '?',
+      comments: [],
+    };
   }
 
-  const html = res.data;
+  // Try fetching RSS with retry on 429
+  let res;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    res = await httpGet(rssUrl, { 'User-Agent': nextUA() });
+    if (res && (res.status === 429 || res.status === 503)) {
+      await new Promise((r) => setTimeout(r, 1000));
+      continue;
+    }
+    break;
+  }
+  if (!res || res.status !== 200) {
+    const reason =
+      res && res.status === 429 ? 'rate-limited' : `HTTP ${res ? res.status : 'error'}`;
+    return {
+      title: '(failed to fetch)',
+      body: `Reddit RSS feed returned "${reason}". Try again later.`,
+      score: '?',
+      commentCount: '?',
+      comments: [],
+    };
+  }
 
-  const titleMatch = html.match(/<a class="title may-blank[^"]*"[^>]*>([^<]+)<\/a>/);
-  const title = titleMatch ? titleMatch[1].trim() : '(no title)';
+  const xml = res.data;
 
+  // Extract post title from <title> (before <entry>)
+  const titleMatch = xml.match(/<title>(.*?)<\/title>/);
+  const title = titleMatch ? decodeHtml(titleMatch[1].trim()) : '(no title)';
+
+  // Extract all content blocks: first is the post, rest are comments
+  const contentRegex = /<content type="html">(.*?)<\/content>/g;
+  const blocks = [];
+  let cm;
+  while ((cm = contentRegex.exec(xml)) !== null) {
+    blocks.push(decodeHtml(cm[1]));
+  }
+
+  // Post body is the first content block (strip HTML tags)
   let body = '(no text content)';
-  const postFormMatch = html.match(
-    /<input type="hidden" name="thing_id" value="t3_[^"]*"[^>]*\/>([\s\S]*?)<\/form>/,
-  );
-  if (postFormMatch) {
-    const mdMatch = postFormMatch[1].match(/<div class="md"[^>]*>([\s\S]*?)<\/div>/);
-    if (mdMatch) body = cleanHtml(mdMatch[1]);
+  if (blocks.length > 0) {
+    body = stripHtml(blocks[0]);
   }
 
+  // Comments are remaining content blocks
   const comments = [];
-  const commentFormRegex =
-    /<input type="hidden" name="thing_id" value="t1_[^"]*"[^>]*\/>([\s\S]*?)<\/form>/g;
-  let cfMatch;
-  while ((cfMatch = commentFormRegex.exec(html)) !== null) {
-    const mdMatch = cfMatch[1].match(/<div class="md"[^>]*>([\s\S]*?)<\/div>/);
-    if (mdMatch) {
-      const text = cleanHtml(mdMatch[1]);
-      if (text && text.length > 20) comments.push(text);
+  for (let i = 1; i < blocks.length; i++) {
+    const text = stripHtml(blocks[i]);
+    if (text && text.length > 20) {
+      comments.push(text);
     }
   }
 
-  const scoreMatch = html.match(/data-score="(\d+)"/);
-  const score = scoreMatch ? scoreMatch[1] : '?';
-  const ccMatch = html.match(/data-comments-count="(\d+)"/);
-  const commentCount = ccMatch ? ccMatch[1] : '?';
+  // Extract upvote score (from post's <updated> or search for "upvote" pattern)
+  let score = '?';
+  const scoreMatch = xml.match(/score["']?\s*[:=]\s*["']?(\d+)/);
+  if (scoreMatch) score = scoreMatch[1];
 
-  return { title, body, score, commentCount, comments: comments.slice(0, 5) };
+  const commentCount = comments.length > 0 ? String(comments.length) : '?';
+
+  return {
+    title,
+    body,
+    score,
+    commentCount,
+    comments: comments.slice(0, 5),
+  };
+}
+
+function decodeHtml(str) {
+  return str
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&#x?[a-fA-F0-9]+;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function stripHtml(str) {
+  return str
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// --- Display a post (from --url/--post or search results) ---
+function displayPost(post) {
+  console.log('Score: ' + post.score + ' · Comments: ' + post.commentCount);
+  console.log('');
+  console.log(post.body.slice(0, 2000));
+
+  if (post.comments.length > 0) {
+    console.log('');
+    console.log('─'.repeat(40));
+    console.log('💬 Top comments (' + post.comments.length + '):');
+    console.log('');
+    post.comments.forEach((c, i) => {
+      console.log('  ' + (i + 1) + '. ' + c.slice(0, 300));
+      console.log('');
+    });
+  }
 }
 
 // --- Main ---
 async function main() {
-  console.log(`🔍 Searching Reddit for: "${query}"\n`);
+  // --- Mode 1: Direct URL fetch (--url/--post) ---
+  if (directUrl) {
+    console.log('📄 Fetching post: ' + directUrl + '\n');
+    const post = await fetchPostViaRss(directUrl);
+    console.log(post.title);
+    console.log('');
+    displayPost(post);
+    process.exit(0);
+  }
+
+  // --- Mode 2: Search ---
+  console.log('🔍 Searching Reddit for: "' + query + '"\n');
+
+  // Check SearXNG health before searching
+  const searxngOk = await checkSearxng();
+  if (!searxngOk) {
+    console.log('⚠️  SearXNG is not running at http://localhost:8888');
+    console.log('   SearXNG is used to search Reddit (find relevant posts).');
+    console.log('   Start it with: docker start searxng');
+    console.log(
+      '   Or use --url to fetch a post directly: node scripts/reddit-search.mjs --url <reddit-url>',
+    );
+    process.exit(0);
+  }
 
   // Try the dedicated reddit-html engine first
   let results = await searchViaRedditEngine(query);
@@ -179,35 +328,25 @@ async function main() {
     process.exit(0);
   }
 
-  console.log(`Found ${results.length} result(s):\n`);
+  console.log('Found ' + results.length + ' result(s):\n');
   results.slice(0, limit).forEach((r, i) => {
-    console.log(`  ${i + 1}. ${r.title || '(no title)'}`);
-    console.log(`     ${r.url}`);
-    if (r.content) console.log(`     ${r.content.slice(0, 120)}`);
-    console.log();
+    console.log('  ' + (i + 1) + '. ' + (r.title || '(no title)'));
+    console.log('     ' + (r.url || ''));
+    if (r.content) console.log('     ' + r.content.slice(0, 120));
+    console.log('');
   });
 
   if (raw) process.exit(0);
 
-  // Fetch full content for the top result
+  // Fetch full content for the top result via RSS
   const top = results[0];
   console.log('─'.repeat(60));
-  console.log(`📄 Full post: ${top.title}`);
-  console.log(`   ${top.url}\n`);
+  console.log('📄 Full post: ' + (top.title || ''));
+  console.log('   ' + (top.url || ''));
+  console.log('');
 
-  const post = await fetchPostContent(top.url);
-
-  console.log(`Score: ${post.score} · Comments: ${post.commentCount}`);
-  console.log(`\n${post.body.slice(0, 2000)}`);
-
-  if (post.comments.length > 0) {
-    console.log(`\n${'─'.repeat(40)}`);
-    console.log(`💬 Top comments (${post.comments.length}):\n`);
-    post.comments.forEach((c, i) => {
-      console.log(`  ${i + 1}. ${c.slice(0, 300)}`);
-      console.log();
-    });
-  }
+  const post = await fetchPostViaRss(top.url || '');
+  displayPost(post);
 }
 
 main().catch((err) => {

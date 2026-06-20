@@ -148,20 +148,20 @@ if (maxSpendIdx >= 2 && process.argv[maxSpendIdx + 1]) {
     process.exit(1);
   }
 }
-const dailyBudgetEnv = process.env.DEEPCLAUDE_DAILY_BUDGET || '';
+const dailyBudgetEnv = process.env.DEFIANT_DAILY_BUDGET || '';
 const DEFAULT_DAILY_BUDGET = 25;
 const dailyBudget: number | null = (() => {
   if (dailyBudgetEnv === '0') return 0; // Explicitly disabled
   if (dailyBudgetEnv) {
     const v = parseFloat(dailyBudgetEnv);
     if (isNaN(v) || v < 0) {
-      console.error('DEEPCLAUDE_DAILY_BUDGET must be a non-negative number');
+      console.error('DEFIANT_DAILY_BUDGET must be a non-negative number');
       process.exit(1);
     }
     return v;
   }
   // Default to $25/day to protect against surprise runaway costs.
-  // Set DEEPCLAUDE_DAILY_BUDGET=0 to disable.
+  // Set DEFIANT_DAILY_BUDGET=0 to disable.
   return DEFAULT_DAILY_BUDGET;
 })();
 
@@ -199,7 +199,7 @@ if (probeIdx >= 2) {
   }
   if (!routesFile) {
     const homeDir = process.env.HOME || process.env.USERPROFILE || '';
-    const defaultPath = homeDir + '/.deepclaude/current-routes.json';
+    const defaultPath = homeDir + '/.defiant/current-routes.json';
     try {
       require('fs').accessSync(defaultPath);
       routesFile = defaultPath;
@@ -207,7 +207,7 @@ if (probeIdx >= 2) {
       console.error('Usage: npx tsx start-proxy.ts --dry-run <routes.json>');
       console.error('       npx tsx start-proxy.ts --dry-run --routes <routes.json>');
       console.error(
-        '       npx tsx start-proxy.ts --dry-run (uses ~/.deepclaude/current-routes.json)',
+        '       npx tsx start-proxy.ts --dry-run (uses ~/.defiant/current-routes.json)',
       );
       process.exit(1);
     }
@@ -243,7 +243,7 @@ if (probeIdx >= 2) {
   }
 
   // Enable request logging based on CLI flag or env var (opt-in).
-  if (hasLogAll || process.env.DEEPCLAUDE_LOG_ALL_REQUESTS === 'true') {
+  if (hasLogAll || process.env.DEFIANT_LOG_ALL_REQUESTS === 'true') {
     setLogAllRequests(true);
   }
 
@@ -268,11 +268,11 @@ if (probeIdx >= 2) {
 
   // Read concurrency slot limits from env vars with sensible defaults
   const MAIN_SLOTS = (() => {
-    const v = parseInt(process.env.DEEPCLAUDE_MAX_CONCURRENT || '', 10);
+    const v = parseInt(process.env.DEFIANT_MAX_CONCURRENT || '', 10);
     return !isNaN(v) && v > 0 ? v : 25;
   })();
   const SUBAGENT_SLOTS = (() => {
-    const v = parseInt(process.env.DEEPCLAUDE_SUBAGENT_MAX_CONCURRENT || '', 10);
+    const v = parseInt(process.env.DEFIANT_SUBAGENT_MAX_CONCURRENT || '', 10);
     return !isNaN(v) && v > 0 ? v : 8;
   })();
   if (MAIN_SLOTS !== 25 || SUBAGENT_SLOTS !== 8) {
@@ -284,7 +284,7 @@ if (probeIdx >= 2) {
   const concurrency = createSlotConcurrency(MAIN_SLOTS, SUBAGENT_SLOTS);
   const mainRateLimiter = createRateLimiter();
   const subagentRateLimiter = createRateLimiter();
-  const isDev = process.env.DEEPCLAUDE_DEV === '1' || process.env.NODE_ENV === 'development';
+  const isDev = process.env.DEFIANT_DEV === '1' || process.env.NODE_ENV === 'development';
 
   // Apply spend budget caps from CLI/env
   if (maxSpend !== null) setSessionCap(maxSpend);
@@ -299,11 +299,10 @@ if (probeIdx >= 2) {
     );
   }
 
-  // DEEPCLAUDE_DIR env var overrides the base directory (used by tests
+  // DEFIANT_DIR env var overrides the base directory (used by tests
   // to isolate hot-swap signal files from real running proxies).
-  const deepclaudeDir =
-    process.env.DEEPCLAUDE_DIR ||
-    (process.env.HOME || process.env.USERPROFILE || '') + '/.deepclaude';
+  const defiantDir =
+    process.env.DEFIANT_DIR || (process.env.HOME || process.env.USERPROFILE || '') + '/.defiant';
 
   // Extract display names from provider registry for the dashboard
   let providerDisplayNames: Record<string, string> | undefined;
@@ -376,8 +375,8 @@ if (probeIdx >= 2) {
   let hadTcpClient = false;
   let drainTimer: ReturnType<typeof setTimeout> | null = null;
   let superseded = false; // Set to true when entering forwarding mode
-  const DRAIN_GRACE_MS = process.env.DEEPCLAUDE_DRAIN_GRACE_MS
-    ? parseInt(process.env.DEEPCLAUDE_DRAIN_GRACE_MS, 10)
+  const DRAIN_GRACE_MS = process.env.DEFIANT_DRAIN_GRACE_MS
+    ? parseInt(process.env.DEFIANT_DRAIN_GRACE_MS, 10)
     : 30_000;
 
   // --- Session tracking ---
@@ -778,7 +777,7 @@ if (probeIdx >= 2) {
           100,
           Math.max(1, parseInt(url.searchParams.get('limit') || '50', 10) || 50),
         );
-        const logPath = path.join(os.homedir(), '.deepclaude', 'requests.log');
+        const logPath = path.join(os.homedir(), '.defiant', 'requests.log');
         const entries: Array<Record<string, unknown>> = [];
         if (fs.existsSync(logPath)) {
           const raw = fs.readFileSync(logPath, 'utf-8');
@@ -1423,7 +1422,7 @@ if (probeIdx >= 2) {
         if (budgetReason) {
           // Notify on budget exhaustion
           try {
-            const dailyBudget = parseFloat(process.env.DEEPCLAUDE_DAILY_BUDGET || '0');
+            const dailyBudget = parseFloat(process.env.DEFIANT_DAILY_BUDGET || '0');
             if (dailyBudget > 0) {
               checkBudgetNotifications(dailyBudget, dailyBudget, 'daily budget');
             }
@@ -2539,7 +2538,7 @@ if (probeIdx >= 2) {
         const port = (server.address() as { port: number }).port;
 
         // --- Hot-swap: if we were started as the replacement, clean up the signal ---
-        const nextPortFile = deepclaudeDir + '/next-proxy.port';
+        const nextPortFile = defiantDir + '/next-proxy.port';
         try {
           if (fs.existsSync(nextPortFile)) {
             const nextPort = parseInt(fs.readFileSync(nextPortFile, 'utf-8').trim(), 10);
@@ -2558,7 +2557,7 @@ if (probeIdx >= 2) {
 
         // Write port file for diagnostics (--stats, --health)
         {
-          const portFile = deepclaudeDir + '/proxy.port';
+          const portFile = defiantDir + '/proxy.port';
           try {
             fs.writeFileSync(portFile, String(port));
           } catch (_) {}
@@ -2647,7 +2646,7 @@ if (probeIdx >= 2) {
           const url = 'http://127.0.0.1:' + port + '/dashboard';
           // Only print the dashboard URL when authentication is configured
           // to avoid advertising an unauthenticated health-data endpoint.
-          if (process.env.DEEPCLAUDE_DASHBOARD_KEY) {
+          if (process.env.DEFIANT_DASHBOARD_KEY) {
             process.stdout.write('\nDASHBOARD:' + url);
           }
           if (hasOpen) {
@@ -2679,7 +2678,7 @@ if (probeIdx >= 2) {
     );
     // Clean up port file written at startup
     {
-      const portFile = deepclaudeDir + '/proxy.port';
+      const portFile = defiantDir + '/proxy.port';
       try {
         if (fs.existsSync(portFile)) fs.unlinkSync(portFile);
       } catch (_) {}

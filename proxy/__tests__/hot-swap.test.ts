@@ -16,18 +16,18 @@ const shellSafe = (cmd: string, args: string[]): [string, string[]] =>
   IS_WIN ? [`${cmd} ${args.join(' ')}`, []] : [cmd, args];
 
 // These tests spawn real proxies and wait for TCP drain timers.
-// DEEPCLAUDE_DRAIN_GRACE_MS shortens the 30s drain grace to 5s in test mode.
+// DEFIANT_DRAIN_GRACE_MS shortens the 30s drain grace to 5s in test mode.
 // Full suite runs 47 suites concurrently — under load, proxy startup + drain
 // waits need generous headroom.
 jest.setTimeout(120_000);
 
-// CRITICAL: use an isolated DEEPCLAUDE_DIR so hot-swap signal files
+// CRITICAL: use an isolated DEFIANT_DIR so hot-swap signal files
 // (next-proxy.port) never leak to real running proxies. Without this,
 // a real proxy would detect the test's signal file, enter forwarding
 // mode to the test proxy, and die when the test proxy is killed.
-const TEST_DEEPCLAUDE_DIR = path.join(os.tmpdir(), 'dc-hotswap-test-' + process.pid);
-const NEXT_PORT_FILE = path.join(TEST_DEEPCLAUDE_DIR, 'next-proxy.port');
-const PORT_FILE = path.join(TEST_DEEPCLAUDE_DIR, 'proxy.port');
+const TEST_defiant_DIR = path.join(os.tmpdir(), 'dc-hotswap-test-' + process.pid);
+const NEXT_PORT_FILE = path.join(TEST_defiant_DIR, 'next-proxy.port');
+const PORT_FILE = path.join(TEST_defiant_DIR, 'proxy.port');
 
 let testDir: string;
 
@@ -104,9 +104,9 @@ function startProxy(
       stdio: ['ignore', 'pipe', 'pipe'],
       env: {
         ...process.env,
-        DEEPCLAUDE_SKIP_STARTUP_CHECK: 'true',
-        DEEPCLAUDE_NO_PID_LOCK: '1',
-        DEEPCLAUDE_DRAIN_GRACE_MS: '5000',
+        DEFIANT_SKIP_STARTUP_CHECK: 'true',
+        DEFIANT_NO_PID_LOCK: '1',
+        DEFIANT_DRAIN_GRACE_MS: '5000',
       },
       ...(IS_WIN ? { shell: true } : {}),
     },
@@ -154,21 +154,21 @@ function cleanupSignalFiles(): void {
 
 beforeAll(() => {
   testDir = os.tmpdir();
-  // Create isolated .deepclaude directory so signal files never touch
+  // Create isolated .defiant directory so signal files never touch
   // real running proxies' state.
   try {
-    fs.mkdirSync(TEST_DEEPCLAUDE_DIR, { recursive: true });
+    fs.mkdirSync(TEST_defiant_DIR, { recursive: true });
   } catch {}
-  process.env.DEEPCLAUDE_DIR = TEST_DEEPCLAUDE_DIR;
+  process.env.DEFIANT_DIR = TEST_defiant_DIR;
   cleanupSignalFiles();
 });
 
 afterAll(() => {
   cleanupSignalFiles();
   try {
-    fs.rmSync(TEST_DEEPCLAUDE_DIR, { recursive: true, force: true });
+    fs.rmSync(TEST_defiant_DIR, { recursive: true, force: true });
   } catch {}
-  delete process.env.DEEPCLAUDE_DIR;
+  delete process.env.DEFIANT_DIR;
 });
 
 describe('Hot-swap mechanism', () => {
@@ -238,7 +238,7 @@ describe('Hot-swap mechanism', () => {
       const port = portCounter++;
 
       // Write the signal file BEFORE starting the proxy
-      fs.mkdirSync(TEST_DEEPCLAUDE_DIR, { recursive: true });
+      fs.mkdirSync(TEST_defiant_DIR, { recursive: true });
       fs.writeFileSync(NEXT_PORT_FILE, String(port));
 
       const { process: proxyProc, portPromise } = startProxy(port, routesFile, overridesFile);
@@ -261,7 +261,7 @@ describe('Hot-swap mechanism', () => {
       const actualPort = portCounter++;
 
       // Write the signal file for a different port
-      fs.mkdirSync(TEST_DEEPCLAUDE_DIR, { recursive: true });
+      fs.mkdirSync(TEST_defiant_DIR, { recursive: true });
       fs.writeFileSync(NEXT_PORT_FILE, String(signalPort));
 
       const { process: proxyProc, portPromise } = startProxy(actualPort, routesFile, overridesFile);
@@ -291,7 +291,7 @@ describe('Hot-swap mechanism', () => {
         const healthy = await healthCheck(port);
         expect(healthy).toBe(true);
 
-        // Wait past the 5s drain grace period (DEEPCLAUDE_DRAIN_GRACE_MS=5000)
+        // Wait past the 5s drain grace period (DEFIANT_DRAIN_GRACE_MS=5000)
         await new Promise((r) => setTimeout(r, 8000));
 
         // Proxy should still be alive (exitCode is null — still running)

@@ -5,7 +5,7 @@
 // proxy's global total instead of $0.00.
 //
 // Tests spawn the statusline script with controlled env vars and a
-// temp DEEPCLAUDE_DIR, same pattern as launcher.test.ts.
+// temp DEFIANT_DIR, same pattern as launcher.test.ts.
 
 import { spawnSync } from 'child_process';
 import { join } from 'path';
@@ -68,7 +68,7 @@ let tmpDir: string;
 beforeEach(() => {
   tmpDir = join(
     tmpdir(),
-    `deepclaude-statusline-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    `defiant-statusline-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
   );
   mkdirSync(tmpDir, { recursive: true });
 });
@@ -98,7 +98,7 @@ describe('statusline spend display', () => {
       stdin: MOCK_CC_JSON,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         CLAUDE_CODE_SESSION_ID: 'test-session-fresh',
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
@@ -131,7 +131,7 @@ describe('statusline spend display', () => {
       stdin: MOCK_CC_JSON,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         CLAUDE_CODE_SESSION_ID: 'test-session-active',
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
@@ -160,7 +160,7 @@ describe('statusline spend display', () => {
       stdin: MOCK_CC_JSON,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         CLAUDE_CODE_SESSION_ID: '', // explicitly unset — no active session
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
@@ -183,7 +183,7 @@ describe('statusline spend display', () => {
       stdin: MOCK_CC_JSON,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         CLAUDE_CODE_SESSION_ID: 'test-no-spend',
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',
@@ -209,7 +209,7 @@ describe('statusline spend display', () => {
       stdin: MOCK_CC_JSON,
       env: {
         ...process.env,
-        DEEPCLAUDE_DIR: tmpDir,
+        DEFIANT_DIR: tmpDir,
         CLAUDE_CODE_SESSION_ID: 'test-session-only-daily',
         GIT_BRANCH: 'main',
         PATH: process.env.PATH || '',

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-// Unified DeepClaude statusline — single source of truth for both .ps1 and .sh.
+// Unified Defiant statusline — single source of truth for both .ps1 and .sh.
 // Reads CC JSON from stdin, outputs a single statusline string.
 
 import { existsSync, readFileSync, writeFileSync } from 'fs';
@@ -55,10 +55,8 @@ async function main() {
     } catch (_) {}
   }
 
-  const deepclaudeDir =
-    process.env.DEEPCLAUDE_CONFIG_DIR ||
-    process.env.DEEPCLAUDE_DIR ||
-    join(homedir(), '.deepclaude');
+  const defiantDir =
+    process.env.DEFIANT_CONFIG_DIR || process.env.DEFIANT_DIR || join(homedir(), '.defiant');
 
   // ── Model & slot overrides ──────────────────────────────────
   let model = d?.model?.id || d?.model?.display_name || '';
@@ -66,7 +64,7 @@ async function main() {
   let slotLabel = '';
 
   try {
-    const overridesPath = join(deepclaudeDir, 'slot-overrides.json');
+    const overridesPath = join(defiantDir, 'slot-overrides.json');
     if (existsSync(overridesPath)) {
       const overrides = JSON.parse(readFileSync(overridesPath, 'utf8'));
       const slotMatch = model && model.match(/^(sonnet|opus|haiku|sub|subagent|fable):(.+)$/);
@@ -85,7 +83,7 @@ async function main() {
         model = overrides[slot] || fallback;
         if (!overrides[slot] && (slot === 'sub' || slot === 'subagent')) {
           try {
-            const subFile = join(deepclaudeDir, 'subagent-model.json');
+            const subFile = join(defiantDir, 'subagent-model.json');
             if (existsSync(subFile)) {
               const sub = JSON.parse(readFileSync(subFile, 'utf8'));
               if (sub.providerKey && sub.modelId) {
@@ -105,7 +103,7 @@ async function main() {
   const tokens = d?.context_window?.total_input_tokens;
   let ctxMap = {};
   try {
-    const routesPath = join(deepclaudeDir, 'current-routes.json');
+    const routesPath = join(defiantDir, 'current-routes.json');
     if (existsSync(routesPath)) {
       const routes = JSON.parse(readFileSync(routesPath, 'utf8'));
       if (routes.contextLimits) ctxMap = routes.contextLimits;
@@ -145,11 +143,11 @@ async function main() {
   let proxyPort = 0;
   try {
     // Disk port: updated on every hot-swap, most current.
-    const deepclaudeDir =
-      process.env.DEEPCLAUDE_CONFIG_DIR ||
-      process.env.DEEPCLAUDE_DIR ||
-      join(homedir() || '.', '.deepclaude');
-    const portFile = join(deepclaudeDir, 'proxy.port');
+    const defiantDir =
+      process.env.DEFIANT_CONFIG_DIR ||
+      process.env.DEFIANT_DIR ||
+      join(homedir() || '.', '.defiant');
+    const portFile = join(defiantDir, 'proxy.port');
     let diskPort = 0;
     if (existsSync(portFile)) {
       const raw = readFileSync(portFile, 'utf-8').trim();
@@ -158,7 +156,7 @@ async function main() {
     }
     // Env var port (set at CC launch, stale after hot-swap)
     const baseUrl = process.env.ANTHROPIC_BASE_URL || '';
-    const explicitPort = process.env.DEEPCLAUDE_PROXY_PORT;
+    const explicitPort = process.env.DEFIANT_PROXY_PORT;
     const envPortStr = explicitPort || (baseUrl.match(/:(\d+)$/) || [])[1];
     let envPort = 0;
     if (envPortStr) {
@@ -173,7 +171,7 @@ async function main() {
   // ── Spend data ──────────────────────────────────────────────
   let spendGroup = '';
   try {
-    const spendPath = join(deepclaudeDir, 'spend.json');
+    const spendPath = join(defiantDir, 'spend.json');
     if (existsSync(spendPath)) {
       const spendData = JSON.parse(readFileSync(spendPath, 'utf8'));
 
@@ -181,7 +179,7 @@ async function main() {
       if (ccSessId) {
         try {
           writeFileSync(
-            join(deepclaudeDir, 'cc-active.json'),
+            join(defiantDir, 'cc-active.json'),
             JSON.stringify({ sessionId: ccSessId, timestamp: Date.now() }),
           );
         } catch (_) {}
@@ -189,7 +187,7 @@ async function main() {
 
       let sessionSpend = 0;
       if (ccSessId) {
-        const ccSpendPath = join(deepclaudeDir, `cc-spend-${ccSessId}.json`);
+        const ccSpendPath = join(defiantDir, `cc-spend-${ccSessId}.json`);
         try {
           if (existsSync(ccSpendPath)) {
             sessionSpend = parseFloat(readFileSync(ccSpendPath, 'utf8').trim()) || 0;

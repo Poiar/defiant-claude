@@ -1,13 +1,13 @@
 ---
 name: protocol-translation-issues
-description: "Gap analysis: Anthropic-to-OpenAI protocol translation issues found in deepClaude's proxy/protocol-translate.ts"
+description: "Gap analysis: Anthropic-to-OpenAI protocol translation issues found in Defiant's proxy/protocol-translate.ts"
 metadata: 
   node_type: memory
   type: project
   originSessionId: 1c51f724-0f57-4689-987d-afb9695f111a
 ---
 
-# Protocol Translation Issues in deepClaude
+# Protocol Translation Issues in Defiant
 
 The proxy translates between Anthropic's Messages API and OpenAI-compatible chat completions. Analysis identified these gaps. Issues #1-3 were fixed on 2026-06-12.
 

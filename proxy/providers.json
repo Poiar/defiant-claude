@@ -19,8 +19,8 @@
       "wireFormat": "openai",
       "setupUrl": "https://openrouter.ai/keys",
       "extraHeaders": {
-        "HTTP-Referer": "https://github.com/Poiar/deepclaude",
-        "X-Title": "deepclaude"
+        "HTTP-Referer": "https://github.com/Poiar/defiant-claude",
+        "X-Title": "defiant-claude"
       },
       "streamUsageReporting": "openai_stream_options"
     },
@@ -193,6 +193,28 @@
       "streamUsageReporting": "openai_stream_options",
       "noAuth": true,
       "noAutoFallback": true
+    },
+    "ls": {
+      "displayName": "LM Studio (local)",
+      "endpoint": "http://localhost:1234/v1",
+      "keyEnv": "",
+      "authHeader": "x-api-key",
+      "wireFormat": "openai",
+      "setupUrl": "https://lmstudio.ai",
+      "streamUsageReporting": "openai_stream_options",
+      "noAuth": true,
+      "noAutoFallback": true
+    },
+    "lc": {
+      "displayName": "llama.cpp (local)",
+      "endpoint": "http://localhost:8080/v1",
+      "keyEnv": "",
+      "authHeader": "x-api-key",
+      "wireFormat": "openai",
+      "setupUrl": "https://github.com/ggerganov/llama.cpp",
+      "streamUsageReporting": "openai_stream_options",
+      "noAuth": true,
+      "noAutoFallback": true
     }
   },
   "aliases": {
@@ -215,7 +237,16 @@
     "grok": "grok-4",
     "grok-code": "grok-code-fast",
     "llama": "ollama/llama3.3",
-    "qwen": "ollama/qwen3"
+    "qwen": "ollama/qwen3",
+    "lmstudio-llama": "lmstudio/llama-3.2",
+    "lmstudio-qwen": "lmstudio/qwen2.5",
+    "lmstudio-deepseek": "lmstudio/deepseek-coder",
+    "lmstudio-phi": "lmstudio/phi-4",
+    "lmstudio-mistral": "lmstudio/mistral",
+    "llamacpp-llama": "llamacpp/llama-3.2",
+    "llamacpp-qwen": "llamacpp/qwen2.5",
+    "llamacpp-deepseek": "llamacpp/deepseek-coder",
+    "llamacpp-mistral": "llamacpp/mistral"
   },
   "_comment": "contextLimits = max tokens the provider accepts. compactionWindow = CLAUDE_CODE_AUTO_COMPACT_WINDOW (compact threshold). Use ~90-95% of context for models with free unlimited disk cache (DeepSeek) to preserve cache hits — compaction rewrites history, invalidating the prefix and causing expensive cache misses.",
   "contextLimits": {
@@ -251,6 +282,15 @@
     "ollama/llama3.3": 131072,
     "ollama/qwen3": 131072,
     "ollama/deepseek-r1": 131072,
+    "lmstudio/llama-3.2": 8192,
+    "lmstudio/qwen2.5": 32768,
+    "lmstudio/deepseek-coder": 16384,
+    "lmstudio/phi-4": 16384,
+    "lmstudio/mistral": 32768,
+    "llamacpp/llama-3.2": 8192,
+    "llamacpp/qwen2.5": 32768,
+    "llamacpp/deepseek-coder": 16384,
+    "llamacpp/mistral": 32768,
     "gemini-2.5-flash": 1048576,
     "gemini-2.5-pro": 2097152,
     "gemini-3.0-flash": 1048576,
@@ -410,6 +450,22 @@
       "sub": "lo:ollama/qwen3",
       "fable": "lo:ollama/llama3.3"
     },
+    "ls": {
+      "name": "LM Studio (local)",
+      "opus": "ls:lmstudio/qwen2.5",
+      "sonnet": "ls:lmstudio/qwen2.5",
+      "haiku": "ls:lmstudio/phi-4",
+      "sub": "ls:lmstudio/phi-4",
+      "fable": "ls:lmstudio/qwen2.5"
+    },
+    "lc": {
+      "name": "llama.cpp (local)",
+      "opus": "lc:llamacpp/qwen2.5",
+      "sonnet": "lc:llamacpp/qwen2.5",
+      "haiku": "lc:llamacpp/llama-3.2",
+      "sub": "lc:llamacpp/llama-3.2",
+      "fable": "lc:llamacpp/qwen2.5"
+    },
     "ds+oc": {
       "name": "DeepSeek + OpenCode subs",
       "opus": "ds:deepseek-v4-pro",
@@ -554,6 +610,42 @@
       "output": 0
     },
     "ollama/deepseek-r1": {
+      "input": 0,
+      "output": 0
+    },
+    "lmstudio/llama-3.2": {
+      "input": 0,
+      "output": 0
+    },
+    "lmstudio/qwen2.5": {
+      "input": 0,
+      "output": 0
+    },
+    "lmstudio/deepseek-coder": {
+      "input": 0,
+      "output": 0
+    },
+    "lmstudio/phi-4": {
+      "input": 0,
+      "output": 0
+    },
+    "lmstudio/mistral": {
+      "input": 0,
+      "output": 0
+    },
+    "llamacpp/llama-3.2": {
+      "input": 0,
+      "output": 0
+    },
+    "llamacpp/qwen2.5": {
+      "input": 0,
+      "output": 0
+    },
+    "llamacpp/deepseek-coder": {
+      "input": 0,
+      "output": 0
+    },
+    "llamacpp/mistral": {
       "input": 0,
       "output": 0
     },

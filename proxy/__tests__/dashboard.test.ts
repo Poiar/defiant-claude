@@ -6,14 +6,14 @@ import { recordRecentRequest, getFullHealthSnapshot } from '../stats';
 
 // Dashboard now requires authentication.  Use a fixed key for tests.
 const TEST_DASHBOARD_KEY = 'test-dashboard-key';
-process.env.DEEPCLAUDE_DASHBOARD_KEY = TEST_DASHBOARD_KEY;
+process.env.DEFIANT_DASHBOARD_KEY = TEST_DASHBOARD_KEY;
 
 describe('buildDashboardHtml', () => {
   test('returns HTML containing key elements', () => {
     const html = buildDashboardHtml();
     expect(html).toContain('<!DOCTYPE');
     expect(html).toContain('</html>');
-    expect(html).toContain('DeepClaude');
+    expect(html).toContain('Defiant');
     expect(html).toContain('Recent Requests');
     expect(html).toContain('Provider');
     expect(html).toContain('Circuit Breaker');
@@ -202,7 +202,7 @@ describe('serveDashboard route handling', () => {
     const { res, body } = await get('/dashboard');
     expect(res.statusCode).toBe(200);
     expect(res.headers['content-type']).toBe('text/html');
-    expect(body).toContain('DeepClaude');
+    expect(body).toContain('Defiant');
     expect(body).toContain('</html>');
   });
 

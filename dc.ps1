@@ -1,4 +1,4 @@
-# Launch DeepClaude with ds+oc (DeepSeek + free OpenCode subs) by default.
+# Launch Defiant with ds+oc (DeepSeek + free OpenCode subs) by default.
 # Override with: dc -b ds  or  dc -b or  etc.
 #
 # NO param() block: use automatic $args. Three reasons:
@@ -20,14 +20,14 @@ try { Set-PSReadLineOption -HistorySaveStyle SaveAtExit -ErrorAction Stop } catc
 
 if ($args.Count -eq 0) {
     # Just dc → launch with ds+oc config (free haiku/subagent)
-    & "$PSScriptRoot\deepclaude.ps1" -b ds+oc
+    & "$PSScriptRoot\defiant.ps1" -b ds+oc
 } elseif ($args[0] -match '^-b$|^--backend$') {
     # dc -b or → launch with specified config
-    & "$PSScriptRoot\deepclaude.ps1" @args
+    & "$PSScriptRoot\defiant.ps1" @args
 } elseif ($args[0] -notmatch '^-' -and $args[0] -notmatch ':') {
     # dc ds → shortcut for -b ds
-    & "$PSScriptRoot\deepclaude.ps1" -b @args
+    & "$PSScriptRoot\defiant.ps1" -b @args
 } else {
     # dc --other-flags → ds+oc config + flags
-    & "$PSScriptRoot\deepclaude.ps1" -b ds+oc @args
+    & "$PSScriptRoot\defiant.ps1" -b ds+oc @args
 }

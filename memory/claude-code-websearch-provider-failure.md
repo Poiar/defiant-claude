@@ -9,7 +9,7 @@ metadata:
 
 ## Symptoms
 
-When using a non-Anthropic provider (DeepSeek, etc.) through DeepClaude, the built-in `WebSearch` tool fails with:
+When using a non-Anthropic provider (DeepSeek, etc.) through Defiant, the built-in `WebSearch` tool fails with:
 ```
 All AI providers are currently unavailable (tried: ds). Last error: HTTP 400
 ```

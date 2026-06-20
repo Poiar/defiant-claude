@@ -19,7 +19,7 @@ metadata:
 **Safe proxy restart procedure:**
 Do it from ANOTHER terminal tab — never from within a Claude Code session:
 ```
-deepclaude --stop-proxy    # kills old proxy
+defiant --stop-proxy    # kills old proxy
 dc                          # starts fresh with latest config
 ```
 Then restart THIS Claude Code session manually.
@@ -31,4 +31,4 @@ Then restart THIS Claude Code session manually.
 - New CLI flags (--providers was added after the running proxy started)
 - Those are rare. 95% of config changes work via hot-reload.
 
-**Reference:** each session gets its own isolated proxy on a unique port. The proxy port is available in `ANTHROPIC_BASE_URL` env var. Routes at `~/.deepclaude/current-routes.json`.
+**Reference:** each session gets its own isolated proxy on a unique port. The proxy port is available in `ANTHROPIC_BASE_URL` env var. Routes at `~/.defiant/current-routes.json`.

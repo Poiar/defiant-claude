@@ -1,6 +1,6 @@
 ---
 name: protocol-translation-architecture
-description: "How deepClaude's proxy translates between Anthropic Messages API and OpenAI Chat Completions API"
+description: "How Defiant's proxy translates between Anthropic Messages API and OpenAI Chat Completions API"
 metadata: 
   node_type: memory
   type: project

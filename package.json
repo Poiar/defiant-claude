@@ -1,5 +1,5 @@
 {
-  "name": "deepclaude",
+  "name": "defiant",
   "version": "1.0.0",
   "description": "Provider-agnostic Claude Code wrapper — route each model slot to a different provider",
   "private": true,
@@ -7,15 +7,15 @@
     "node": ">=18"
   },
   "bin": {
-    "deepclaude": "deepclaude.sh"
+    "defiant": "defiant.sh"
   },
   "scripts": {
-    "lint": "pwsh -c \"Invoke-ScriptAnalyzer -Path deepclaude.ps1\" && npx eslint proxy/ --max-warnings 0 && wsl bash -c \"echo 'testtest' | sudo -S shellcheck /mnt/c/OC/deepclaude/deepclaude.sh\"",
+    "lint": "pwsh -c \"Invoke-ScriptAnalyzer -Path defiant.ps1\" && npx eslint proxy/ --max-warnings 0 && wsl bash -c \"echo 'testtest' | sudo -S shellcheck /mnt/c/OC/defiant/defiant.sh\"",
     "test": "jest proxy/__tests__ --no-coverage --forceExit",
     "test:coverage": "jest proxy/__tests__ --coverage",
     "qa:cache": "jest proxy/__tests__/thinking-cache.test.ts proxy/__tests__/reasoning-cache.test.ts proxy/__tests__/forward.test.ts proxy/__tests__/config.test.ts proxy/__tests__/protocol-types.test.ts proxy/__tests__/launcher.test.ts --no-coverage --forceExit",
     "qa:all": "npm run qa:cache && jest proxy/__tests__ --no-coverage --testPathPattern=dead-stream --forceExit",
-    "doctor": "pwsh deepclaude.ps1 --doctor",
+    "doctor": "pwsh defiant.ps1 --doctor",
     "start": "npx tsx proxy/start-proxy.ts",
     "start:ts": "npx tsx proxy/start-proxy.ts",
     "build:readme": "npx tsx scripts/build-readme.ts",
@@ -28,7 +28,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/Poiar/deepclaude"
+    "url": "https://github.com/Poiar/defiant-claude"
   },
   "keywords": [
     "claude-code",

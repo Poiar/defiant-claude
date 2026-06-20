@@ -81,17 +81,17 @@ test().catch(e => { console.error('❌', e.message); process.exit(1); });
 
 ```bash
 # 1. Check proxy version and health
-curl -s http://127.0.0.1:$(cat ~/.deepclaude/proxy.port)/health | grep -o '"version":"[^"]*"'
+curl -s http://127.0.0.1:$(cat ~/.defiant/proxy.port)/health | grep -o '"version":"[^"]*"'
 
 # 2. Verify proxy log for WEB_SEARCH_PREX entries
-strings ~/.deepclaude/proxy.log | grep WEB_SEARCH | tail -5
+strings ~/.defiant/proxy.log | grep WEB_SEARCH | tail -5
 
 # 3. Check DDG scraper directly
 npx tsx -e "require('./proxy/server-tools').ddgLiteSearch('test').then(r => console.log(r.length, 'results'))"
 
 # 4. Test pre-execution through proxy (non-streaming)
-curl -s --max-time 15 -X POST http://127.0.0.1:$(cat ~/.deepclaude/proxy.port)/v1/messages \
-  -H "Content-Type: application/json" -H "x-api-key: deepclaude-$(cat ~/.deepclaude/proxy.port)" \
+curl -s --max-time 15 -X POST http://127.0.0.1:$(cat ~/.defiant/proxy.port)/v1/messages \
+  -H "Content-Type: application/json" -H "x-api-key: defiant-$(cat ~/.defiant/proxy.port)" \
   -d '{"model":"haiku:deepseek-v4-flash","max_tokens":200,"stream":false,
     "tools":[{"type":"web_search_20250305","name":"web_search","description":"Search",
     "input_schema":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}}],
@@ -101,8 +101,8 @@ curl -s --max-time 15 -X POST http://127.0.0.1:$(cat ~/.deepclaude/proxy.port)/v
   2>&1 | python -m json.tool 2>/dev/null | head -30
 
 # 5. Verify web_search_tool_result format (the critical check)
-curl -s --max-time 15 -X POST http://127.0.0.1:$(cat ~/.deepclaude/proxy.port)/v1/messages \
-  -H "Content-Type: application/json" -H "x-api-key: deepclaude-$(cat ~/.deepclaude/proxy.port)" \
+curl -s --max-time 15 -X POST http://127.0.0.1:$(cat ~/.defiant/proxy.port)/v1/messages \
+  -H "Content-Type: application/json" -H "x-api-key: defiant-$(cat ~/.defiant/proxy.port)" \
   -d '{"model":"haiku:deepseek-v4-flash","max_tokens":200,"stream":false,
     "tools":[{"type":"web_search_20250305","name":"web_search"}],
     "system":[{"type":"text","text":"web search assistant"}],

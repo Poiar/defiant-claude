@@ -76,14 +76,14 @@ let subagentModelCache: {
   size: number;
 } | null = null;
 
-// Read the dedicated subagent model from ~/.deepclaude/subagent-model.json.
+// Read the dedicated subagent model from ~/.defiant/subagent-model.json.
 // Uses stat mtime+size cache to avoid synchonous file I/O on every subagent request.
 // Returns null when the file does not exist, is invalid, or an I/O error occurs.
 // Used by resolveTarget to override the subagent slot when no slot override is set.
 export function resolveSubagentModel(): { providerKey: string; modelId: string } | null {
   const homeDir = process.env.HOME || process.env.USERPROFILE || '';
   if (!homeDir) return null;
-  const filePath = path.join(homeDir, '.deepclaude', 'subagent-model.json');
+  const filePath = path.join(homeDir, '.defiant', 'subagent-model.json');
   try {
     const stat = fs.statSync(filePath);
     if (
@@ -227,7 +227,7 @@ export async function resolveTarget(
       error:
         'Provider "' +
         providerKey +
-        '" has encrypted key but DEEPCLAUDE_ENCRYPTION_KEY is not set or decryption failed',
+        '" has encrypted key but DEFIANT_ENCRYPTION_KEY is not set or decryption failed',
     };
   }
 

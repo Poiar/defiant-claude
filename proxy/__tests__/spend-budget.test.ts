@@ -23,7 +23,7 @@ function dateISO(d: Date): string {
 
 beforeEach(() => {
   _resetBudgetState();
-  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'deepclaude-test-'));
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'defiant-test-'));
   tmpFile = path.join(tmpDir, 'spend.json');
   setSpendFilePath(tmpFile);
 });

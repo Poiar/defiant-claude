@@ -35,7 +35,7 @@ metadata:
 | V4 Pro cache hit price | N/A | $0.0036/M (50× cheaper than miss) |
 | V4 Pro cache miss price | N/A | $0.435/M |
 
-## Implications for DeepClaude
+## Implications for Defiant
 
 - No need to inject/strip `cache_control` markers — DeepSeek ignores them and caches automatically
 - The `compactionWindow` of 950K tokens for DeepSeek models preserves cache hits by delaying compaction (compaction rewrites history → invalidates prefix → cache miss)

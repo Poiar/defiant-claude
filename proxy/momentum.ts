@@ -10,12 +10,12 @@ const TTL_MS = 30 * 60 * 1000;
 const MAX_ENTRIES = 500;
 const RING_SIZE = 5;
 
-// Persist to ~/.deepclaude/momentum/ so successful provider history survives
+// Persist to ~/.defiant/momentum/ so successful provider history survives
 // proxy restarts. This avoids cold-start probing costs and lets the new proxy
 // immediately prefer previously-working providers.
 const CACHE_DIR = path.join(
-  process.env.DEEPCLAUDE_CONFIG_DIR ||
-    path.join(process.env.HOME || process.env.USERPROFILE || '.', '.deepclaude'),
+  process.env.DEFIANT_CONFIG_DIR ||
+    path.join(process.env.HOME || process.env.USERPROFILE || '.', '.defiant'),
   'momentum',
 );
 

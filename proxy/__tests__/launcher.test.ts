@@ -209,12 +209,12 @@ describe('env-vars (CLI)', () => {
 // ---------------------------------------------------------------------------
 // init-overrides
 // ---------------------------------------------------------------------------
-// init-overrides tests share ~/.deepclaude/slot-overrides.json.
+// init-overrides tests share ~/.defiant/slot-overrides.json.
 // To prevent cross-test pollution: save the file before all tests,
 // delete it before each test, and restore it after all tests.
 // ---------------------------------------------------------------------------
 describe('init-overrides (CLI)', () => {
-  const SLOT_FILE = join(homedir(), '.deepclaude', 'slot-overrides.json');
+  const SLOT_FILE = join(homedir(), '.defiant', 'slot-overrides.json');
   let _savedSlot: string | null = null;
 
   beforeAll(() => {
@@ -240,7 +240,7 @@ describe('init-overrides (CLI)', () => {
   });
 
   test('init-overrides for ds+an sets correct _defaults', () => {
-    // init-overrides writes to ~/.deepclaude/slot-overrides.json
+    // init-overrides writes to ~/.defiant/slot-overrides.json
     // We run it and parse stdout to check the merge result
     const result = runLauncherJson('init-overrides', '--name=ds+an');
     // The returned object is the merged overrides
@@ -351,7 +351,7 @@ describe('init-overrides (CLI)', () => {
 
 // --- init-overrides slot-prefix normalization (isolated file writes) ---
 describe('init-overrides slot-prefix normalization', () => {
-  const SLOT_FILE = join(homedir(), '.deepclaude', 'slot-overrides.json');
+  const SLOT_FILE = join(homedir(), '.defiant', 'slot-overrides.json');
   let _saved: string | null = null;
 
   beforeAll(() => {
@@ -422,7 +422,7 @@ describe('init-overrides slot-prefix normalization', () => {
 // set-slot / get-slot
 // ---------------------------------------------------------------------------
 describe('set-slot (CLI)', () => {
-  const SLOT_FILE = join(homedir(), '.deepclaude', 'slot-overrides.json');
+  const SLOT_FILE = join(homedir(), '.defiant', 'slot-overrides.json');
   let _savedSlotSet: string | null = null;
 
   beforeAll(() => {
@@ -956,7 +956,7 @@ describe('version', () => {
 // read-override fallback path
 // ---------------------------------------------------------------------------
 describe('read-override (CLI)', () => {
-  const SLOT_FILE = join(homedir(), '.deepclaude', 'slot-overrides.json');
+  const SLOT_FILE = join(homedir(), '.defiant', 'slot-overrides.json');
   let _savedSlotRO: string | null = null;
 
   beforeAll(() => {
@@ -1031,7 +1031,7 @@ describe('read-override (CLI)', () => {
 // set-slot: clear override restores default
 // ---------------------------------------------------------------------------
 describe('set-slot clear (CLI)', () => {
-  const SLOT_FILE = join(homedir(), '.deepclaude', 'slot-overrides.json');
+  const SLOT_FILE = join(homedir(), '.defiant', 'slot-overrides.json');
   let _savedSlotSC: string | null = null;
 
   beforeAll(() => {
@@ -1284,7 +1284,7 @@ describe('validateProvider missing key', () => {
 // "!== undefined" → treated as a user override → preserved. This silently
 // defeats config switches: dc ds+an still routes haiku to DeepSeek.
 describe('REGRESSION: initOverrides missing _defaults stale config', () => {
-  const SLOT_FILE = join(homedir(), '.deepclaude', 'slot-overrides.json');
+  const SLOT_FILE = join(homedir(), '.defiant', 'slot-overrides.json');
   const SLOTS = ['opus', 'sonnet', 'haiku', 'subagent', 'fable'];
   let _saved: string | null = null;
 
@@ -1477,7 +1477,7 @@ describe('REGRESSION: initOverrides missing _defaults stale config', () => {
 // A partial switch (e.g., haiku changes but subagent doesn't) is a silent
 // routing failure — the proxy sends requests to the wrong provider.
 describe('REGRESSION: initOverrides cross-contamination prevention', () => {
-  const SLOT_FILE = join(homedir(), '.deepclaude', 'slot-overrides.json');
+  const SLOT_FILE = join(homedir(), '.defiant', 'slot-overrides.json');
   const SLOTS = ['opus', 'sonnet', 'haiku', 'subagent', 'fable'];
   let _saved: string | null = null;
 
@@ -1785,7 +1785,7 @@ describe('keyEnvToShortName (direct node -e)', () => {
   });
 
   test('maps ANTHROPIC_API_KEY to empty string (no mapping)', () => {
-    // ANTHROPIC_API_KEY is not in the map — handled by keyLookup in deepclaude.ps1
+    // ANTHROPIC_API_KEY is not in the map — handled by keyLookup in defiant.ps1
     expect(evalLauncher('console.log(keyEnvToShortName("ANTHROPIC_API_KEY"))')).toBe('');
   });
 
@@ -2153,7 +2153,7 @@ describe('computeContextInfo (direct node -e)', () => {
 
 // --- setSubagentModel CLI ---
 describe('subagent-model (CLI)', () => {
-  const SUB_FILE = join(homedir(), '.deepclaude', 'subagent-model.json');
+  const SUB_FILE = join(homedir(), '.defiant', 'subagent-model.json');
   let _savedSub: string | null = null;
 
   beforeAll(() => {
@@ -2265,7 +2265,7 @@ describe('scripts/cli.mjs end-to-end', () => {
     const r = spawnSync('node', [CLI_SCRIPT, ...args], {
       encoding: 'utf-8',
       timeout: 30000,
-      env: { ...process.env, DEEPCLAUDE_DEFAULT_BACKEND: 'ds' },
+      env: { ...process.env, DEFIANT_DEFAULT_BACKEND: 'ds' },
     });
     return {
       stdout: r.stdout?.trim() || '',
@@ -2306,11 +2306,11 @@ describe('scripts/cli.mjs end-to-end', () => {
   // --- Default config (no -b flag, no env var) ---
 
   test('--dry-run with no -b flag defaults to ds+oc', () => {
-    // Clear DEEPCLAUDE_DEFAULT_BACKEND so the built-in default kicks in
+    // Clear DEFIANT_DEFAULT_BACKEND so the built-in default kicks in
     const r = spawnSync('node', [CLI_SCRIPT, '--dry-run'], {
       encoding: 'utf-8',
       timeout: 30000,
-      env: { ...process.env, DEEPCLAUDE_DEFAULT_BACKEND: '' },
+      env: { ...process.env, DEFIANT_DEFAULT_BACKEND: '' },
     });
     const stdout = (r.stdout || '').trim();
     const stderr = (r.stderr || '').trim();
@@ -2397,7 +2397,7 @@ describe('scripts/cli.mjs smoke tests', () => {
     const r2 = spawnSync('node', [CLI_SCRIPT, ...args], {
       encoding: 'utf-8',
       timeout: 30000,
-      env: { ...process.env, DEEPCLAUDE_DEFAULT_BACKEND: 'ds' },
+      env: { ...process.env, DEFIANT_DEFAULT_BACKEND: 'ds' },
     });
     return {
       stdout: r2.stdout?.trim() || '',
@@ -2409,7 +2409,7 @@ describe('scripts/cli.mjs smoke tests', () => {
   test('--help succeeds and mentions usage', () => {
     const { stdout, stderr, status } = runCli('--help');
     expect(status).toBe(0);
-    expect(stdout + stderr).toMatch(/Usage|deepclaude/);
+    expect(stdout + stderr).toMatch(/Usage|defiant/);
   });
 
   test('--version succeeds and prints version', () => {
@@ -2456,7 +2456,7 @@ describe('scripts/cli.mjs smoke tests', () => {
     const r = spawnSync('node', ['--check', CLI_SCRIPT], {
       encoding: 'utf-8',
       timeout: 10000,
-      env: { ...process.env, DEEPCLAUDE_DEFAULT_BACKEND: 'ds' },
+      env: { ...process.env, DEFIANT_DEFAULT_BACKEND: 'ds' },
     });
     expect(r.status).toBe(0);
   });
@@ -2466,14 +2466,14 @@ describe('scripts/cli.mjs smoke tests', () => {
     const r = spawnSync('node', [CLI_SCRIPT, '--cost'], {
       encoding: 'utf-8',
       timeout: 15000,
-      env: { ...process.env, DEEPCLAUDE_DEFAULT_BACKEND: '' },
+      env: { ...process.env, DEFIANT_DEFAULT_BACKEND: '' },
     });
     // Should not error with "Unknown config" — ds+oc is the default
     expect((r.stderr || '') + (r.stdout || '')).not.toMatch(/Unknown config/i);
   });
 
   // --- Default daily budget ---
-  test('DEEPCLAUDE_DAILY_BUDGET defaults to $25 when unset', () => {
+  test('DEFIANT_DAILY_BUDGET defaults to $25 when unset', () => {
     // The default budget var DEFAULT_DAILY_BUDGET = 25 is defined in start-proxy.ts
     const proxySrc = readFileSync(join(__dirname, '..', 'start-proxy.ts'), 'utf-8');
     expect(proxySrc).toContain('DEFAULT_DAILY_BUDGET = 25');

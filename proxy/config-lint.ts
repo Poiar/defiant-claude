@@ -2,7 +2,7 @@
 
 // Config linting: validates providers.json for common misconfigurations.
 // Exports validateConfig() for programmatic use, formatLintResults() for display,
-// and lint() as the CLI entry point called by deepclaude --lint-config.
+// and lint() as the CLI entry point called by defiant --lint-config.
 
 import fs from 'fs';
 import path from 'path';
@@ -309,7 +309,7 @@ export function formatLintResults(issues: LintIssue[], registryPath?: string): s
   const bold = '\x1b[1m';
 
   const lines: string[] = [];
-  lines.push(bold + 'DeepClaude Config Lint' + reset);
+  lines.push(bold + 'Defiant Claude Config Lint' + reset);
   lines.push('======================');
   lines.push('');
 

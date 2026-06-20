@@ -1,6 +1,6 @@
 export const meta = {
-  name: 'deepclaude-cache-qa',
-  description: 'QA audit of DeepClaude for cache-invalidation and cost-inefficiency issues',
+  name: 'defiant-cache-qa',
+  description: 'QA audit of Defiant for cache-invalidation and cost-inefficiency issues',
   phases: [
     { title: 'Cache Core' },
     { title: 'Body Pipeline' },
@@ -10,7 +10,7 @@ export const meta = {
   ],
 }
 
-var ROOT = 'C:\\OC\\deepclaude'
+var ROOT = 'C:\\OC\\defiant'
 
 phase('Cache Core')
 phase('Body Pipeline')
@@ -50,7 +50,7 @@ var highCount = findings.filter(function(f) { return f.severity === 'high' }).le
 var cacheMissCount = findings.filter(function(f) { return f.category === 'cache-miss' }).length
 var costCount = findings.filter(function(f) { return f.category === 'cost' || f.category === 'waste' }).length
 
-log('=== DeepClaude Cache QA Results ===')
+log('=== Defiant Cache QA Results ===')
 log('Total: ' + findings.length + ' findings (' + criticalCount + ' critical, ' + highCount + ' high, ' + cacheMissCount + ' cache-miss, ' + costCount + ' cost/waste)')
 
 var sevs = ['critical', 'high', 'medium', 'low']

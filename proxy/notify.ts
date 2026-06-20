@@ -37,7 +37,7 @@ export function sendNotification(title: string, message: string): void {
 
 /**
  * Check if any budget warning threshold has been breached for the first time.
- * Thresholds are percentages parsed from DEEPCLAUDE_BUDGET_WARNING (e.g. "50,75,100").
+ * Thresholds are percentages parsed from DEFIANT_BUDGET_WARNING (e.g. "50,75,100").
  * Returns true if a notification was sent.
  */
 export function checkBudgetNotifications(
@@ -45,7 +45,7 @@ export function checkBudgetNotifications(
   budgetCap: number,
   budgetLabel: string,
 ): boolean {
-  const warnEnv = process.env.DEEPCLAUDE_BUDGET_WARNING;
+  const warnEnv = process.env.DEFIANT_BUDGET_WARNING;
   if (!warnEnv || budgetCap <= 0) return false;
 
   const thresholds = warnEnv
@@ -62,8 +62,8 @@ export function checkBudgetNotifications(
       firedThresholds.add(threshold);
       const title =
         threshold >= 100
-          ? 'DeepClaude: Budget exhausted'
-          : `DeepClaude: ${threshold}% of budget used`;
+          ? 'Defiant Claude: Budget exhausted'
+          : `Defiant Claude: ${threshold}% of budget used`;
       const msg =
         `$${currentSpend.toFixed(2)} of $${budgetCap.toFixed(2)} spent ` +
         `(${threshold}% of ${budgetLabel})`;

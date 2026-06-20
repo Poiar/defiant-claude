@@ -14,12 +14,12 @@ import { sessionKey } from './session-key';
 const TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_ENTRIES = 10000;
 
-// Persist to ~/.deepclaude/thinking-cache/ so cached thinking blocks survive
+// Persist to ~/.defiant/thinking-cache/ so cached thinking blocks survive
 // proxy restarts. Without this, kill+resume causes DeepSeek prefix cache misses
 // at 120× cost ($0.435/M vs $0.0036/M).
 const CACHE_DIR = path.join(
-  process.env.DEEPCLAUDE_CONFIG_DIR ||
-    path.join(process.env.HOME || process.env.USERPROFILE || '.', '.deepclaude'),
+  process.env.DEFIANT_CONFIG_DIR ||
+    path.join(process.env.HOME || process.env.USERPROFILE || '.', '.defiant'),
   'thinking-cache',
 );
 

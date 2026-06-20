@@ -34,7 +34,7 @@ describe('encrypt-key', () => {
     consoleWarnSpy.mockRestore();
     consoleErrorSpy.mockRestore();
     exitSpy.mockRestore();
-    delete process.env.DEEPCLAUDE_ENCRYPTION_KEY;
+    delete process.env.DEFIANT_ENCRYPTION_KEY;
   });
 
   function load(): void {
@@ -45,12 +45,12 @@ describe('encrypt-key', () => {
 
   // --- Synchronous error paths ---
 
-  test('exits when DEEPCLAUDE_ENCRYPTION_KEY is not set', () => {
+  test('exits when DEFIANT_ENCRYPTION_KEY is not set', () => {
     process.argv = ['node', 'encrypt-key.ts', 'my-key'];
-    delete process.env.DEEPCLAUDE_ENCRYPTION_KEY;
+    delete process.env.DEFIANT_ENCRYPTION_KEY;
     load();
     expect(consoleErrorSpy).toHaveBeenCalledWith(
-      'Error: DEEPCLAUDE_ENCRYPTION_KEY environment variable is not set',
+      'Error: DEFIANT_ENCRYPTION_KEY environment variable is not set',
     );
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
@@ -59,7 +59,7 @@ describe('encrypt-key', () => {
 
   test('encrypts key from argv and logs result', (done) => {
     process.argv = ['node', 'encrypt-key.ts', 'my-api-key-12345'];
-    process.env.DEEPCLAUDE_ENCRYPTION_KEY = 'a'.repeat(32);
+    process.env.DEFIANT_ENCRYPTION_KEY = 'a'.repeat(32);
     mockEncrypt.mockResolvedValue('encrypted-result-abc123');
 
     load();
@@ -74,7 +74,7 @@ describe('encrypt-key', () => {
 
   test('warns when env key is shorter than 32 chars but still encrypts', (done) => {
     process.argv = ['node', 'encrypt-key.ts', 'api-key'];
-    process.env.DEEPCLAUDE_ENCRYPTION_KEY = 'short-key';
+    process.env.DEFIANT_ENCRYPTION_KEY = 'short-key';
     mockEncrypt.mockResolvedValue('enc');
 
     load();
@@ -90,7 +90,7 @@ describe('encrypt-key', () => {
 
   test('handles encryption failure', (done) => {
     process.argv = ['node', 'encrypt-key.ts', 'key'];
-    process.env.DEEPCLAUDE_ENCRYPTION_KEY = 'c'.repeat(32);
+    process.env.DEFIANT_ENCRYPTION_KEY = 'c'.repeat(32);
     mockEncrypt.mockRejectedValue(new Error('crypto engine failure'));
 
     load();
@@ -104,7 +104,7 @@ describe('encrypt-key', () => {
 
   test('full happy path with 64-char env key and no warnings', (done) => {
     process.argv = ['node', 'encrypt-key.ts', 'happy-path-key'];
-    process.env.DEEPCLAUDE_ENCRYPTION_KEY = 'x'.repeat(64);
+    process.env.DEFIANT_ENCRYPTION_KEY = 'x'.repeat(64);
     mockEncrypt.mockResolvedValue('encrypted-result-abc123');
 
     load();

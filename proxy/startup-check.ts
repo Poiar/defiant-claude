@@ -342,9 +342,9 @@ function sendProbeStream(
  * to decide whether to continue startup or exit.
  */
 export async function runStartupChecks(): Promise<StartUpCheckSummary> {
-  const skip = process.env.DEEPCLAUDE_SKIP_STARTUP_CHECK;
+  const skip = process.env.DEFIANT_SKIP_STARTUP_CHECK;
   if (skip === 'true' || skip === '1') {
-    log.info(null, 'Startup health check skipped (DEEPCLAUDE_SKIP_STARTUP_CHECK=true)');
+    log.info(null, 'Startup health check skipped (DEFIANT_SKIP_STARTUP_CHECK=true)');
     return {
       allHealthy: true,
       someDown: false,

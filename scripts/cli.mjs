@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 'use strict';
 
-// DeepClaude unified CLI — single Node.js entry point replacing deepclaude.ps1
-// and deepclaude.sh. Handles flag parsing, config resolution, subcommands
+// Defiant Claude unified CLI — single Node.js entry point replacing defiant.ps1
+// and defiant.sh. Handles flag parsing, config resolution, subcommands
 // (status, stats, doctor, models, cost, etc.), proxy launch, and CC launch.
 
 import { spawn, spawnSync, execSync } from 'child_process';
@@ -29,7 +29,7 @@ const PROXY_DIR = join(ROOT, 'proxy');
 const PROXY_SCRIPT = join(PROXY_DIR, 'start-proxy.ts');
 const LAUNCHER = join(PROXY_DIR, 'launcher.mjs');
 const PROVIDERS_PATH = join(PROXY_DIR, 'providers.json');
-const DEEPCLAUDE_DIR = join(homedir(), '.deepclaude');
+const DEFIANT_DIR = join(homedir(), '.defiant');
 const SLOTS = ['opus', 'sonnet', 'haiku', 'subagent', 'fable'];
 const IS_WIN = platform() === 'win32';
 const NPX = IS_WIN ? 'npx.cmd' : 'npx';
@@ -336,12 +336,12 @@ function cmdVersion() {
       timeout: 3000,
     }).trim();
   } catch {}
-  console.log(`deepclaude ${ver} (${hash})`);
+  console.log(`defiant ${ver} (${hash})`);
   console.log(`Proxy: ${PROXY_SCRIPT}`);
 }
 
 function cmdStatus(providers, configs) {
-  console.log(`\n  deepclaude - Provider Status`);
+  console.log(`\n  defiant - Provider Status`);
   console.log(`  ============================\n`);
   console.log(`  Keys:`);
   for (const [_pk, pv] of Object.entries(providers)) {
@@ -374,7 +374,7 @@ function cmdCost(pricing) {
 }
 
 function cmdModels(providers, configs) {
-  console.log(`\n  deepclaude - Available Models`);
+  console.log(`\n  defiant - Available Models`);
   console.log(`  ================================\n`);
   const byProvider = {};
   for (const cfg of Object.values(configs)) {
@@ -392,7 +392,7 @@ function cmdModels(providers, configs) {
     console.log(`\n  ${pv?.name || pk} (${pk}) [key: ${ks}]:`);
     for (const m of [...models].sort()) console.log(`    ${pk}:${m}`);
   }
-  const portFile = join(DEEPCLAUDE_DIR, 'proxy.port');
+  const portFile = join(DEFIANT_DIR, 'proxy.port');
   if (existsSync(portFile)) {
     console.log(`\n  Proxy: RUNNING on port ${readFileSync(portFile, 'utf-8').trim()}`);
   } else {
@@ -402,7 +402,7 @@ function cmdModels(providers, configs) {
 }
 
 async function cmdHealth() {
-  const portFile = join(DEEPCLAUDE_DIR, 'proxy.port');
+  const portFile = join(DEFIANT_DIR, 'proxy.port');
   if (!existsSync(portFile)) {
     console.log('No proxy.port found — is a proxy running?');
     return;
@@ -435,11 +435,11 @@ function cmdCleanup(flags) {
   const cutoffMs = Date.now() - days * 86400_000;
   const todayISO = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`;
 
-  console.log(`\n  deepclaude - Spend Cleanup (>${days} days old)`);
+  console.log(`\n  defiant - Spend Cleanup (>${days} days old)`);
   console.log(`  ${'='.repeat(45)}\n`);
 
   // ── Per-model spend summary (from spend.json) ─────────────────
-  const spendFile = join(DEEPCLAUDE_DIR, 'spend.json');
+  const spendFile = join(DEFIANT_DIR, 'spend.json');
   if (existsSync(spendFile)) {
     try {
       const spend = JSON.parse(readFileSync(spendFile, 'utf-8'));
@@ -493,9 +493,9 @@ function cmdCleanup(flags) {
   let kept = 0;
   let staleTotal = 0;
   try {
-    for (const f of readdirSync(DEEPCLAUDE_DIR)) {
+    for (const f of readdirSync(DEFIANT_DIR)) {
       if (!f.startsWith('cc-spend-') || !f.endsWith('.json')) continue;
-      const filePath = join(DEEPCLAUDE_DIR, f);
+      const filePath = join(DEFIANT_DIR, f);
       try {
         const stat = statSync(filePath);
         if (stat.mtimeMs < cutoffMs) {
@@ -630,7 +630,7 @@ function cmdImportCsv(filePath) {
   console.log();
 
   // Merge into spend.json
-  const spendFile = join(DEEPCLAUDE_DIR, 'spend.json');
+  const spendFile = join(DEFIANT_DIR, 'spend.json');
   let existing = {};
   if (existsSync(spendFile)) {
     try {
@@ -697,7 +697,7 @@ function cmdImportCsv(filePath) {
 }
 
 async function cmdStats() {
-  const portFile = join(DEEPCLAUDE_DIR, 'proxy.port');
+  const portFile = join(DEFIANT_DIR, 'proxy.port');
   if (!existsSync(portFile)) {
     console.log('No proxy.port found — is a proxy running?');
     return;
@@ -722,7 +722,7 @@ async function cmdStats() {
 }
 
 async function cmdDoctor(flags, providers, configs) {
-  console.log(`\n  deepclaude System Check`);
+  console.log(`\n  defiant System Check`);
   console.log(`  ======================\n`);
   let ok = true;
 
@@ -756,7 +756,7 @@ async function cmdDoctor(flags, providers, configs) {
   const stale = (() => {
     try {
       return require('fs')
-        .readdirSync(DEEPCLAUDE_DIR)
+        .readdirSync(DEFIANT_DIR)
         .filter((f) => f.endsWith('.tmp')).length;
     } catch {
       return 0;
@@ -779,7 +779,7 @@ async function cmdDoctor(flags, providers, configs) {
 
   // Slot overrides
   console.log(`\n  Slot Overrides:`);
-  const overridesFile = join(DEEPCLAUDE_DIR, 'slot-overrides.json');
+  const overridesFile = join(DEFIANT_DIR, 'slot-overrides.json');
   if (existsSync(overridesFile)) {
     try {
       const overrides = JSON.parse(readFileSync(overridesFile, 'utf-8'));
@@ -799,7 +799,7 @@ async function cmdDoctor(flags, providers, configs) {
   } else console.log(`    ${C.Y}WARN${C.X}  No slot-overrides.json`);
 
   // Subagent
-  const subFile = join(DEEPCLAUDE_DIR, 'subagent-model.json');
+  const subFile = join(DEFIANT_DIR, 'subagent-model.json');
   if (existsSync(subFile)) {
     try {
       const sd = JSON.parse(readFileSync(subFile, 'utf-8'));
@@ -810,7 +810,7 @@ async function cmdDoctor(flags, providers, configs) {
   // Proxy test
   console.log(`\n  Proxy Test:`);
   const defaultBackend =
-    process.env.DEEPCLAUDE_DEFAULT_BACKEND || process.env.CHEAPCLAUDE_DEFAULT_BACKEND || null;
+    process.env.DEFIANT_DEFAULT_BACKEND || process.env.CHEAPCLAUDE_DEFAULT_BACKEND || null;
   let doctorCfg = defaultBackend && configs[defaultBackend] ? defaultBackend : null;
   if (!doctorCfg) doctorCfg = Object.keys(configs)[0] || null;
   if (!doctorCfg) {
@@ -818,7 +818,7 @@ async function cmdDoctor(flags, providers, configs) {
   } else {
     try {
       const routesJson = launcher('build-routes', `--name=${doctorCfg}`);
-      const routesFile = join(DEEPCLAUDE_DIR, 'doctor-test-routes.json');
+      const routesFile = join(DEFIANT_DIR, 'doctor-test-routes.json');
       writeAtomic(
         routesFile,
         typeof routesJson === 'string' ? routesJson : JSON.stringify(routesJson),
@@ -873,7 +873,7 @@ async function cmdDoctor(flags, providers, configs) {
       // Key validation via probe
       console.log(`\n  Key Validation (probe each provider):`);
       const probeRoutesJson = launcher('build-routes', `--name=${doctorCfg}`);
-      const probeFile = join(DEEPCLAUDE_DIR, 'doctor-probe-routes.json');
+      const probeFile = join(DEFIANT_DIR, 'doctor-probe-routes.json');
       writeAtomic(
         probeFile,
         typeof probeRoutesJson === 'string' ? probeRoutesJson : JSON.stringify(probeRoutesJson),
@@ -917,7 +917,7 @@ async function cmdProbe(flags, providers, configs) {
     const key = Object.keys(configs).includes(specs[0]) ? 'name' : 'specs';
     const val = key === 'name' ? specs[0] : specs.join(',');
     const routesJson = launcher('build-routes', `--${key}=${val}`);
-    routesFile = join(DEEPCLAUDE_DIR, 'probe-routes.json');
+    routesFile = join(DEFIANT_DIR, 'probe-routes.json');
     writeAtomic(
       routesFile,
       typeof routesJson === 'string' ? routesJson : JSON.stringify(routesJson),
@@ -934,11 +934,11 @@ async function cmdProbe(flags, providers, configs) {
 
 async function cmdDryRun(flags, configs) {
   const specs = resolveSpecs(flags, configs);
-  if (!specs.length) specs.push(process.env.DEEPCLAUDE_DEFAULT_BACKEND || 'ds+oc');
+  if (!specs.length) specs.push(process.env.DEFIANT_DEFAULT_BACKEND || 'ds+oc');
   const key = Object.keys(configs).includes(specs[0]) ? 'name' : 'specs';
   const val = key === 'name' ? specs[0] : specs.join(',');
   const routesJson = launcher('build-routes', `--${key}=${val}`);
-  const routesFile = join(DEEPCLAUDE_DIR, 'dryrun-routes.json');
+  const routesFile = join(DEFIANT_DIR, 'dryrun-routes.json');
   writeAtomic(routesFile, typeof routesJson === 'string' ? routesJson : JSON.stringify(routesJson));
   const r = spawnSync(NPX, ['tsx', PROXY_SCRIPT, '--dry-run', routesFile], {
     cwd: ROOT,
@@ -954,11 +954,11 @@ function resolveSpecs(flags, _configs) {
   let specs = [...flags.specs];
   if (flags.backend) specs.unshift(flags.backend);
   if (!specs.length) {
-    const def = process.env.DEEPCLAUDE_DEFAULT_BACKEND || process.env.CHEAPCLAUDE_DEFAULT_BACKEND;
+    const def = process.env.DEFIANT_DEFAULT_BACKEND || process.env.CHEAPCLAUDE_DEFAULT_BACKEND;
     if (def) specs = [def];
     else {
       warn(
-        'No config specified, defaulting to "ds+oc". Set DEEPCLAUDE_DEFAULT_BACKEND to suppress this.',
+        'No config specified, defaulting to "ds+oc". Set DEFIANT_DEFAULT_BACKEND to suppress this.',
       );
       specs = ['ds+oc'];
     }
@@ -968,7 +968,7 @@ function resolveSpecs(flags, _configs) {
 
 // ─── Write fix-av.cmd ─────────────────────────────────────────────────
 function writeFixAv() {
-  const fixFile = join(DEEPCLAUDE_DIR, 'fix-av.cmd');
+  const fixFile = join(DEFIANT_DIR, 'fix-av.cmd');
   const nodeExe = (() => {
     try {
       return execSync(IS_WIN ? 'where node' : 'which node', { encoding: 'utf-8', timeout: 2000 })
@@ -979,9 +979,9 @@ function writeFixAv() {
     }
   })();
   const batch = `@echo off
-REM deepclaude Windows Defender Exclusion Helper — run as ADMINISTRATOR
+REM defiant Windows Defender Exclusion Helper — run as ADMINISTRATOR
 echo.
-echo This script adds Windows Defender exclusions for deepclaude.
+echo This script adds Windows Defender exclusions for defiant.
 echo Run it in an ADMIN PowerShell window.
 echo.
 echo ----- Copy from here -----
@@ -999,7 +999,7 @@ pause
 
 function showAvWarning() {
   if (!IS_WIN) return;
-  const fixFile = join(DEEPCLAUDE_DIR, 'fix-av.cmd');
+  const fixFile = join(DEFIANT_DIR, 'fix-av.cmd');
   writeFixAv();
   console.log(
     `${C.Y}  ==============================================================================`,
@@ -1007,9 +1007,7 @@ function showAvWarning() {
   console.log(`  WINDOWS DEFENDER MAY BLOCK THE PROXY.`);
   console.log(`  If the proxy fails to start or gets deleted, open an ADMIN PowerShell and run:`);
   console.log(`    ${C.W}${fixFile}${C.Y}`);
-  console.log(
-    `  (That file was just written — it survives AV deletion of the deepclaude directory.)`,
-  );
+  console.log(`  (That file was just written — it survives AV deletion of the defiant directory.)`);
   console.log(
     `  ==============================================================================${C.X}`,
   );
@@ -1029,14 +1027,14 @@ async function startProxy(routesFile, overridesFile, thinkingOverridesFile, flag
     PROVIDERS_PATH,
   ];
   if (existsSync(thinkingOverridesFile)) args.push('--thinking-overrides', thinkingOverridesFile);
-  if (flags.logAll || process.env.DEEPCLAUDE_LOG_ALL_REQUESTS === 'true') args.push('--log-all');
+  if (flags.logAll || process.env.DEFIANT_LOG_ALL_REQUESTS === 'true') args.push('--log-all');
 
   const proc = spawn(...shellSafe(NPX, args), {
     cwd: ROOT,
     stdio: ['ignore', 'pipe', 'pipe'],
     env: {
       ...process.env,
-      ...(flags.skipStartupCheck ? { DEEPCLAUDE_SKIP_STARTUP_CHECK: 'true' } : {}),
+      ...(flags.skipStartupCheck ? { DEFIANT_SKIP_STARTUP_CHECK: 'true' } : {}),
     },
     ...(IS_WIN ? { shell: true } : {}),
   });
@@ -1063,7 +1061,7 @@ async function startProxy(routesFile, overridesFile, thinkingOverridesFile, flag
 }
 
 async function launchCC(flags, configs) {
-  mkdirSync(DEEPCLAUDE_DIR, { recursive: true });
+  mkdirSync(DEFIANT_DIR, { recursive: true });
 
   // Handle action-only flags
   if (flags.help) {
@@ -1133,12 +1131,12 @@ async function launchCC(flags, configs) {
     if (IS_WIN) {
       const r = spawnSync(
         'powershell',
-        ['-Command', 'Invoke-ScriptAnalyzer -Path', join(ROOT, 'deepclaude.ps1')],
+        ['-Command', 'Invoke-ScriptAnalyzer -Path', join(ROOT, 'defiant.ps1')],
         { cwd: ROOT, stdio: 'inherit' },
       );
       process.exit(r.status || 0);
     } else {
-      const r = spawnSync('shellcheck', [join(ROOT, 'deepclaude.sh')], {
+      const r = spawnSync('shellcheck', [join(ROOT, 'defiant.sh')], {
         cwd: ROOT,
         stdio: 'inherit',
       });
@@ -1169,7 +1167,7 @@ async function launchCC(flags, configs) {
     }
     if (slotModel) console.log(`\n  Set ${slotName} override: ${slotModel}`);
     else console.log(`\n  Cleared ${slotName} override.`);
-    if (existsSync(join(DEEPCLAUDE_DIR, 'proxy.port')))
+    if (existsSync(join(DEFIANT_DIR, 'proxy.port')))
       console.log('  Proxy is running — change takes effect immediately.\n');
     else console.log('  No proxy running. Override saved for next launch.\n');
     return;
@@ -1179,7 +1177,7 @@ async function launchCC(flags, configs) {
   if (flags.subagentmodel !== undefined) {
     if (!flags.subagentmodel) {
       try {
-        rmSync(join(DEEPCLAUDE_DIR, 'subagent-model.json'), { force: true });
+        rmSync(join(DEFIANT_DIR, 'subagent-model.json'), { force: true });
         console.log(`\n  Cleared dedicated subagent model.\n`);
       } catch {}
       return;
@@ -1188,7 +1186,7 @@ async function launchCC(flags, configs) {
     if (!providers[provKey]) fail(`Unknown provider '${provKey}'.`);
     if (!getProviderKey(provKey)) fail(`No API key for '${provKey}'.`);
     writeAtomic(
-      join(DEEPCLAUDE_DIR, 'subagent-model.json'),
+      join(DEFIANT_DIR, 'subagent-model.json'),
       JSON.stringify({ providerKey: provKey, modelId }),
     );
     console.log(`\n  Set dedicated subagent model: ${flags.subagentmodel}\n`);
@@ -1224,7 +1222,7 @@ async function launchCC(flags, configs) {
 
   // Logs
   if (flags.logs || flags.tail) {
-    const logPath = join(DEEPCLAUDE_DIR, 'proxy.log');
+    const logPath = join(DEFIANT_DIR, 'proxy.log');
     if (!existsSync(logPath)) {
       warn('No proxy log found.');
       return;
@@ -1250,8 +1248,8 @@ async function launchCC(flags, configs) {
     const val = key === 'name' ? specs[0] : specs.join(',');
     const routesJson = launcher('build-routes', `--${key}=${val}`);
     launcher('init-overrides', `--${key}=${val}`);
-    const routesFile = join(DEEPCLAUDE_DIR, 'current-routes.json');
-    const overridesFile = join(DEEPCLAUDE_DIR, 'slot-overrides.json');
+    const routesFile = join(DEFIANT_DIR, 'current-routes.json');
+    const overridesFile = join(DEFIANT_DIR, 'slot-overrides.json');
     writeAtomic(
       routesFile,
       typeof routesJson === 'string' ? routesJson : JSON.stringify(routesJson),
@@ -1260,7 +1258,7 @@ async function launchCC(flags, configs) {
     const { port } = await startProxy(
       routesFile,
       overridesFile,
-      join(DEEPCLAUDE_DIR, 'thinking-overrides.json'),
+      join(DEFIANT_DIR, 'thinking-overrides.json'),
       flags,
     );
     const url = `http://127.0.0.1:${port}/dashboard`;
@@ -1370,8 +1368,8 @@ async function launchCC(flags, configs) {
     const val = key === 'name' ? specs[0] : specs.join(',');
     const routesJson = launcher('build-routes', `--${key}=${val}`);
     launcher('init-overrides', `--${key}=${val}`);
-    const routesFile = join(DEEPCLAUDE_DIR, 'current-routes.json');
-    const overridesFile = join(DEEPCLAUDE_DIR, 'slot-overrides.json');
+    const routesFile = join(DEFIANT_DIR, 'current-routes.json');
+    const overridesFile = join(DEFIANT_DIR, 'slot-overrides.json');
     writeAtomic(
       routesFile,
       typeof routesJson === 'string' ? routesJson : JSON.stringify(routesJson),
@@ -1380,7 +1378,7 @@ async function launchCC(flags, configs) {
     const { port } = await startProxy(
       routesFile,
       overridesFile,
-      join(DEEPCLAUDE_DIR, 'thinking-overrides.json'),
+      join(DEFIANT_DIR, 'thinking-overrides.json'),
       flags,
     );
     console.log(`  Proxy on :${port}`);
@@ -1441,15 +1439,15 @@ async function launchCC(flags, configs) {
   const resolved = launcher('resolve-config', `--${key}=${val}`);
   const routesJson = launcher('build-routes', `--${key}=${val}`);
   launcher('init-overrides', `--${key}=${val}`);
-  const routesFile = join(DEEPCLAUDE_DIR, 'current-routes.json');
-  const overridesFile = join(DEEPCLAUDE_DIR, 'slot-overrides.json');
+  const routesFile = join(DEFIANT_DIR, 'current-routes.json');
+  const overridesFile = join(DEFIANT_DIR, 'slot-overrides.json');
   writeAtomic(routesFile, typeof routesJson === 'string' ? routesJson : JSON.stringify(routesJson));
   showAvWarning();
 
   const { port, proc: proxyProc } = await startProxy(
     routesFile,
     overridesFile,
-    join(DEEPCLAUDE_DIR, 'thinking-overrides.json'),
+    join(DEFIANT_DIR, 'thinking-overrides.json'),
     flags,
   );
   console.log(`  Proxy on :${port}`);
@@ -1502,19 +1500,19 @@ async function launchCC(flags, configs) {
 // ─── Help ──────────────────────────────────────────────────────────────
 function cmdHelp(configs) {
   const names = Object.keys(configs).join(', ');
-  console.log(`deepclaude — Provider-agnostic Claude Code wrapper
-Usage: deepclaude [spec1] [spec2] [spec3] [spec4] [spec5]   (positional mode)
-       deepclaude [-b backend] [--status] [--doctor] [--version]
+  console.log(`defiant — Provider-agnostic Claude Code wrapper
+Usage: defiant [spec1] [spec2] [spec3] [spec4] [spec5]   (positional mode)
+       defiant [-b backend] [--status] [--doctor] [--version]
 
   Each positional arg is providerKey:modelId, mapping to opus/sonnet/haiku/subagent/fable.
   Fewer than 5 specs repeats the last one for remaining slots.
 
   Examples:
-    deepclaude ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free
-    deepclaude ds:deepseek-v4-pro oc:big-pickle    (opus/sonnet/haiku=DS, sub/fable=OC)
-    deepclaude ds:deepseek-v4-pro                  (all 5 slots use DS)
-    deepclaude -b ds                               (named config)
-    deepclaude -b anthropic                        (Anthropic direct)
+    defiant ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:free
+    defiant ds:deepseek-v4-pro oc:big-pickle    (opus/sonnet/haiku=DS, sub/fable=OC)
+    defiant ds:deepseek-v4-pro                  (all 5 slots use DS)
+    defiant -b ds                               (named config)
+    defiant -b anthropic                        (Anthropic direct)
 
   Named configs: ${names}, anthropic
   --status        Show keys and configurations

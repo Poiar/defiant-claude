@@ -7,14 +7,14 @@ import { getFullHealthSnapshot } from './stats';
 let activeSseConnections = 0;
 
 // Dashboard authentication via shared secret.
-// If DEEPCLAUDE_DASHBOARD_KEY is set, use it.  Otherwise, generate a
+// If DEFIANT_DASHBOARD_KEY is set, use it.  Otherwise, generate a
 // random per-startup key to prevent unauthenticated access to health
 // data (spend amounts, provider status, recent requests, etc.).
 let _dashboardKey: string | null = null;
 
 export function getDashboardKey(): string {
   if (!_dashboardKey) {
-    _dashboardKey = process.env.DEEPCLAUDE_DASHBOARD_KEY || crypto.randomBytes(16).toString('hex');
+    _dashboardKey = process.env.DEFIANT_DASHBOARD_KEY || crypto.randomBytes(16).toString('hex');
   }
   return _dashboardKey;
 }
@@ -115,7 +115,7 @@ export function buildDashboardHtml(providerDisplayNames?: Record<string, string>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>DeepClaude Dashboard</title>
+<title>Defiant Claude Dashboard</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:#0d1117;color:#c9d1d9;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;font-size:14px;padding:20px}
@@ -170,7 +170,7 @@ body{background:#0d1117;color:#c9d1d9;font-family:-apple-system,BlinkMacSystemFo
 </head>
 <body>
 <div class="header">
-<h1>DeepClaude Proxy</h1>
+<h1>Defiant Claude Proxy</h1>
 <span class="stat">Version: <strong id="version">--</strong></span>
 <span class="stat">Uptime: <strong id="uptime">0s</strong></span>
 <span class="stat">Spend: <strong id="spend">$0.0000</strong></span>

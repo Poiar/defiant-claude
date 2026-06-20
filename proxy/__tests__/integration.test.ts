@@ -89,10 +89,10 @@ beforeAll(async () => {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: {
         ...process.env,
-        DEEPCLAUDE_NO_PID_LOCK: '1',
-        DEEPCLAUDE_SEARCH_ENGINES: 'ddg',
-        DEEPCLAUDE_SEARCH_NO_NETWORK: '1',
-        DEEPCLAUDE_SKIP_STARTUP_CHECK: 'true',
+        DEFIANT_NO_PID_LOCK: '1',
+        DEFIANT_SEARCH_ENGINES: 'ddg',
+        DEFIANT_SEARCH_NO_NETWORK: '1',
+        DEFIANT_SKIP_STARTUP_CHECK: 'true',
       },
       ...(IS_WIN ? { shell: true } : {}),
     },
@@ -536,7 +536,7 @@ describe.skip('Protocol routing integration', () => {
       {
         cwd: path.resolve(__dirname, '../..'),
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env, DEEPCLAUDE_NO_PID_LOCK: '1', TEST_KEY: 'test-key-123' },
+        env: { ...process.env, DEFIANT_NO_PID_LOCK: '1', TEST_KEY: 'test-key-123' },
         ...(IS_WIN ? { shell: true } : {}),
       },
     );
@@ -824,19 +824,19 @@ describe.skip('Protocol routing integration', () => {
 import { buildHotSwapHeaders } from '../hot-swap-headers';
 
 describe('buildHotSwapHeaders', () => {
-  test('rewrites x-api-key to deepclaude-<targetPort>', () => {
+  test('rewrites x-api-key to defiant-<targetPort>', () => {
     const original = {
-      'x-api-key': 'deepclaude-53746',
+      'x-api-key': 'defiant-53746',
       'content-type': 'application/json',
       'anthropic-version': '2023-06-01',
     };
     const result = buildHotSwapHeaders(original, 53747);
-    expect(result['x-api-key']).toBe('deepclaude-53747');
+    expect(result['x-api-key']).toBe('defiant-53747');
   });
 
   test('preserves non-auth headers', () => {
     const original = {
-      'x-api-key': 'deepclaude-53746',
+      'x-api-key': 'defiant-53746',
       'content-type': 'application/json',
       'anthropic-version': '2023-06-01',
       accept: 'text/event-stream',
@@ -849,7 +849,7 @@ describe('buildHotSwapHeaders', () => {
 
   test('sets host header to new proxy address', () => {
     const result = buildHotSwapHeaders(
-      { host: '127.0.0.1:53746', 'x-api-key': 'deepclaude-53746' },
+      { host: '127.0.0.1:53746', 'x-api-key': 'defiant-53746' },
       53747,
     );
     expect(result['host']).toBe('127.0.0.1:53747');
@@ -858,11 +858,11 @@ describe('buildHotSwapHeaders', () => {
   test('strips authorization header', () => {
     const original = {
       authorization: 'Bearer sk-ant-api03-old-session-token',
-      'x-api-key': 'deepclaude-53746',
+      'x-api-key': 'defiant-53746',
       'content-type': 'application/json',
     };
     const result = buildHotSwapHeaders(original, 53747);
-    expect(result['x-api-key']).toBe('deepclaude-53747');
+    expect(result['x-api-key']).toBe('defiant-53747');
     expect(result['authorization']).toBeUndefined();
     expect(result['content-type']).toBe('application/json');
   });
@@ -870,31 +870,31 @@ describe('buildHotSwapHeaders', () => {
   test('handles header keys with mixed case (x-api-key)', () => {
     // HTTP headers are case-insensitive; the function should still rewrite
     const original: Record<string, string> = {
-      'X-API-Key': 'deepclaude-53746',
+      'X-API-Key': 'defiant-53746',
       'Content-Type': 'application/json',
     };
     const result = buildHotSwapHeaders(original, 65151);
     // JavaScript object keys are case-sensitive — x-api-key is set, original
     // X-API-Key remains (Node.js http library normalizes to lowercase, so
     // this tests that the function sets the canonical form)
-    expect(result['x-api-key']).toBe('deepclaude-65151');
+    expect(result['x-api-key']).toBe('defiant-65151');
   });
 
   test('immutates original headers object', () => {
     const original = {
-      'x-api-key': 'deepclaude-53746',
+      'x-api-key': 'defiant-53746',
       'content-type': 'application/json',
     };
     const originalKeys = Object.keys(original).sort();
     buildHotSwapHeaders(original, 53747);
     // Original object should be unchanged
     expect(Object.keys(original).sort()).toEqual(originalKeys);
-    expect(original['x-api-key']).toBe('deepclaude-53746');
+    expect(original['x-api-key']).toBe('defiant-53746');
   });
 
   test('default port schema works for any valid port', () => {
-    const result = buildHotSwapHeaders({ 'x-api-key': 'deepclaude-3000' }, 65199);
-    expect(result['x-api-key']).toBe('deepclaude-65199');
+    const result = buildHotSwapHeaders({ 'x-api-key': 'defiant-3000' }, 65199);
+    expect(result['x-api-key']).toBe('defiant-65199');
     expect(result['host']).toBe('127.0.0.1:65199');
   });
 });

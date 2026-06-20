@@ -82,7 +82,7 @@ function getEnvVarsFromCode(): string[] {
   const vars = new Set<string>();
   for (const f of fs.readdirSync(PROXY_DIR).filter((f) => f.endsWith('.ts'))) {
     const content = fs.readFileSync(path.join(PROXY_DIR, f), 'utf-8');
-    for (const m of content.matchAll(/DEEPCLAUDE_[A-Z_]+/g)) vars.add(m[0]);
+    for (const m of content.matchAll(/DEFIANT_[A-Z_]+/g)) vars.add(m[0]);
   }
   return [...vars].sort();
 }
@@ -188,7 +188,7 @@ const MODULE_DESCRIPTIONS: Record<string, string> = {
   'friendly-error.ts': 'Conversational error responses for exhausted fallback chains',
   'header-sanitizer.ts': 'Request header sanitization before logging (drops auth, cookies, noise)',
   'log.ts':
-    'Structured logger with per-module namespacing, request IDs, and env-gated debug level (`DEEPCLAUDE_DEBUG=true`)',
+    'Structured logger with per-module namespacing, request IDs, and env-gated debug level (`DEFIANT_DEBUG=true`)',
   'momentum.ts': 'Session-based provider stickiness (tracks last 5 provider decisions)',
   'rate-limiter.ts': 'Per-IP fixed-window rate limiter with LRU eviction',
   'ssrf.ts':
@@ -198,7 +198,7 @@ const MODULE_DESCRIPTIONS: Record<string, string> = {
     'Startup health probe — concurrent non-streaming + streaming checks per provider before accepting connections',
   'stream-metrics.ts': 'Per-stream timing (TTFB, tokens/sec) and aggregated provider metrics',
   'request-log.ts':
-    'Opt-in request logging to `~/.deepclaude/requests.log` (`--log-all` or `DEEPCLAUDE_LOG_ALL_REQUESTS=true`)',
+    'Opt-in request logging to `~/.defiant/requests.log` (`--log-all` or `DEFIANT_LOG_ALL_REQUESTS=true`)',
   'session-key.ts':
     'SHA-256 session key derivation from conversation content, shared by thinking/reasoning caches and momentum',
   'prompt-router.ts':
@@ -210,7 +210,7 @@ const MODULE_DESCRIPTIONS: Record<string, string> = {
   'config-lint.ts': '`providers.json` structural validation (used by `--lint-config`)',
   'dry-run.ts': 'Resolved routing table display without starting the proxy (used by `--dry-run`)',
   'launcher.mjs':
-    'Unified Node.js engine shared by deepclaude.ps1, deepclaude.sh, and scripts/cli.mjs — config resolution, routes JSON, env vars with [1m] suffix and compaction window, slot/thinking overrides, proxy state, pricing/model/key data. Zero npm deps, single source of truth.',
+    'Unified Node.js engine shared by defiant.ps1, defiant.sh, and scripts/cli.mjs — config resolution, routes JSON, env vars with [1m] suffix and compaction window, slot/thinking overrides, proxy state, pricing/model/key data. Zero npm deps, single source of truth.',
 };
 
 function genModuleTable(): string {
@@ -270,17 +270,17 @@ function genNamedConfigsUsage(): string {
   // ds is the default — list it first without -b
   if (configs['ds']) {
     lines.push(
-      `deepclaude                  # ds (default) — ${configs['ds'].name || 'DeepSeek V4 Pro'}`,
+      `defiant                  # ds (default) — ${configs['ds'].name || 'DeepSeek V4 Pro'}`,
     );
     delete (configs as any)['ds'];
   }
   for (const [key, cfg] of Object.entries(configs).sort(([, a], [, b]) =>
     (a.name || key).localeCompare(b.name || key),
   )) {
-    lines.push(`deepclaude -b ${key.padEnd(15)} # ${cfg.name || key}`);
+    lines.push(`defiant -b ${key.padEnd(15)} # ${cfg.name || key}`);
   }
   // anthropic is a special pseudo-config
-  lines.push(`deepclaude -b anthropic     # Normal Claude Code`);
+  lines.push(`defiant -b anthropic     # Normal Claude Code`);
   return lines.join('\n');
 }
 
@@ -360,23 +360,23 @@ function genFallbackList(): string {
 function genEnvVarTable(): string {
   const proxyEnvs = getEnvVarsFromCode();
   const desc: Record<string, string> = {
-    DEEPCLAUDE_DEFAULT_BACKEND: `Default config name (falls back to \`ds\`; legacy \`CHEAPCLAUDE_DEFAULT_BACKEND\` also accepted)`,
-    DEEPCLAUDE_ENCRYPTION_KEY: `Master key for AES-256-GCM API key decryption (used with \`--encrypt-key\`)`,
-    DEEPCLAUDE_DAILY_BUDGET: `Daily spending cap in dollars (proxy rejects requests when exceeded)`,
-    DEEPCLAUDE_DEV: `Development mode — more verbose error details in responses (\`1\` or \`true\`)`,
-    DEEPCLAUDE_DEBUG: `Enable debug-level log output (\`true\`, \`1\`, or \`yes\`, case-insensitive)`,
-    DEEPCLAUDE_LOG_LEVEL: `Set log level (\`debug\` for verbose output; defaults to \`info\`)`,
-    DEEPCLAUDE_LOG_ALL_REQUESTS: `Log all requests to \`~/.deepclaude/requests.log\` (\`true\` to enable)`,
-    DEEPCLAUDE_SKIP_STARTUP_CHECK: `Skip provider health checks on proxy startup (\`true\` to skip)`,
-    DEEPCLAUDE_WATCHDOG: `Enable the proxy watchdog process (\`true\` to enable; off by default)`,
-    DEEPCLAUDE_MAX_CONCURRENT: `Max concurrent upstream requests for main slots (default: \`25\`)`,
-    DEEPCLAUDE_SUBAGENT_MAX_CONCURRENT: `Max concurrent upstream requests for subagent slots (default: \`8\`)`,
-    DEEPCLAUDE_STREAM_HEARTBEAT_MS: `Stream silence timeout in ms before heartbeat triggers (default: \`180000\`)`,
-    DEEPCLAUDE_STREAM_DEADLINE_MS: `Hard wall-clock cap on total streaming duration in ms (default: \`300000\`)`,
-    DEEPCLAUDE_SUBAGENT_STREAM_HEARTBEAT_MS: `Subagent stream heartbeat timeout in ms (default: \`90000\`)`,
-    DEEPCLAUDE_SUBAGENT_STREAM_DEADLINE_MS: `Hard wall-clock cap on subagent streaming duration in ms (default: \`90000\`)`,
-    DEEPCLAUDE_BUDGET_WARNING: `Fraction of daily budget at which to emit warnings (default: unset)`,
-    DEEPCLAUDE_DASHBOARD_KEY: `Shared secret for \`/dashboard\` and \`/health/stream\` endpoints (unset = no auth)`,
+    DEFIANT_DEFAULT_BACKEND: `Default config name (falls back to \`ds\`; legacy \`CHEAPCLAUDE_DEFAULT_BACKEND\` also accepted)`,
+    DEFIANT_ENCRYPTION_KEY: `Master key for AES-256-GCM API key decryption (used with \`--encrypt-key\`)`,
+    DEFIANT_DAILY_BUDGET: `Daily spending cap in dollars (proxy rejects requests when exceeded)`,
+    DEFIANT_DEV: `Development mode — more verbose error details in responses (\`1\` or \`true\`)`,
+    DEFIANT_DEBUG: `Enable debug-level log output (\`true\`, \`1\`, or \`yes\`, case-insensitive)`,
+    DEFIANT_LOG_LEVEL: `Set log level (\`debug\` for verbose output; defaults to \`info\`)`,
+    DEFIANT_LOG_ALL_REQUESTS: `Log all requests to \`~/.defiant/requests.log\` (\`true\` to enable)`,
+    DEFIANT_SKIP_STARTUP_CHECK: `Skip provider health checks on proxy startup (\`true\` to skip)`,
+    DEFIANT_WATCHDOG: `Enable the proxy watchdog process (\`true\` to enable; off by default)`,
+    DEFIANT_MAX_CONCURRENT: `Max concurrent upstream requests for main slots (default: \`25\`)`,
+    DEFIANT_SUBAGENT_MAX_CONCURRENT: `Max concurrent upstream requests for subagent slots (default: \`8\`)`,
+    DEFIANT_STREAM_HEARTBEAT_MS: `Stream silence timeout in ms before heartbeat triggers (default: \`180000\`)`,
+    DEFIANT_STREAM_DEADLINE_MS: `Hard wall-clock cap on total streaming duration in ms (default: \`300000\`)`,
+    DEFIANT_SUBAGENT_STREAM_HEARTBEAT_MS: `Subagent stream heartbeat timeout in ms (default: \`90000\`)`,
+    DEFIANT_SUBAGENT_STREAM_DEADLINE_MS: `Hard wall-clock cap on subagent streaming duration in ms (default: \`90000\`)`,
+    DEFIANT_BUDGET_WARNING: `Fraction of daily budget at which to emit warnings (default: unset)`,
+    DEFIANT_DASHBOARD_KEY: `Shared secret for \`/dashboard\` and \`/health/stream\` endpoints (unset = no auth)`,
   };
   const lines: string[] = [];
   lines.push('| Variable | Purpose |');
@@ -430,9 +430,9 @@ function genFlags(): string {
     '--effort LEVEL  Set Claude Code effort level (default: max). Values: low, medium, high, max.',
     '--fix-av        Print Windows Defender exclusion commands',
     '--install-statusline  Install status bar showing model, effort, context (requires restart)',
-    '--logs, --tail  Tail the proxy log (~/.deepclaude/proxy.log)',
+    '--logs, --tail  Tail the proxy log (~/.defiant/proxy.log)',
     '--health        Quick health check (one-line summary)',
-    '--log-all       Log all requests to ~/.deepclaude/requests.log (by default only failures are logged)',
+    '--log-all       Log all requests to ~/.defiant/requests.log (by default only failures are logged)',
     '--stats         Show proxy request stats and provider health',
     '--skip-startup-check  Skip provider health checks on proxy startup',
     '--no-thinking   Disable extended thinking for all models (save cost)',
