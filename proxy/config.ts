@@ -213,6 +213,32 @@ function safeReadJson(filePath: string, schema: JsonSchema): Record<string, unkn
     }
   }
 
+  // Deep validation: check thinking config entries have the expected shape.
+  // A malformed entry (e.g., string instead of {type, budget_tokens}) passes
+  // the top-level 'object' check but would cause applyThinkingConfig to fail
+  // silently when injecting thinking mode into requests.
+  const thinking = data.thinking as Record<string, unknown> | undefined;
+  if (thinking) {
+    for (const [modelId, entry] of Object.entries(thinking)) {
+      if (entry !== null && typeof entry === 'object') {
+        if (typeof (entry as Record<string, unknown>).type !== 'string') {
+          log.warn(
+            null,
+            'hot-reload skipped: thinking.' + modelId + '.type must be a string',
+          );
+          return null;
+        }
+        if (typeof (entry as Record<string, unknown>).budget_tokens !== 'number') {
+          log.warn(
+            null,
+            'hot-reload skipped: thinking.' + modelId + '.budget_tokens must be a number',
+          );
+          return null;
+        }
+      }
+    }
+  }
+
   return data;
 }
 // --- SSRF validation helper ---
@@ -493,6 +519,12 @@ export async function checkReload(state: ConfigState, parsed: ParsedArgs): Promi
         if (providersData.thinking) {
           const newThinking = JSON.stringify(providersData.thinking);
           if (JSON.stringify(state.thinkingConfig) !== newThinking) {
+            const old = JSON.stringify(state.thinkingConfig);
+            log.warn(
+              null,
+              'thinking config changed — this invalidates DeepSeek cache prefix (50x cost increase on next request). ' +
+                'Old: ' + old.slice(0, 200) + ' New: ' + newThinking.slice(0, 200),
+            );
             state.thinkingConfig = providersData.thinking;
             changed = true;
           }
@@ -566,6 +598,17 @@ export async function checkReload(state: ConfigState, parsed: ParsedArgs): Promi
       if (stat.mtimeMs >= state.overridesMtime) {
         const overridesData = safeReadJson(parsed.overridesFile, OVERRIDES_SCHEMA);
         if (overridesData) {
+          // Detect model changes for cache-prefix warning
+          const oldOverrides = JSON.stringify(state.slotOverrides);
+          const newOverridesStr = JSON.stringify(overridesData);
+          if (oldOverrides !== newOverridesStr) {
+            log.warn(
+              null,
+              'slot overrides changed — this may change the upstream model in the request body, ' +
+                'invalidating DeepSeek cache prefix (50x cost increase on next request). ' +
+                'Old: ' + oldOverrides.slice(0, 200) + ' New: ' + newOverridesStr.slice(0, 200),
+            );
+          }
           state.slotOverrides = overridesData as Record<string, string>;
           state.overridesMtime = stat.mtimeMs;
           changed = true;

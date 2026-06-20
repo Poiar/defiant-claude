@@ -7,9 +7,10 @@ import path from 'node:path';
 import { LruCache } from './lru-cache';
 import { sessionKey } from './session-key';
 
-// 30-minute TTL, bounded to 1000 entries
-const TTL_MS = 30 * 60 * 1000;
-const MAX_ENTRIES = 1000;
+// 24-hour TTL, bounded to 10000 entries. Matches DeepSeek's hours-to-days
+// disk cache persistence — a 30-min TTL caused cache misses on idle gaps.
+const TTL_MS = 24 * 60 * 60 * 1000;
+const MAX_ENTRIES = 10000;
 
 // Persist to ~/.deepclaude/reasoning-cache/ so cached reasoning survives proxy
 // restarts. Without this, kill+resume causes OpenAI-format providers to lose
