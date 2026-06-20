@@ -113,10 +113,11 @@ export function resolvePromptRoute(
 }
 
 // Cap max_tokens by tier to reduce output costs ($0.87/M).
-// TRIVIAL → 1024, CHAT → 4096, CODE/TOOL/HEAVY → no cap.
+// TRIVIAL → 1024, CHAT → 4096, TOOL → 8192, CODE/HEAVY → no cap.
+// TOOL responses (edit/write/bash output) rarely need more than 8K tokens.
 // Returns the capped value, or the original if no cap applies.
 export function capMaxTokens(maxTokens: number, tier: string): number {
-  const caps: Record<string, number> = { TRIVIAL: 1024, CHAT: 4096 };
+  const caps: Record<string, number> = { TRIVIAL: 1024, CHAT: 4096, TOOL: 8192 };
   const cap = caps[tier];
   if (cap && maxTokens > cap) {
     return cap;

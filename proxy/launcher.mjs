@@ -299,17 +299,47 @@ export function buildRoutesJson(resolved, includeAllModels = true) {
     if (!model.startsWith('_')) ctxLimits[model] = limit;
   }
 
-  // Default prompt-router: route trivial requests to free providers.
-  // Trivial requests are <50 char single messages (greetings, "ok", "thanks").
-  // These don't need expensive models — free providers handle them fine.
+  // Default prompt-router: route simple + mechanical requests to cheaper models.
+  // TRIVIAL: <50 char single messages → free provider (greetings, "ok", "thanks")
+  // TOOL: requests with tool definitions → flash (read/edit/write/bash)
+  // CHAT: conversational turns without reasoning → flash
+  // HEAVY: very long context (>32K tokens) → flash (attention dilution anyway)
+  // CODE stays on pro for reasoning quality.
+  // Saves ~3× on cache-miss ($0.14/M flash vs $0.435/M pro) for bulk turns.
+  const DEFAULT_FLASH = { provider: 'ds', model: 'deepseek-v4-flash' };
   const promptRouter = {
     enabled: true,
     routes: {
-      opus: [{ tier: 'TRIVIAL', provider: 'oc', model: 'big-pickle' }],
-      sonnet: [{ tier: 'TRIVIAL', provider: 'oc', model: 'big-pickle' }],
-      haiku: [{ tier: 'TRIVIAL', provider: 'oc', model: 'big-pickle' }],
-      subagent: [{ tier: 'TRIVIAL', provider: 'oc', model: 'big-pickle' }],
-      fable: [{ tier: 'TRIVIAL', provider: 'oc', model: 'big-pickle' }],
+      opus: [
+        { tier: 'TRIVIAL', provider: 'oc', model: 'big-pickle' },
+        { tier: 'TOOL', ...DEFAULT_FLASH },
+        { tier: 'CHAT', ...DEFAULT_FLASH },
+        { tier: 'HEAVY', ...DEFAULT_FLASH },
+      ],
+      sonnet: [
+        { tier: 'TRIVIAL', provider: 'oc', model: 'big-pickle' },
+        { tier: 'TOOL', ...DEFAULT_FLASH },
+        { tier: 'CHAT', ...DEFAULT_FLASH },
+        { tier: 'HEAVY', ...DEFAULT_FLASH },
+      ],
+      haiku: [
+        { tier: 'TRIVIAL', provider: 'oc', model: 'big-pickle' },
+        { tier: 'TOOL', ...DEFAULT_FLASH },
+        { tier: 'CHAT', ...DEFAULT_FLASH },
+        { tier: 'HEAVY', ...DEFAULT_FLASH },
+      ],
+      subagent: [
+        { tier: 'TRIVIAL', provider: 'oc', model: 'big-pickle' },
+        { tier: 'TOOL', ...DEFAULT_FLASH },
+        { tier: 'CHAT', ...DEFAULT_FLASH },
+        { tier: 'HEAVY', ...DEFAULT_FLASH },
+      ],
+      fable: [
+        { tier: 'TRIVIAL', provider: 'oc', model: 'big-pickle' },
+        { tier: 'TOOL', ...DEFAULT_FLASH },
+        { tier: 'CHAT', ...DEFAULT_FLASH },
+        { tier: 'HEAVY', ...DEFAULT_FLASH },
+      ],
     },
   };
 
