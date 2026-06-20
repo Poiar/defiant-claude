@@ -112,4 +112,20 @@ export class LruCache<T> {
     }
     this._map.clear();
   }
+
+  /** Destroy all cache instances and stop the shared cleanup timer. */
+  static resetAll(): void {
+    for (const cache of allCaches) {
+      cache._map.clear();
+    }
+    allCaches.clear();
+    if (cleanupTimer) {
+      try {
+        clearInterval(cleanupTimer);
+      } catch {
+        /* Jest afterAll may not have timer globals */
+      }
+      cleanupTimer = null;
+    }
+  }
 }

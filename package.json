@@ -11,10 +11,10 @@
   },
   "scripts": {
     "lint": "pwsh -c \"Invoke-ScriptAnalyzer -Path deepclaude.ps1\" && npx eslint proxy/ --max-warnings 0 && wsl bash -c \"echo 'testtest' | sudo -S shellcheck /mnt/c/OC/deepclaude/deepclaude.sh\"",
-    "test": "jest proxy/__tests__ --no-coverage",
+    "test": "jest proxy/__tests__ --no-coverage --forceExit",
     "test:coverage": "jest proxy/__tests__ --coverage",
-    "qa:cache": "jest proxy/__tests__/thinking-cache.test.ts proxy/__tests__/reasoning-cache.test.ts proxy/__tests__/forward.test.ts proxy/__tests__/config.test.ts proxy/__tests__/protocol-types.test.ts proxy/__tests__/launcher.test.ts --no-coverage",
-    "qa:all": "npm run qa:cache && jest proxy/__tests__ --no-coverage --testPathPattern=dead-stream",
+    "qa:cache": "jest proxy/__tests__/thinking-cache.test.ts proxy/__tests__/reasoning-cache.test.ts proxy/__tests__/forward.test.ts proxy/__tests__/config.test.ts proxy/__tests__/protocol-types.test.ts proxy/__tests__/launcher.test.ts --no-coverage --forceExit",
+    "qa:all": "npm run qa:cache && jest proxy/__tests__ --no-coverage --testPathPattern=dead-stream --forceExit",
     "doctor": "pwsh deepclaude.ps1 --doctor",
     "start": "npx tsx proxy/start-proxy.ts",
     "start:ts": "npx tsx proxy/start-proxy.ts",

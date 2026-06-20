@@ -78,4 +78,8 @@ describe('LruCache', () => {
         cache.destroy();
         expect(cache.size).toBe(0);
     });
+
+    afterAll(() => {
+        LruCache.resetAll();
+    });
 });

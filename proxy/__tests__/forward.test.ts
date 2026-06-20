@@ -12,6 +12,7 @@ import {
   extractStreamUsage,
   StreamUsageAccumulator,
 } from '../forward';
+import { LruCache } from '../lru-cache';
 
 describe('addFallbackHeaders', () => {
   test('adds fallback-from header', () => {
@@ -840,5 +841,9 @@ describe('extractStreamUsage', () => {
     expect(acc.prompt_tokens).toBe(500);
     expect(acc.cache_hit_tokens).toBe(450);
     expect(acc.cache_miss_tokens).toBe(50);
+  });
+
+  afterAll(() => {
+    LruCache.resetAll();
   });
 });

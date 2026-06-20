@@ -2,6 +2,7 @@
 
 import { store, injectThinkingBlocks, extractThinkingBlocks, Message } from '../thinking-cache';
 import { sessionKey } from '../session-key';
+import { LruCache } from '../lru-cache';
 
 // --- Helpers ---
 
@@ -778,5 +779,9 @@ describe('kill+resume: disk persistence round-trip', () => {
     expect(e.messageCount).toBe(42);
     expect(typeof e.storedAt).toBe('number');
     expect(e.storedAt).toBeGreaterThan(Date.now() - 10000);
+  });
+
+  afterAll(() => {
+    LruCache.resetAll();
   });
 });

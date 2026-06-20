@@ -6,6 +6,7 @@ import {
   store,
   reinjectReasoningContent,
 } from '../reasoning-cache';
+import { LruCache } from '../lru-cache';
 
 interface ToolCall {
   id: string;
@@ -401,5 +402,9 @@ describe('pipe delimiter safety', () => {
     const result = reinjectReasoningContent(injectMsgs);
     expect(result.modified).toBe(true);
     expect(result.messages[1].reasoning_content).toBe('underscore id reasoning');
+  });
+
+  afterAll(() => {
+    LruCache.resetAll();
   });
 });
