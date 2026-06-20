@@ -76,6 +76,7 @@ import {
 import { checkBudgetNotifications } from './notify';
 import { validateConfig as lintValidateConfig } from './config-lint';
 import { serveDashboard } from './dashboard';
+import { handleAdminRequest } from './admin';
 import {
   formatError,
   formatExhaustedError,
@@ -717,6 +718,22 @@ if (probeIdx >= 2) {
     // --- Dashboard routes (always available when proxy is running) ---
     if (
       serveDashboard(req, res, concurrency.status(), mainRateLimiter.status(), providerDisplayNames)
+    )
+      return;
+
+    // --- Admin API routes ---
+    if (
+      handleAdminRequest(req, res, {
+        overridesFile: parsed.overridesFile,
+        thinkingOverridesFile: parsed.thinkingOverridesFile,
+        providersFile: parsed.providersFile,
+        routing: state.routing as unknown as Record<string, unknown> | null,
+        slotOverrides: state.slotOverrides,
+        concurrencyStatus: concurrency.status(),
+        rateLimiterStatus: mainRateLimiter.status(),
+        port: parsed.port || 0,
+        providerDisplayNames,
+      })
     )
       return;
 
