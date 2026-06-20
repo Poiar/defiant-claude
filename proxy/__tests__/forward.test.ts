@@ -786,3 +786,59 @@ describe('addFallbackHeaders — edge cases', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// extractStreamUsage — usage extraction from SSE payloads, including truncation
+// ---------------------------------------------------------------------------
+describe('extractStreamUsage', () => {
+  test('extracts Anthropic-format cache tokens', () => {
+    const acc: StreamUsageAccumulator = { prompt_tokens: 0, completion_tokens: 0, cache_hit_tokens: 0, cache_miss_tokens: 0 };
+    extractStreamUsage('{"usage":{"prompt_tokens":100,"completion_tokens":50,"prompt_cache_hit_tokens":80,"prompt_cache_miss_tokens":20}}', acc);
+    expect(acc.prompt_tokens).toBe(100);
+    expect(acc.completion_tokens).toBe(50);
+    expect(acc.cache_hit_tokens).toBe(80);
+    expect(acc.cache_miss_tokens).toBe(20);
+  });
+
+  test('extracts OpenAI-format cache tokens', () => {
+    const acc: StreamUsageAccumulator = { prompt_tokens: 0, completion_tokens: 0, cache_hit_tokens: 0, cache_miss_tokens: 0 };
+    extractStreamUsage('{"usage":{"input_tokens":200,"output_tokens":30,"cache_read_input_tokens":180,"cache_creation_input_tokens":20}}', acc);
+    expect(acc.prompt_tokens).toBe(200);
+    expect(acc.completion_tokens).toBe(30);
+    expect(acc.cache_hit_tokens).toBe(180);
+    expect(acc.cache_miss_tokens).toBe(20);
+  });
+
+  test('handles [DONE] payload', () => {
+    const acc: StreamUsageAccumulator = { prompt_tokens: 0, completion_tokens: 0, cache_hit_tokens: 0, cache_miss_tokens: 0 };
+    extractStreamUsage('[DONE]', acc);
+    expect(acc.prompt_tokens).toBe(0);
+  });
+
+  test('handles malformed JSON gracefully', () => {
+    const acc: StreamUsageAccumulator = { prompt_tokens: 0, completion_tokens: 0, cache_hit_tokens: 0, cache_miss_tokens: 0 };
+    extractStreamUsage('not json', acc);
+    expect(acc.prompt_tokens).toBe(0);
+  });
+
+  test('preserves last usage event after simulated truncation (overflow guard)', () => {
+    // Simulate what happens after the 1MB rawUsageBuf overflow guard runs:
+    // the last complete event should have its usage extracted
+    const acc: StreamUsageAccumulator = { prompt_tokens: 0, completion_tokens: 0, cache_hit_tokens: 0, cache_miss_tokens: 0 };
+    // The overflow guard splits at the last \n\n and processes complete events
+    // before discarding. This simulates that extraction.
+    const overflowChunk = 'data: {"type":"ping"}\n\ndata: {"usage":{"prompt_tokens":500,"completion_tokens":25,"prompt_cache_hit_tokens":450,"prompt_cache_miss_tokens":50}}\n\n';
+    const parts = overflowChunk.split('\n\n').filter(Boolean);
+    for (const part of parts) {
+      const dataLines = [...part.matchAll(/^data: ?(.*)$/gm)];
+      if (!dataLines.length) continue;
+      const payload = dataLines.map((m) => m[1]).join('\n');
+      if (payload === '[DONE]') continue;
+      extractStreamUsage(payload, acc);
+    }
+    // Usage from the last event should be preserved
+    expect(acc.prompt_tokens).toBe(500);
+    expect(acc.cache_hit_tokens).toBe(450);
+    expect(acc.cache_miss_tokens).toBe(50);
+  });
+});

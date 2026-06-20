@@ -438,8 +438,14 @@ export function loadConfig(parsed: ParsedArgs): ConfigState {
 
   if (parsed.routesFile) {
     try {
-      routing = readJson(parsed.routesFile) as RoutingConfig;
-      routesMtime = fs.statSync(parsed.routesFile).mtimeMs;
+      const routesData = safeReadJson(parsed.routesFile, ROUTES_SCHEMA);
+      if (routesData) {
+        routing = routesData as RoutingConfig;
+        routesMtime = fs.statSync(parsed.routesFile).mtimeMs;
+      } else {
+        log.error(null, 'Failed to validate routes file — proxy cannot start');
+        process.exit(1);
+      }
     } catch (e) {
       log.error(null, 'Failed to load routes file: ' + (e as Error).message);
       process.exit(1);
@@ -456,9 +462,11 @@ export function loadConfig(parsed: ParsedArgs): ConfigState {
   // Patch provider metadata from providers.json (direct read, hot-reloadable)
   if (parsed.providersFile && routing) {
     try {
-      const providersData = readJson(parsed.providersFile) as ProvidersData;
-      applyProviderMetadata(routing, providersData);
-      if (providersData.thinking) thinkingConfig = providersData.thinking;
+      const providersData = safeReadJson(parsed.providersFile, PROVIDERS_SCHEMA);
+      if (providersData) {
+        applyProviderMetadata(routing, providersData as ProvidersData);
+        if (providersData.thinking) thinkingConfig = providersData.thinking;
+      }
       providersMtime = fs.statSync(parsed.providersFile).mtimeMs;
     } catch (e) {
       log.warn(null, 'Failed to load providers metadata: ' + (e as Error).message);
