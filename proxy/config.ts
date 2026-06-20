@@ -549,6 +549,16 @@ export async function checkReload(state: ConfigState, parsed: ParsedArgs): Promi
     try {
       const stat = fs.statSync(state.thinkingOverridesFile);
       if (stat.mtimeMs >= state.thinkingOverridesMtime) {
+        const oldStr = JSON.stringify(state.thinkingConfig);
+        state.thinkingConfig = applyThinkingOverrides(state.thinkingConfig, state.thinkingOverridesFile);
+        const newStr = JSON.stringify(state.thinkingConfig);
+        if (oldStr !== newStr) {
+          log.warn(
+            null,
+            'thinking overrides changed — this may change the thinking budget in the request body, ' +
+              'invalidating DeepSeek cache prefix (50x cost increase).',
+          );
+        }
         state.thinkingOverridesMtime = stat.mtimeMs;
         changed = true;
       }
