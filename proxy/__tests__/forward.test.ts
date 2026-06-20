@@ -11,6 +11,7 @@ import {
   STREAM_HEARTBEAT_MS,
   extractStreamUsage,
   StreamUsageAccumulator,
+  _destroyForTest,
 } from '../forward';
 import { LruCache } from '../lru-cache';
 
@@ -845,5 +846,6 @@ describe('extractStreamUsage', () => {
 
   afterAll(() => {
     LruCache.resetAll();
+    _destroyForTest();
   });
 });

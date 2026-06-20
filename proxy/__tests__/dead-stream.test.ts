@@ -5,6 +5,7 @@ import {
   STREAM_HEARTBEAT_MS,
   STREAM_READ_TIMEOUT_MS,
   peekFirstChunk,
+  _destroyForTest,
 } from '../forward';
 import type { ForwardResult } from '../forward';
 
@@ -128,5 +129,9 @@ describe('peekFirstChunk dead stream behavior', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  afterAll(() => {
+    _destroyForTest();
   });
 });

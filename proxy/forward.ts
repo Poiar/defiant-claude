@@ -1441,3 +1441,13 @@ export function extractStreamUsage(ssePayload: string, acc: StreamUsageAccumulat
     acc.cache_miss_tokens = (usage.cache_creation_input_tokens as number) || 0;
   }
 }
+
+// ── Test cleanup ─────────────────────────────────────────────────────
+// Destroys all keepAlive HTTP agents so Jest workers can exit cleanly
+// without --forceExit. Called from afterAll hooks in test files.
+
+export function _destroyForTest(): void {
+  upstreamAgent.destroy();
+  if (_tunnelHttpAgent) _tunnelHttpAgent.destroy();
+  if (_tunnelHttpsAgent) _tunnelHttpsAgent.destroy();
+}
