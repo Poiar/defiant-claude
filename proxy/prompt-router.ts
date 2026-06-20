@@ -112,6 +112,14 @@ export function resolvePromptRoute(
   return null;
 }
 
+// Flash-tier requests skip per-provider retries.  They're already on the
+// cheapest paid model — retrying just doubles cost for no benefit.
+// CODE stays with normal retries (2) for reasoning quality.
+export function maxRetriesForTier(tier: string | null | undefined): number {
+  if (tier && (tier === 'TOOL' || tier === 'CHAT' || tier === 'HEAVY')) return 0;
+  return 2; // MAX_PER_PROVIDER_RETRIES
+}
+
 // Cap max_tokens by tier to reduce output costs ($0.87/M).
 // TRIVIAL → 1024, CHAT → 4096, TOOL → 8192, CODE/HEAVY → no cap.
 // TOOL responses (edit/write/bash output) rarely need more than 8K tokens.

@@ -27,7 +27,7 @@ import {
   getEffectiveThinkingConfig,
 } from './config';
 import { resolveTarget, ResolvedTarget } from './routing';
-import { classifyRequest, resolvePromptRoute } from './prompt-router';
+import { classifyRequest, resolvePromptRoute, maxRetriesForTier } from './prompt-router';
 import {
   bodyHash,
   shouldUseCanary,
@@ -111,7 +111,8 @@ function getGitHash(): string {
 // Retry config for transient upstream transport errors.
 // Each provider in the fallback chain gets up to 3 retries with exponential
 // backoff before the proxy moves on to the next fallback provider.
-const MAX_PER_PROVIDER_RETRIES = 2; // 1 initial + 2 retries = 3 total attempts
+// Flash-tier (TOOL/CHAT/HEAVY) requests skip retries via maxRetriesForTier()
+// in prompt-router.ts — they're already on the cheapest paid model.
 const RETRY_BASE_DELAY_MS = 800; // 800ms -> 1.6s
 
 // Status codes that warrant trying a different provider.
@@ -1549,12 +1550,14 @@ if (probeIdx >= 2) {
                 stripProviderFields,
                 stripSystemBillingHeader,
                 stripCacheControl,
+                stripDuplicateMessages,
               } = require('./protocol-types');
               const p = JSON.parse(forwardedBody.toString());
               const stripped = stripProviderFields(p, constraints);
               const billingStripped = stripSystemBillingHeader(p);
               const cacheStripped = stripCacheControl(p);
-              if (stripped || billingStripped || cacheStripped) {
+              const dedupStripped = stripDuplicateMessages(p);
+              if (stripped || billingStripped || cacheStripped || dedupStripped) {
                 forwardedBody = Buffer.from(JSON.stringify(p));
               }
             } catch (_) {
@@ -1872,8 +1875,10 @@ if (probeIdx >= 2) {
 
           // Per-provider retry loop: retry transport errors with exponential
           // backoff before moving to the next fallback provider.
+          // Flash-tier requests skip retries (already on cheapest paid model).
+          const perProviderRetries = maxRetriesForTier(classification?.tier);
           let result: ForwardResult = { success: false };
-          for (let provAttempt = 0; provAttempt <= MAX_PER_PROVIDER_RETRIES; provAttempt++) {
+          for (let provAttempt = 0; provAttempt <= perProviderRetries; provAttempt++) {
             // Acquire per-slot concurrency slot before each attempt.
             // Subagent requests use a dedicated pool to prevent starvation.
             const { promise: slotPromise, cancel: cancelSlot } = concurrency.acquire(slot);
@@ -1942,7 +1947,7 @@ if (probeIdx >= 2) {
             if (!result.transportError) break;
 
             // Transport error, retries left -> backoff and retry
-            if (provAttempt < MAX_PER_PROVIDER_RETRIES) {
+            if (provAttempt < perProviderRetries) {
               const baseDelay = RETRY_BASE_DELAY_MS * Math.pow(2, provAttempt);
               // Add ±25% jitter to prevent thundering herd on simultaneous failures
               const jitter = (Math.random() - 0.5) * baseDelay * 0.5;
@@ -1955,7 +1960,7 @@ if (probeIdx >= 2) {
                   ', retrying in ' +
                   delay +
                   'ms (' +
-                  (MAX_PER_PROVIDER_RETRIES - provAttempt) +
+                  (perProviderRetries - provAttempt) +
                   ' left)',
               );
               await new Promise((r) => setTimeout(r, delay));
