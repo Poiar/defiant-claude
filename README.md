@@ -17,6 +17,7 @@ Defiant runs a local HTTP routing proxy that intercepts Claude Code's Anthropic 
 <!-- AUTO:modules -->
 | Module | Purpose |
 |---|---|
+| `admin.ts` | (undocumented) |
 | `canary.ts` | Canary routing state machine (COLD → WARMING → ACTIVE) with configurable rollout percentages and rollback |
 | `concurrency.ts` | Promise-queue-based semaphore with FIFO ordering and acquire/release pump pattern |
 | `config-lint.ts` | `providers.json` structural validation (used by `--lint-config`) |
