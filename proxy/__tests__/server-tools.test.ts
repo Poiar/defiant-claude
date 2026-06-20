@@ -1673,6 +1673,99 @@ describe('search engine backends', () => {
     const results = await webSearchStructured('test all');
     expect(results.length).toBe(4); // 2 DDG + 1 SearXNG + 1 Brave
   });
+
+  // =========================================================================
+  // Exa search
+  // =========================================================================
+  describe('Exa search', () => {
+    test('Exa: parses API response correctly', async () => {
+      process.env.DEEPCLAUDE_SEARCH_ENGINES = 'exa';
+      process.env.EXA_API_KEY = 'test-exa-key';
+      process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
+
+      mockFetch.mockResolvedValue(
+        makeMockFetchResponse({
+          results: [
+            {
+              url: 'https://exa-result.com/article',
+              title: 'Exa Article',
+              text: 'Full text content from Exa about AI research.',
+            },
+            {
+              url: 'https://exa2.com/blog',
+              title: 'Exa Blog Post',
+              highlights: ['Short highlight from Exa search.'],
+            },
+          ],
+        }),
+      );
+
+      const results = await webSearchStructured('test exa');
+      expect(results.length).toBe(2);
+      expect(results[0].title).toBe('Exa Article');
+      expect(results[0].url).toBe('https://exa-result.com/article');
+      expect(results[0].snippet).toContain('Full text content');
+      expect(results[1].title).toBe('Exa Blog Post');
+      expect(results[1].snippet).toContain('Short highlight');
+    });
+
+    test('Exa: skipped when API key not set', async () => {
+      process.env.DEEPCLAUDE_SEARCH_ENGINES = 'exa';
+      delete process.env.EXA_API_KEY;
+      process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
+
+      const results = await webSearchStructured('test no key');
+      expect(results.length).toBe(0);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    test('Exa: returns empty on network error', async () => {
+      process.env.DEEPCLAUDE_SEARCH_ENGINES = 'exa';
+      process.env.EXA_API_KEY = 'test-exa-key';
+      process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
+
+      mockFetch.mockRejectedValue(new Error('network error'));
+
+      const results = await webSearchStructured('test exa error');
+      expect(results.length).toBe(0);
+    });
+
+    test('Exa: returns empty on non-200 response', async () => {
+      process.env.DEEPCLAUDE_SEARCH_ENGINES = 'exa';
+      process.env.EXA_API_KEY = 'test-exa-key';
+      process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
+
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 429,
+        text: jest.fn().mockResolvedValue(''),
+      });
+
+      const results = await webSearchStructured('test exa rate');
+      expect(results.length).toBe(0);
+    });
+
+    test('Exa: filters results without url or title', async () => {
+      process.env.DEEPCLAUDE_SEARCH_ENGINES = 'exa';
+      process.env.EXA_API_KEY = 'test-exa-key';
+      process.env.DEEPCLAUDE_SEARCH_NO_NETWORK = '';
+
+      mockFetch.mockResolvedValue(
+        makeMockFetchResponse({
+          results: [
+            { url: 'https://good.com', title: 'Good', text: 'valid result' },
+            { url: '', title: 'No URL' },
+            { title: 'No URL either' },
+            {},
+          ],
+        }),
+      );
+
+      const results = await webSearchStructured('test exa filter');
+      expect(results.length).toBe(1);
+      expect(results[0].url).toBe('https://good.com');
+    });
+  });
 });
 
 // =========================================================================

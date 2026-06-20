@@ -153,7 +153,7 @@ describe('store and retrieve (via reinjectReasoningContent)', () => {
       asstMsg('response', [toolCall('call_roundtrip')]),
     ];
     const sk = sessionKey(generateBody(messages))!;
-    store(sk, 'call_roundtrip', 'some reasoning content', messages.length);
+    store(sk, 'call_roundtrip', 'some reasoning content');
 
     const result = reinjectReasoningContent(messages);
     expect(result.modified).toBe(true);
@@ -166,7 +166,7 @@ describe('store and retrieve (via reinjectReasoningContent)', () => {
     // Cache keys on sessionKey + firstToolCallId only (UUID is unique).
     // No fingerprint needed — the old fingerprint-based cache had a bug
     // where extraction and injection computed different fps across turns.
-    store(sk, 'call_nofp', 'reasoning', messages.length);
+    store(sk, 'call_nofp', 'reasoning');
 
     const result = reinjectReasoningContent(messages);
     expect(result.modified).toBe(true);
@@ -187,8 +187,8 @@ describe('store and retrieve (via reinjectReasoningContent)', () => {
     const skA = sessionKey(generateBody(messagesA))!;
     const skB = sessionKey(generateBody(messagesB))!;
 
-    store(skA, 'call_1', 'content a', messagesA.length);
-    store(skB, 'call_1', 'content b', messagesB.length);
+    store(skA, 'call_1', 'content a');
+    store(skB, 'call_1', 'content b');
 
     const resultA = reinjectReasoningContent(messagesA);
     expect(resultA.modified).toBe(true);
@@ -209,7 +209,7 @@ describe('reinjectReasoningContent', () => {
       userMsg('inject test'),
       asstMsg('tool response', [toolCall('call_inject')]),
     ];
-    store(sk, 'call_inject', 'cached reasoning', requestMessages.length);
+    store(sk, 'call_inject', 'cached reasoning');
 
     const result = reinjectReasoningContent(requestMessages);
     expect(result.modified).toBe(true);
@@ -246,7 +246,7 @@ describe('reinjectReasoningContent', () => {
       userMsg('non-asst'),
       { role: 'user', content: 'user tool result', tool_calls: [toolCall('call_user')] },
     ];
-    store(sk, 'call_user', 'should not appear', testMessages.length);
+    store(sk, 'call_user', 'should not appear');
 
     const result = reinjectReasoningContent(testMessages);
     expect(result.modified).toBe(false);
@@ -267,7 +267,7 @@ describe('reinjectReasoningContent', () => {
       asstMsg('first turn', [toolCall('call_first')]),
       asstMsg('second turn', [toolCall('call_second')]),
     ];
-    store(sk, 'call_first', 'first reasoning', requestMessages.length);
+    store(sk, 'call_first', 'first reasoning');
 
     const result = reinjectReasoningContent(requestMessages);
     expect(result.modified).toBe(true);
@@ -284,8 +284,8 @@ describe('reinjectReasoningContent', () => {
       asstMsg('first tool', [toolCall('call_pos_1')]),
       asstMsg('second tool', [toolCall('call_pos_2')]),
     ];
-    store(sk, 'call_pos_1', 'pos 1', requestMessages.length);
-    store(sk, 'call_pos_2', 'pos 2', requestMessages.length);
+    store(sk, 'call_pos_1', 'pos 1');
+    store(sk, 'call_pos_2', 'pos 2');
 
     const result = reinjectReasoningContent(requestMessages);
     expect(result.modified).toBe(true);
@@ -293,7 +293,7 @@ describe('reinjectReasoningContent', () => {
     expect(result.messages[2].reasoning_content).toBe('pos 2');
   });
 
-  test('messageCount guard: does not inject when stored message count differs', () => {
+  test('injects regardless of message count (messageCount guard was removed as dead code)', () => {
     const messages = [userMsg('msgcount guard')];
     const sk = sessionKey(generateBody(messages))!;
 
@@ -301,11 +301,11 @@ describe('reinjectReasoningContent', () => {
       userMsg('msgcount guard'),
       asstMsg('tool response', [toolCall('call_guard')]),
     ];
-    // Store with messageCount=99 — far larger than the actual 2 messages
-    store(sk, 'call_guard', 'guarded reasoning', 99);
+    store(sk, 'call_guard', 'guarded reasoning');
 
     const result = reinjectReasoningContent(requestMessages);
-    expect(result.modified).toBe(false);
+    expect(result.modified).toBe(true);
+    expect(result.messages[1].reasoning_content).toBe('guarded reasoning');
   });
 });
 
@@ -378,7 +378,7 @@ describe('pipe delimiter safety', () => {
     expect(extracted).not.toBeNull();
     const { sk, firstToolCallId, reasoningContent } = extracted!;
 
-    store(sk, firstToolCallId, reasoningContent, msgs.length);
+    store(sk, firstToolCallId, reasoningContent);
 
     // Retrieve — must find the entry
     const injectMsgs = [userMsg('pipe test'), asstMsg('', [toolCall('call_pipe_test')])];
@@ -395,7 +395,7 @@ describe('pipe delimiter safety', () => {
     const extracted = extractReasoningContent(msgs);
     expect(extracted).not.toBeNull();
 
-    store(extracted!.sk, extracted!.firstToolCallId, extracted!.reasoningContent, msgs.length);
+    store(extracted!.sk, extracted!.firstToolCallId, extracted!.reasoningContent);
 
     const injectMsgs = [userMsg('underscore id test'), asstMsg('', [toolCall(callId)])];
     const result = reinjectReasoningContent(injectMsgs);

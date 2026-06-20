@@ -600,6 +600,7 @@ export async function webSearchStructured(query: string): Promise<SearchResult[]
   // Env-controlled engine selection.
   // Default: searxng first (local Docker, fastest), then ddg (free, no key).
   // Add 'brave' when DEEPCLAUDE_BRAVE_API_KEY is set (2000 free calls/mo).
+  // Add 'exa' when EXA_API_KEY is set (20,000 free requests/mo).
   const engines = (envWithRegistry('DEEPCLAUDE_SEARCH_ENGINES') || 'searxng,ddg')
     .toLowerCase()
     .split(',')
@@ -612,6 +613,7 @@ export async function webSearchStructured(query: string): Promise<SearchResult[]
   if (engines.includes('ddg')) tasks.push(searchDDG(query));
   if (engines.includes('searxng')) tasks.push(searchSearXNG(query));
   if (engines.includes('brave')) tasks.push(searchBrave(query));
+  if (engines.includes('exa')) tasks.push(searchExa(query));
 
   const settled = await Promise.allSettled(tasks);
   const engineResults: SearchResult[][] = settled.map((s) =>
@@ -794,6 +796,53 @@ async function searchBrave(query: string): Promise<SearchResult[]> {
         title: String(r.title || '').slice(0, 200),
         url: String(r.url || ''),
         snippet: String(r.description || r.snippet || '').slice(0, 500),
+      }));
+  } catch {
+    return [];
+  }
+}
+
+/** Exa Search API — requires EXA_API_KEY env var, 20,000 free requests/month. */
+async function searchExa(query: string): Promise<SearchResult[]> {
+  if (process.env.DEEPCLAUDE_SEARCH_NO_NETWORK) return [];
+  const apiKey = envWithRegistry('EXA_API_KEY');
+  if (!apiKey) return [];
+
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+
+    const res = await fetch('https://api.exa.ai/search', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'User-Agent': 'deepclaude-proxy/1.0',
+      },
+      body: JSON.stringify({
+        query,
+        numResults: 10,
+        text: true,
+        type: 'auto',
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timer);
+    if (!res.ok) return [];
+
+    const text = await res.text();
+    if (text.length > 500_000) return [];
+
+    const parsed = JSON.parse(text);
+    const results = (parsed.results || []) as Array<Record<string, unknown>>;
+    return results
+      .filter((r) => r.url && r.title)
+      .slice(0, 20)
+      .map((r) => ({
+        title: String(r.title || '').slice(0, 200),
+        url: String(r.url || ''),
+        snippet: String((r as any).highlights?.[0] || r.text || '').slice(0, 500),
       }));
   } catch {
     return [];

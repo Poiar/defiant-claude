@@ -1132,13 +1132,7 @@ export function tryForward(
                       },
                     ];
                     const rc = extractReasoningContent(fullMessages as ReasoningMessage[]);
-                    if (rc)
-                      storeReasoning(
-                        rc.sk,
-                        rc.firstToolCallId,
-                        rc.reasoningContent,
-                        fullMessages.length,
-                      );
+                    if (rc) storeReasoning(rc.sk, rc.firstToolCallId, rc.reasoningContent);
                   }
                 } catch (_) {
                   /* non-fatal */

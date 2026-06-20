@@ -43,7 +43,6 @@ function writeToDisk(key: string, entry: CachedEntry): void {
       JSON.stringify({
         key,
         reasoningContent: entry.reasoningContent,
-        messageCount: entry.messageCount,
         storedAt: Date.now(),
       }),
       'utf-8',
@@ -84,7 +83,6 @@ function loadFromDisk(): void {
         if (cache.get(data.key)) continue;
         cache.set(data.key, {
           reasoningContent: data.reasoningContent,
-          messageCount: data.messageCount ?? -1,
         });
       } catch {
         try {
@@ -126,7 +124,6 @@ export interface Message {
 
 interface CachedEntry {
   reasoningContent: string;
-  messageCount: number;
 }
 
 interface ExtractResult {
@@ -171,11 +168,10 @@ export function store(
   sk: string | null | undefined,
   firstToolCallId: string | null | undefined,
   reasoningContent: string | null | undefined,
-  messageCount: number = -1,
 ): void {
   if (!sk || !firstToolCallId || !reasoningContent) return;
   const key = `${sk}|${firstToolCallId}`;
-  const entry: CachedEntry = { reasoningContent, messageCount };
+  const entry: CachedEntry = { reasoningContent };
   cache.set(key, entry);
   writeToDisk(key, entry);
 }
@@ -184,13 +180,10 @@ export function store(
 function retrieve(
   sk: string | null | undefined,
   firstToolCallId: string | null | undefined,
-  currentMsgCount: number = -1,
 ): string | undefined {
   if (!sk || !firstToolCallId) return undefined;
   const entry = cache.get(`${sk}|${firstToolCallId}`);
   if (!entry) return undefined;
-  if (entry.messageCount > 0 && currentMsgCount >= 0 && entry.messageCount !== currentMsgCount)
-    return undefined;
   return entry.reasoningContent;
 }
 
