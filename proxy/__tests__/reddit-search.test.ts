@@ -432,6 +432,31 @@ describe('redditSearch', () => {
     // → No Reddit results found
     expect(result).toContain('No Reddit results found');
   });
+
+  it('converts old.reddit.com URLs from SearXNG to RSS for post fetch', async () => {
+    const oldRedditJson = JSON.stringify({
+      results: [{
+        title: 'Defiant on DeepSeek',
+        url: 'https://old.reddit.com/r/ClaudeCode/comments/1t3hrcx/defiant/',
+        content: 'Defiant works by intercepting...',
+      }],
+    });
+    mockHttpGetOnce(/localhost:8888/, 200, oldRedditJson, 'application/json');
+    mockHttpsGetOnce(/www\.reddit\.com.*\.rss/, 200, SAMPLE_RSS_XML);
+
+    const result = await redditSearch('deepseek');
+    expect(result).toContain('Defiant works by intercepting');
+    expect(result).toContain('Score: ?');
+  });
+
+  it('reports score as "?" from RSS (known RSS limitation)', async () => {
+    mockHttpGetOnce(/localhost:8888/, 200, SAMPLE_SEARXNG_JSON, 'application/json');
+    mockHttpsGetOnce(/www\.reddit\.com.*\.rss/, 200, SAMPLE_RSS_XML);
+
+    const result = await redditSearch('deepseek');
+    expect(result).toContain('Score: ?');
+    expect(result).toContain('Defiant works by intercepting');
+  });
 });
 
 // ============================================================================

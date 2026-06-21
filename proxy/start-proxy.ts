@@ -76,7 +76,7 @@ import {
 import { checkBudgetNotifications } from './notify';
 import { validateConfig as lintValidateConfig } from './config-lint';
 import { serveDashboard } from './dashboard';
-import { handleAdminRequest } from './admin';
+import { handleAdminRequest, registerProxyInstance, unregisterProxyInstance } from './admin';
 import {
   formatError,
   formatExhaustedError,
@@ -2580,6 +2580,15 @@ if (probeIdx >= 2) {
           } catch (_) {}
         }
 
+        // Register this instance in the proxy registry
+        {
+          const configName =
+            (state.routing && (state.routing as Record<string, unknown>).defaultProvider) ||
+            (state.routing ? 'custom' : 'direct') ||
+            'unknown';
+          registerProxyInstance(port, String(configName));
+        }
+
         // --- Hot-swap superseded check: periodically look for replacement signal ---
         const supersedeInterval = setInterval(() => {
           if (superseded) return;
@@ -2693,13 +2702,14 @@ if (probeIdx >= 2) {
       null,
       signal + ' received -- draining ' + activeConnections + ' active connections...',
     );
-    // Clean up port file written at startup
+    // Clean up port file and proxy registry
     {
       const portFile = defiantDir + '/proxy.port';
       try {
         if (fs.existsSync(portFile)) fs.unlinkSync(portFile);
       } catch (_) {}
     }
+    try { unregisterProxyInstance(); } catch (_) {}
     keepAliveAgent.destroy();
     server.close(() => {
       log.info(null, 'Server stopped accepting new connections');

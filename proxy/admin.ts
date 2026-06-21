@@ -90,6 +90,52 @@ function getConfigDir(): string {
 }
 
 // ============================================================================
+// Proxy Registry — track all running proxy instances
+// ============================================================================
+
+const REGISTRY_FILE = 'proxies.json';
+
+export interface ProxyInstance {
+  pid: number;
+  port: number;
+  config: string;
+  startedAt: string;
+  version: string;
+}
+
+export function registerProxyInstance(port: number, config: string): void {
+  const regPath = path.join(getConfigDir(), REGISTRY_FILE);
+  const instances: ProxyInstance[] = readJsonFile(regPath) as ProxyInstance[] || [];
+
+  // Remove any stale entry with same pid (e.g. from a previous crashed instance)
+  const pid = process.pid;
+  const filtered = instances.filter((i) => i.pid !== pid && i.port !== port);
+
+  filtered.push({
+    pid,
+    port,
+    config,
+    startedAt: new Date().toISOString(),
+    version: process.env.npm_package_version || '1.0.0',
+  });
+
+  writeJsonFile(regPath, filtered);
+}
+
+export function unregisterProxyInstance(): void {
+  const regPath = path.join(getConfigDir(), REGISTRY_FILE);
+  const instances: ProxyInstance[] = readJsonFile(regPath) as ProxyInstance[] || [];
+  const pid = process.pid;
+  const filtered = instances.filter((i) => i.pid !== pid);
+  writeJsonFile(regPath, filtered);
+}
+
+export function listProxyInstances(): ProxyInstance[] {
+  const regPath = path.join(getConfigDir(), REGISTRY_FILE);
+  return readJsonFile(regPath) as ProxyInstance[] || [];
+}
+
+// ============================================================================
 // Admin Endpoints
 // ============================================================================
 
@@ -512,6 +558,13 @@ export function handleAdminRequest(
     return true;
   }
 
+  // GET /admin/api/instances — list all running proxy instances
+  if (method === 'GET' && url === '/admin/api/instances') {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ instances: listProxyInstances() }));
+    return true;
+  }
+
   return false;
 }
 
@@ -519,7 +572,7 @@ export function handleAdminRequest(
 // Admin UI HTML
 // ============================================================================
 
-function buildAdminHtml(_deps: AdminDeps): string {
+function buildAdminHtml(deps: AdminDeps): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -563,6 +616,12 @@ button.secondary:hover{background:#30363d}
 .slot-row input[name="spec"]{flex:3}
 .slot-row button{width:auto;white-space:nowrap}
 .logs-area{background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:12px;font-family:monospace;font-size:11px;max-height:400px;overflow:auto;white-space:pre-wrap;color:#8b949e}
+.instances-table{width:100%;border-collapse:collapse;margin-top:8px}
+.instances-table th{text-align:left;padding:8px 12px;font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid #21262d}
+.instances-table td{padding:8px 12px;font-size:13px;border-bottom:1px solid #21262d;color:#c9d1d9}
+.instances-table tbody tr:hover td{background:#1c2128}
+.instance-current{color:#3fb950;font-size:11px;font-weight:600}
+.instance-other{color:#8b949e;font-size:11px}
 .loading{color:#8b949e;text-align:center;padding:20px}
 @media(max-width:800px){.grid-2,.status-row{grid-template-columns:1fr}}
 </style>
@@ -577,6 +636,7 @@ button.secondary:hover{background:#30363d}
 <div class="tab" data-tab="thinking" onclick="switchTab('thinking')">Thinking</div>
 <div class="tab" data-tab="config" onclick="switchTab('config')">Config</div>
 <div class="tab" data-tab="logs" onclick="switchTab('logs')">Logs</div>
+<div class="tab" data-tab="instances" onclick="switchTab('instances')">Instances</div>
 </div>
 
 <!-- Slots -->
@@ -661,9 +721,43 @@ button.secondary:hover{background:#30363d}
 </div>
 </div>
 
+<!-- Instances -->
+<div id="panel-instances" class="tab-panel">
+<div class="card">
+<h2>Running Proxy Instances</h2>
+<p style="color:#8b949e;margin-bottom:14px;font-size:12px">All Defiant Claude proxy instances currently running.</p>
+<table class="instances-table">
+<thead><tr><th>PID</th><th>Port</th><th>Config</th><th>Started</th><th>Version</th><th>Admin</th></tr></thead>
+<tbody id="instances-body"><tr><td colspan="6" class="loading">Loading...</td></tr></tbody>
+</table>
+<button onclick="loadInstances()" class="secondary" style="margin-top:12px">Refresh</button>
+</div>
+</div>
+
 <script>
 var configData = null;
 var SLOTS = ['opus','sonnet','haiku','subagent','fable'];
+var CURRENT_PID = ${JSON.stringify(process.pid)};
+
+function loadInstances() {
+  var tbody = document.getElementById('instances-body');
+  if (!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="6" class="loading">Loading...</td></tr>';
+  api('GET', '/admin/api/instances', null, function(r) {
+    if (!r.instances || r.instances.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#8b949e;padding:20px">No instances registered.</td></tr>';
+      return;
+    }
+    var html = '';
+    r.instances.forEach(function(inst) {
+      var isCurrent = String(inst.pid) === String(CURRENT_PID);
+      var status = isCurrent ? '<span class="instance-current">(this)</span>' : '<span class="instance-other">active</span>';
+      var adminLink = isCurrent ? '<a href="/admin" style="color:#58a6ff;text-decoration:none">/admin</a>' : '<a href="http://127.0.0.1:' + inst.port + '/admin" target="_blank" style="color:#58a6ff;text-decoration:none">port ' + inst.port + '</a>';
+      html += '<tr>' + '<td>' + inst.pid + '</td>' + '<td>' + inst.port + '</td>' + '<td>' + inst.config + '</td>' + '<td>' + new Date(inst.startedAt).toLocaleString() + '</td>' + '<td>' + (inst.version || '-') + '</td>' + '<td>' + adminLink + '</td>' + '</tr>';
+    });
+    tbody.innerHTML = html;
+  });
+}
 
 function msg(text, isErr) {
   var el = document.getElementById('msg');
@@ -826,6 +920,8 @@ loadConfig();
 
 // Auto-refresh every 10s
 setInterval(function() { api('GET', '/admin/api/config', null, function(d) { configData = d }) }, 10000);
+loadInstances();
+setInterval(loadInstances, 15000);
 </script>
 </body>
 </html>`;

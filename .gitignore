@@ -13,3 +13,4 @@ proxy.log
 .claude/*.lock
 .husky/_/
 .playwright-mcp/
+.reddit-auth
