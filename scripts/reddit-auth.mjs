@@ -29,6 +29,7 @@ import { join } from 'path';
 
 // --- Config ---
 const REDDIT_AUTH_FILE = join(homedir(), '.reddit-auth');
+const DEFIANT_AUTH_FILE = join(homedir(), '.defiant', 'reddit-auth.json');
 
 function getCredentials() {
   // 1. Check env var REDDIT_AUTH=username:password
@@ -44,6 +45,15 @@ function getCredentials() {
       const [username, ...rest] = line.split(':');
       return { username: username.trim(), password: rest.join(':') };
     }
+  }
+  // 3. Check ~/.defiant/reddit-auth.json (set via admin interface)
+  if (existsSync(DEFIANT_AUTH_FILE)) {
+    try {
+      const data = JSON.parse(readFileSync(DEFIANT_AUTH_FILE, 'utf-8'));
+      if (data.username && data.password) {
+        return { username: data.username, password: data.password };
+      }
+    } catch (_e) { /* ignore parse errors */ }
   }
   return null;
 }

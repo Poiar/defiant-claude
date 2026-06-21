@@ -982,6 +982,29 @@ function loadLogs() {
   });
 }
 
+// --- Reddit Auth ---
+function saveRedditAuth() {
+  var username = document.getElementById('reddit-username').value.trim();
+  var password = document.getElementById('reddit-password').value;
+  var status = document.getElementById('reddit-status');
+  if (!username) { status.textContent = 'Username is required'; return; }
+  status.textContent = 'Saving...';
+  api('POST', '/admin/api/reddit-auth', { username: username, password: password }, function(r) {
+    status.textContent = r.ok ? 'Saved!' : r.message;
+    if (r.ok) setTimeout(function(){ status.textContent = '' }, 3000);
+  });
+}
+function loadRedditAuth() {
+  api('GET', '/admin/api/reddit-auth', null, function(data) {
+    if (data) {
+      document.getElementById('reddit-username').value = data.username || '';
+      if (data.hasPassword) {
+        document.getElementById('reddit-password').placeholder = '******** (saved)';
+      }
+    }
+  });
+}
+
 // --- Load initial config ---
 function loadConfig() {
   api('GET', '/admin/api/config', null, function(data) {
@@ -1012,6 +1035,7 @@ loadConfig();
 setInterval(function() { api('GET', '/admin/api/config', null, function(d) { configData = d }) }, 10000);
 loadInstances();
 setInterval(loadInstances, 15000);
+loadRedditAuth();
 </script>
 </body>
 </html>`;
