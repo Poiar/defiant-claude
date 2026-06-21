@@ -105,7 +105,7 @@ export interface ProxyInstance {
 
 export function registerProxyInstance(port: number, config: string): void {
   const regPath = path.join(getConfigDir(), REGISTRY_FILE);
-  const instances: ProxyInstance[] = readJsonFile(regPath) as ProxyInstance[] || [];
+  const instances: ProxyInstance[] = (readJsonFile(regPath) as ProxyInstance[]) || [];
 
   // Remove any stale entry with same pid (e.g. from a previous crashed instance)
   const pid = process.pid;
@@ -124,7 +124,7 @@ export function registerProxyInstance(port: number, config: string): void {
 
 export function unregisterProxyInstance(): void {
   const regPath = path.join(getConfigDir(), REGISTRY_FILE);
-  const instances: ProxyInstance[] = readJsonFile(regPath) as ProxyInstance[] || [];
+  const instances: ProxyInstance[] = (readJsonFile(regPath) as ProxyInstance[]) || [];
   const pid = process.pid;
   const filtered = instances.filter((i) => i.pid !== pid);
   writeJsonFile(regPath, filtered);
@@ -132,7 +132,7 @@ export function unregisterProxyInstance(): void {
 
 export function listProxyInstances(): ProxyInstance[] {
   const regPath = path.join(getConfigDir(), REGISTRY_FILE);
-  return readJsonFile(regPath) as ProxyInstance[] || [];
+  return (readJsonFile(regPath) as ProxyInstance[]) || [];
 }
 
 // ============================================================================
@@ -572,7 +572,7 @@ export function handleAdminRequest(
 // Admin UI HTML
 // ============================================================================
 
-function buildAdminHtml(deps: AdminDeps): string {
+function buildAdminHtml(_deps: AdminDeps): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
