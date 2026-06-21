@@ -565,6 +565,67 @@ export function handleAdminRequest(
     return true;
   }
 
+  // GET /admin/api/reddit-auth — get saved Reddit credentials
+  if (method === 'GET' && url === '/admin/api/reddit-auth') {
+    const authFile = path.join(getConfigDir(), 'reddit-auth.json');
+    const data = readJsonFile(authFile) as { username?: string; password?: string } | null;
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        username: data?.username || '',
+        hasPassword: !!data?.password,
+      }),
+    );
+    return true;
+  }
+
+  // POST /admin/api/reddit-auth — save Reddit credentials
+  if (method === 'POST' && url === '/admin/api/reddit-auth') {
+    let body = '';
+    req.on('data', (chunk: Buffer) => {
+      body += chunk.toString();
+    });
+    req.on('end', () => {
+      try {
+        const parsed = JSON.parse(body);
+        const username = String(parsed.username || '').trim();
+        const password = String(parsed.password || '').trim();
+        if (!username) {
+          res.writeHead(400, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, message: 'Username is required.' }));
+          return;
+        }
+        const authFile = path.join(getConfigDir(), 'reddit-auth.json');
+        const success = writeJsonFile(authFile, {
+          username: parsed.username,
+          password: parsed.password || undefined,
+          updatedAt: new Date().toISOString(),
+        });
+        if (success) {
+          // Also write the flat ~/.reddit-auth file for the standalone script
+          try {
+            const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+            if (homeDir && parsed.password) {
+              const flatPath = path.join(homeDir, '.reddit-auth');
+              fs.writeFileSync(flatPath, username + ':' + password, 'utf-8');
+            }
+          } catch (_e) {
+            /* non-critical */
+          }
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, message: 'Reddit credentials saved.' }));
+        } else {
+          res.writeHead(500, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, message: 'Failed to write credentials.' }));
+        }
+      } catch (_e) {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, message: 'Invalid JSON' }));
+      }
+    });
+    return true;
+  }
+
   return false;
 }
 
@@ -637,6 +698,7 @@ button.secondary:hover{background:#30363d}
 <div class="tab" data-tab="config" onclick="switchTab('config')">Config</div>
 <div class="tab" data-tab="logs" onclick="switchTab('logs')">Logs</div>
 <div class="tab" data-tab="instances" onclick="switchTab('instances')">Instances</div>
+<div class="tab" data-tab="reddit" onclick="switchTab('reddit')">Reddit</div>
 </div>
 
 <!-- Slots -->
@@ -731,6 +793,34 @@ button.secondary:hover{background:#30363d}
 <tbody id="instances-body"><tr><td colspan="6" class="loading">Loading...</td></tr></tbody>
 </table>
 <button onclick="loadInstances()" class="secondary" style="margin-top:12px">Refresh</button>
+</div>
+</div>
+
+<!-- Reddit -->
+<div id="panel-reddit" class="tab-panel">
+<div class="card">
+<h2>Reddit Credentials</h2>
+<p style="color:#8b949e;margin-bottom:14px;font-size:12px">Save your Reddit account credentials for authenticated access (used by <code>scripts/reddit-auth.mjs</code>). Enables fetching post scores, threaded comments, and more data than RSS provides.</p>
+<div class="form-group">
+<label for="reddit-username">Reddit Username</label>
+<input id="reddit-username" placeholder="e.g. ChoosingAndLosing">
+</div>
+<div class="form-group">
+<label for="reddit-password">Password</label>
+<input id="reddit-password" type="password" placeholder="Enter password">
+</div>
+<div style="display:flex;gap:8px;align-items:center">
+<button onclick="saveRedditAuth()">Save Credentials</button>
+<span id="reddit-status" style="color:#8b949e;font-size:12px"></span>
+</div>
+</div>
+<div class="card">
+<h2>Authenticated Reddit Usage</h2>
+<p style="color:#8b949e;font-size:12px;line-height:1.5">
+After saving credentials above, use the authenticated script:<br><br>
+<code style="background:#0d1117;padding:2px 6px;border-radius:4px">node scripts/reddit-auth.mjs --url &lt;reddit-post-url&gt; --pretty</code><br><br>
+The credentials are stored in <code>~/.defiant/reddit-auth.json</code> and also synced to <code>~/.reddit-auth</code> for the standalone script.
+</p>
 </div>
 </div>
 
