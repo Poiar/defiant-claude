@@ -244,7 +244,7 @@ defiant ds:deepseek-v4-pro ds:deepseek-v4-pro oc:big-pickle or:z-ai/glm-4.5-air:
 --skip-startup-check  Skip provider health checks on proxy startup
 --no-thinking   Disable extended thinking for all models (save cost)
 --thinking-budget N  Set thinking budget in tokens (e.g. 64000 for deep reasoning)
--r, --resume ID  Unsupported through Defiant — use `claude --resume` directly or `/resume` inside CC
+-r, --resume ID  Unsupported through Defiant — use `claude --resume` directly or `/resume` inside DC
 <!-- /AUTO:flags -->
 ```
 

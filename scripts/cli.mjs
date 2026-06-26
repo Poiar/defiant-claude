@@ -323,7 +323,7 @@ function parseArgs(argv) {
       console.error('  session directly, bypassing the proxy. Use one of these instead:\n');
       console.error(`    claude --resume${extra}     (direct, no proxy routing)`);
       console.error(`    claude -r${extra}            (shorthand)`);
-      console.error('  Or start a Defiant session with `dc` and use /resume inside CC.\n');
+      console.error('  Or start a Defiant session with `dc` and use /resume inside DC.\n');
       process.exit(1);
     }
     if (a.startsWith('-')) {
