@@ -442,6 +442,7 @@ function genFlags(): string {
     '--skip-startup-check  Skip provider health checks on proxy startup',
     '--no-thinking   Disable extended thinking for all models (save cost)',
     '--thinking-budget N  Set thinking budget in tokens (e.g. 64000 for deep reasoning)',
+    '-r, --resume ID  Unsupported through Defiant — use `claude --resume` directly or `/resume` inside CC',
   ].join('\n');
 }
 

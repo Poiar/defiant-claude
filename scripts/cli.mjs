@@ -251,7 +251,6 @@ function parseArgs(argv) {
       '--install-statusline',
       '--remote',
       '--cleanup',
-      '-r',
       '--vscode',
       '--desktop',
       '--jetbrains',
@@ -315,6 +314,17 @@ function parseArgs(argv) {
     }
     if (a === '--persist' || a === '--switch' || a === '--stop-proxy') {
       fail(`${a} is removed. Each session runs its own isolated proxy.`);
+    }
+    if (a === '--resume' || a === '-r') {
+      const val = argv[i + 1];
+      const extra = val && !val.startsWith('-') ? ` ${val}` : '';
+      console.error(`\n  ${a}${extra} is not supported through the Defiant wrapper.\n`);
+      console.error('  Session resume only works when Claude Code connects to a pre-existing');
+      console.error('  session directly, bypassing the proxy. Use one of these instead:\n');
+      console.error(`    claude --resume${extra}     (direct, no proxy routing)`);
+      console.error(`    claude -r${extra}            (shorthand)`);
+      console.error('  Or start a Defiant session with `dc` and use /resume inside CC.\n');
+      process.exit(1);
     }
     if (a.startsWith('-')) {
       fail(`Unknown flag '${a}'. Use --help for available flags.`);
