@@ -17,7 +17,7 @@ Defiant runs a local HTTP routing proxy that intercepts Claude Code's Anthropic 
 <!-- AUTO:modules -->
 | Module | Purpose |
 |---|---|
-| `admin.ts` | (undocumented) |
+| `admin.ts` | Admin API and web UI — slot overrides, budget, thinking, logs, config switching, proxy instance registry |
 | `canary.ts` | Canary routing state machine (COLD → WARMING → ACTIVE) with configurable rollout percentages and rollback |
 | `concurrency.ts` | Promise-queue-based semaphore with FIFO ordering and acquire/release pump pattern |
 | `config-lint.ts` | `providers.json` structural validation (used by `--lint-config`) |
@@ -36,6 +36,8 @@ Defiant runs a local HTTP routing proxy that intercepts Claude Code's Anthropic 
 | `lru-cache.ts` | TTL cache with LRU eviction using delete-then-set MRU promotion and lazy shared cleanup |
 | `model-trust.ts` | (undocumented) |
 | `momentum.ts` | Session-based provider stickiness (tracks last 5 provider decisions) |
+| `multi-client.mjs` | Configure third-party clients (VS Code, Claude Desktop, JetBrains ACP, Codex CLI) to route through the proxy — writes config files and prints env vars |
+| `multi-client.ts` | TypeScript types for multi-client module |
 | `notify.ts` | (undocumented) |
 | `pre-exec-validate.ts` | (undocumented) |
 | `probe.ts` | Single-provider health probe with auth failure detection and latency measurement |
@@ -91,7 +93,7 @@ Config resolution, routes JSON construction, env var computation, slot/thinking 
 ### Test coverage
 
 <!-- AUTO:test-coverage -->
-1897 tests across 57 test files covering all proxy modules — transport errors, concurrency, LRU cache, provider registry validation, error codes, routing, stats, forwarding, server tools, config, protocol translation, thinking cache (including fingerprint-free cross-turn regression tests), reasoning cache, header sanitization, truncation, crypto, friendly errors, SSRF validation, dead stream detection, startup checks, and stream metrics. Run with `npm test`.
+1903 tests across 58 test files covering all proxy modules — transport errors, concurrency, LRU cache, provider registry validation, error codes, routing, stats, forwarding, server tools, config, protocol translation, thinking cache (including fingerprint-free cross-turn regression tests), reasoning cache, header sanitization, truncation, crypto, friendly errors, SSRF validation, dead stream detection, startup checks, and stream metrics. Run with `npm test`.
 <!-- /AUTO:test-coverage -->
 
 ### Pre-commit
@@ -416,6 +418,33 @@ defiant --remote -b anthropic    # Anthropic direct
 ```
 
 Starts the routing proxy, prints a `claude.ai/code/session_...` URL. Works on phone, tablet, any browser. Proxy auto-stops on exit.
+
+## Multi-client support
+
+The proxy can route **other Anthropic API clients** through the same pipeline — not just Claude Code CLI.
+
+```
+# VS Code extension (writes .vscode/settings.json)
+defiant --vscode
+
+# Claude Desktop (writes claude_desktop_config.json)
+defiant --desktop
+
+# JetBrains ACP (writes anthropic.xml IDE config)
+defiant --jetbrains
+
+# Codex CLI (prints env vars)
+defiant --codex
+
+# Any Anthropic SDK (prints env vars)
+defiant --sdk
+```
+
+These flags work alongside any backend config (`-b ds+oc`, etc.) and take effect after the proxy starts. VS Code, Claude Desktop, and JetBrains configs persist — restart the app to apply.
+
+For **Codex CLI** (OpenAI-compatible), the proxy intercepts calls at an OpenAI-format endpoint. Use an OpenAI-format provider (OpenRouter, Groq, Mistral, etc.).
+
+For **any Anthropic SDK** — just set the env vars printed by `--sdk` and point your client at the proxy. All features (routing, caching, search, circuit breakers) work for every client.
 
 ## Doctor
 

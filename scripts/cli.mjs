@@ -252,6 +252,11 @@ function parseArgs(argv) {
       '--remote',
       '--cleanup',
       '-r',
+      '--vscode',
+      '--desktop',
+      '--jetbrains',
+      '--codex',
+      '--sdk',
     ];
     if (boolFlags.includes(a)) {
       flags[a.replace(/^-+/, '').replace(/-/g, '')] = true;
@@ -1452,6 +1457,21 @@ async function launchCC(flags, configs) {
   );
   console.log(`  Proxy on :${port}`);
 
+  // Multi-client configuration (spawn separate node process)
+  {
+    const mcArgs = [`--port=${port}`];
+    for (const f of ['vscode', 'desktop', 'jetbrains', 'codex', 'sdk']) {
+      if (flags[f]) mcArgs.push(`--${f}`);
+    }
+    if (mcArgs.length > 1) {
+      spawnSync(...shellSafe('node', [join(PROXY_DIR, 'multi-client.mjs'), ...mcArgs]), {
+        cwd: ROOT,
+        stdio: 'inherit',
+        ...(IS_WIN ? { shell: true } : {}),
+      });
+    }
+  }
+
   // Set env vars
   const envVars = launcher(
     'env-vars',
@@ -1528,6 +1548,11 @@ Usage: defiant [spec1] [spec2] [spec3] [spec4] [spec5]   (positional mode)
   --log-all       Log all requests
   --skip-startup-check  Skip provider health check on proxy startup
   --no-thinking   Disable extended thinking for all models
+  --vscode        Configure VS Code extension to use this proxy
+  --desktop       Configure Claude Desktop to use this proxy
+  --jetbrains     Configure JetBrains ACP to use this proxy
+  --codex         Show Codex CLI env vars for this proxy
+  --sdk           Show Anthropic SDK env vars for this proxy
   --thinking-budget N   Set thinking budget in tokens
   --logs, --tail   Tail proxy log
   --health         Quick health check

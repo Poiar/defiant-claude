@@ -234,6 +234,33 @@ defiant --remote -b anthropic    # Anthropic direct
 
 Starts the routing proxy, prints a `claude.ai/code/session_...` URL. Works on phone, tablet, any browser. Proxy auto-stops on exit.
 
+## Multi-client support
+
+The proxy can route **other Anthropic API clients** through the same pipeline — not just Claude Code CLI.
+
+```
+# VS Code extension (writes .vscode/settings.json)
+defiant --vscode
+
+# Claude Desktop (writes claude_desktop_config.json)
+defiant --desktop
+
+# JetBrains ACP (writes anthropic.xml IDE config)
+defiant --jetbrains
+
+# Codex CLI (prints env vars)
+defiant --codex
+
+# Any Anthropic SDK (prints env vars)
+defiant --sdk
+```
+
+These flags work alongside any backend config (`-b ds+oc`, etc.) and take effect after the proxy starts. VS Code, Claude Desktop, and JetBrains configs persist — restart the app to apply.
+
+For **Codex CLI** (OpenAI-compatible), the proxy intercepts calls at an OpenAI-format endpoint. Use an OpenAI-format provider (OpenRouter, Groq, Mistral, etc.).
+
+For **any Anthropic SDK** — just set the env vars printed by `--sdk` and point your client at the proxy. All features (routing, caching, search, circuit breakers) work for every client.
+
 ## Doctor
 
 System health check — verifies Node.js, proxy script, state directory, API keys, slot overrides, and runs a proxy startup test:

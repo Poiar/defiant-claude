@@ -207,10 +207,15 @@ const MODULE_DESCRIPTIONS: Record<string, string> = {
     'Canary routing state machine (COLD → WARMING → ACTIVE) with configurable rollout percentages and rollback',
   'probe.ts': 'Single-provider health probe with auth failure detection and latency measurement',
   'dashboard.ts': 'Health dashboard HTML page with live SSE metrics stream',
+  'admin.ts':
+    'Admin API and web UI — slot overrides, budget, thinking, logs, config switching, proxy instance registry',
   'config-lint.ts': '`providers.json` structural validation (used by `--lint-config`)',
   'dry-run.ts': 'Resolved routing table display without starting the proxy (used by `--dry-run`)',
   'launcher.mjs':
     'Unified Node.js engine shared by defiant.ps1, defiant.sh, and scripts/cli.mjs — config resolution, routes JSON, env vars with [1m] suffix and compaction window, slot/thinking overrides, proxy state, pricing/model/key data. Zero npm deps, single source of truth.',
+  'multi-client.mjs':
+    'Configure third-party clients (VS Code, Claude Desktop, JetBrains ACP, Codex CLI) to route through the proxy — writes config files and prints env vars',
+  'multi-client.ts': 'TypeScript types for multi-client module',
 };
 
 function genModuleTable(): string {

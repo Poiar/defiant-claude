@@ -7,6 +7,23 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 
+// --- Load .env file from config directory ---
+const _ENV_DIR =
+  process.env.DEFIANT_DIR || (process.env.HOME || process.env.USERPROFILE || '.') + '/.defiant';
+const _ENV_FILE = path.join(_ENV_DIR, '.env');
+try {
+  const _ENV_RAW = fs.readFileSync(_ENV_FILE, 'utf-8');
+  for (const _LINE of _ENV_RAW.split('\n')) {
+    const _MATCH = _LINE.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/);
+    if (_MATCH && !process.env[_MATCH[1]]) {
+      const _VAL = _MATCH[2].replace(/^["']|["']$/g, '');
+      process.env[_MATCH[1]] = _VAL;
+    }
+  }
+} catch (_e) {
+  /* .env file not found — ok */
+}
+
 import {
   translateRequest,
   createStreamTransformer,
@@ -2709,7 +2726,9 @@ if (probeIdx >= 2) {
         if (fs.existsSync(portFile)) fs.unlinkSync(portFile);
       } catch (_) {}
     }
-    try { unregisterProxyInstance(); } catch (_) {}
+    try {
+      unregisterProxyInstance();
+    } catch (_) {}
     keepAliveAgent.destroy();
     server.close(() => {
       log.info(null, 'Server stopped accepting new connections');
