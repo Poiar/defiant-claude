@@ -3,6 +3,7 @@
 # Linting + formatting already ran at commit time, so this is lightweight.
 
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
+command -v cygpath >/dev/null 2>&1 && DIR="$(cygpath -m "$DIR")"
 FAIL=0
 
 echo ""
@@ -53,8 +54,12 @@ bash -n "$DIR/deepclaude.sh" || FAIL=1
 
 # PowerShell (only on Windows or if pwsh available)
 if command -v pwsh >/dev/null 2>&1; then
-  echo "  PSScriptAnalyzer..."
-  pwsh -NoProfile -Command "& { \$err=0; Get-ChildItem '$DIR/*.ps1','$DIR/*/*.ps1' -ErrorAction SilentlyContinue | ForEach-Object { \$r=Invoke-ScriptAnalyzer -Path \$_.FullName -Severity Error -ErrorAction SilentlyContinue; if(\$r) { \$r | Out-String | Write-Warning; \$err=1 } }; exit \$err }" || FAIL=1
+  if pwsh -NoProfile -Command "Get-Module -ListAvailable PSScriptAnalyzer" 2>/dev/null | grep -q PSScriptAnalyzer; then
+    echo "  PSScriptAnalyzer..."
+    pwsh -NoProfile -Command "& { \$err=0; Get-ChildItem '$DIR/*.ps1','$DIR/*/*.ps1' -ErrorAction SilentlyContinue | ForEach-Object { \$r=Invoke-ScriptAnalyzer -Path \$_.FullName -Severity Error -ErrorAction SilentlyContinue; if(\$r) { \$r | Out-String | Write-Warning; \$err=1 } }; exit \$err }" || FAIL=1
+  else
+    echo "  PSScriptAnalyzer (not installed — skipping)"
+  fi
 fi
 
 if [ "$FAIL" -ne 0 ]; then

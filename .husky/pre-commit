@@ -3,6 +3,7 @@
 # Blocks commit on lint failure.
 
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
+command -v cygpath >/dev/null 2>&1 && DIR="$(cygpath -m "$DIR")"
 FAIL=0
 
 echo ""
