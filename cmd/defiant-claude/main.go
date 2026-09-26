@@ -1,0 +1,159 @@
+// defiant-claude — provider-agnostic Claude Code proxy (Go rewrite).
+package main
+
+import (
+	"flag"
+	"fmt"
+	"net"
+	"net/http"
+	"os"
+	"sort"
+
+	"github.com/poiarnoia/defiant-claude/internal/config"
+	"github.com/poiarnoia/defiant-claude/internal/proxy"
+	"github.com/poiarnoia/defiant-claude/internal/routing"
+)
+
+const version = "0.1.0"
+
+func main() {
+	args := os.Args[1:]
+	if len(args) == 0 {
+		printUsage(os.Stderr)
+		os.Exit(2)
+	}
+	switch args[0] {
+	case "--version", "-v", "version":
+		fmt.Printf("defiant-claude %s\n", version)
+	case "--help", "-h", "help":
+		printUsage(os.Stdout)
+	case "--lint-config", "lint-config":
+		os.Exit(runLint())
+	case "--dry-run", "dry-run":
+		os.Exit(runDryRun(args[1:]))
+	case "launch", "run":
+		os.Exit(runLaunch(args[1:]))
+	default:
+		os.Exit(runDryRun(args))
+	}
+}
+
+func printUsage(w *os.File) {
+	fmt.Fprint(w, `defiant-claude — provider-agnostic Claude Code proxy
+
+Usage:
+  defiant-claude [spec...]          resolve model specs to providers (dry-run)
+  defiant-claude -b <backend> ...   use a named config
+  defiant-claude --dry-run          show the full routing table
+  defiant-claude --lint-config      validate providers.json
+  defiant-claude launch             start the proxy (prints PORT:<n>)
+  defiant-claude --version          print version
+  defiant-claude --help             show this help
+`)
+}
+
+func loadConfig() (*config.Config, error) {
+	dir, err := config.DefaultConfigDir()
+	if err != nil {
+		return nil, err
+	}
+	return config.LoadUser(dir)
+}
+
+func runLint() int {
+	cfg, err := loadConfig()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	problems := cfg.Lint()
+	if len(problems) == 0 {
+		fmt.Printf("config OK: %d providers, %d named configs, %d aliases, %d models priced\n",
+			len(cfg.Providers), len(cfg.Configs), len(cfg.Aliases), len(cfg.Pricing))
+		return 0
+	}
+	fmt.Printf("%d problem(s):\n", len(problems))
+	for _, p := range problems {
+		fmt.Printf("  - %s\n", p)
+	}
+	return 1
+}
+
+func runDryRun(args []string) int {
+	backend := "ds"
+	specs := args
+	if len(args) >= 2 && args[0] == "-b" {
+		backend = args[1]
+		specs = args[2:]
+	}
+
+	cfg, err := loadConfig()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+
+	if len(specs) > 0 {
+		r := routing.NewResolver(cfg, backend)
+		fmt.Printf("resolving against backend %q:\n", backend)
+		for _, spec := range specs {
+			t, err := r.Resolve(spec)
+			if err != nil {
+				fmt.Printf("  %-28s -> ERROR: %v\n", spec, err)
+				continue
+			}
+			line := fmt.Sprintf("  %-28s -> %s:%s", spec, t.ProviderKey, t.Model)
+			for _, fb := range r.FallbackTargets(t) {
+				line += fmt.Sprintf("  ->  %s:%s", fb.ProviderKey, fb.Model)
+			}
+			line += fmt.Sprintf("  (format=%s)", t.WireFormat)
+			fmt.Println(line)
+		}
+		return 0
+	}
+
+	fmt.Printf("providers: %d | named configs: %d | aliases: %d\n\n", len(cfg.Providers), len(cfg.Configs), len(cfg.Aliases))
+	fmt.Println("Named configs (slot → provider:model):")
+	names := make([]string, 0, len(cfg.Configs))
+	for n := range cfg.Configs {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		sc := cfg.Configs[n]
+		fmt.Printf("  %-8s %s\n", n, sc.Name)
+		fmt.Printf("           opus   = %s\n", sc.Opus)
+		fmt.Printf("           sonnet = %s\n", sc.Sonnet)
+		fmt.Printf("           haiku  = %s\n", sc.Haiku)
+		fmt.Printf("           sub    = %s\n", sc.Sub)
+		fmt.Printf("           fable  = %s\n", sc.Fable)
+	}
+	return 0
+}
+
+func runLaunch(args []string) int {
+	fs := flag.NewFlagSet("launch", flag.ExitOnError)
+	backend := fs.String("b", "ds", "named config to use")
+	port := fs.Int("port", 0, "port to listen on (0 = ephemeral)")
+	fs.Parse(args)
+
+	cfg, err := loadConfig()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+
+	srv := proxy.New(cfg, *backend)
+	ln, err := srv.Listen(*port)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	actual := ln.Addr().(*net.TCPAddr).Port
+	fmt.Printf("PORT:%d\n", actual)
+	if err := http.Serve(ln, srv); err != nil {
+		fmt.Fprintf(os.Stderr, "serve: %v\n", err)
+		return 1
+	}
+	return 0
+}

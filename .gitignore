@@ -1,0 +1,8 @@
+# build artifacts
+defiant-claude.exe
+*.exe
+
+# editor / IDE
+.idea/
+.vscode/
+*.swp
