@@ -68,3 +68,37 @@ func TestProxyOpenAITranslation(t *testing.T) {
 		}
 	}
 }
+
+func TestHealthAndMetricsEndpoints(t *testing.T) {
+	cfg := &config.Config{
+		Providers: map[string]config.Provider{
+			"mock": {Endpoint: "http://127.0.0.1:1", AuthHeader: "bearer", WireFormat: "openai", NoAuth: true},
+		},
+		Configs: map[string]config.SlotConfig{
+			"mock": {Name: "mock", Opus: "mock:m", Sonnet: "mock:m", Haiku: "mock:m", Sub: "mock:m", Fable: "mock:m"},
+		},
+	}
+	srv := New(cfg, "mock")
+
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/health status = %d, want 200", rec.Code)
+	}
+	var h map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &h); err != nil {
+		t.Fatalf("/health non-JSON: %v", err)
+	}
+	if h["status"] != "ok" {
+		t.Errorf("/health status field = %v, want ok", h["status"])
+	}
+
+	rec2 := httptest.NewRecorder()
+	srv.ServeHTTP(rec2, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("/metrics status = %d, want 200", rec2.Code)
+	}
+	if !strings.Contains(rec2.Body.String(), "defiant_claude_uptime_seconds") {
+		t.Errorf("/metrics missing uptime metric:\n%s", rec2.Body.String())
+	}
+}

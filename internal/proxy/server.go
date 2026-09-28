@@ -27,6 +27,8 @@ type Server struct {
 	thinking  map[string]config.Thinking
 	breakers  *resilience.Breakers
 	momentum  *resilience.Momentum
+	startTime time.Time
+	version   string
 }
 
 // New builds a proxy server for the named backend config.
@@ -43,7 +45,14 @@ func New(cfg *config.Config, backend string) *Server {
 		thinking: cfg.Thinking,
 		breakers: resilience.NewBreakers(),
 		momentum: resilience.NewMomentum(),
+		startTime: time.Now(),
+		version:   "0.1.0",
 	}
+}
+
+// SetVersion sets the version reported by /health.
+func (s *Server) SetVersion(v string) {
+	s.version = v
 }
 
 // Listen binds to 127.0.0.1 (loopback only — the proxy must never be
@@ -53,8 +62,17 @@ func (s *Server) Listen(port int) (net.Listener, error) {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path == "/v1/messages" && r.Method == http.MethodPost {
-		s.handleMessages(w, r)
+	switch r.URL.Path {
+	case "/v1/messages":
+		if r.Method == http.MethodPost {
+			s.handleMessages(w, r)
+			return
+		}
+	case "/health":
+		s.handleHealth(w, r)
+		return
+	case "/metrics":
+		s.handleMetrics(w, r)
 		return
 	}
 	http.NotFound(w, r)
