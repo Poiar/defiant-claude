@@ -55,6 +55,7 @@ type ProviderStat struct {
 	LastRequest  time.Time
 	InputTokens  int64
 	OutputTokens int64
+	SpendUSD     float64
 }
 
 // Breakers holds circuit-breaker + per-provider stats state.
@@ -115,6 +116,21 @@ func (b *Breakers) RecordUsage(providerKey string, inputTokens, outputTokens int
 	}
 	s.InputTokens += inputTokens
 	s.OutputTokens += outputTokens
+}
+
+// RecordCost accumulates USD spend for a provider.
+func (b *Breakers) RecordCost(providerKey string, costUSD float64) {
+	if providerKey == "" || costUSD <= 0 {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	s := b.stats[providerKey]
+	if s == nil {
+		s = &ProviderStat{}
+		b.stats[providerKey] = s
+	}
+	s.SpendUSD += costUSD
 }
 
 func (b *Breakers) open(providerKey string) {

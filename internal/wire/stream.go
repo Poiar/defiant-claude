@@ -21,6 +21,11 @@ func NewOpenAIStreamReader(src io.Reader, model string) io.Reader {
 	}
 }
 
+// Usage returns the token usage seen so far in the stream.
+func (s *openAIStream) Usage() Usage {
+	return s.usage
+}
+
 // mapFinishReason maps an OpenAI finish_reason to an Anthropic stop_reason.
 func mapFinishReason(r string) string {
 	switch r {
@@ -46,6 +51,7 @@ type openAIStream struct {
 	current   string // "", "thinking", "text", "tool_use"
 	messageID string
 	output    int
+	usage     Usage
 	toolMap   map[int]int // openai tool_call index → anthropic block index
 	lastTool  int
 	out       []byte
@@ -201,8 +207,10 @@ type openAIChunk struct {
 		FinishReason *string     `json:"finish_reason"`
 	} `json:"choices"`
 	Usage *struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
+		PromptTokens     int  `json:"prompt_tokens"`
+		CompletionTokens int  `json:"completion_tokens"`
+		PromptCacheHit   *int `json:"prompt_cache_hit_tokens"`
+		PromptCacheMiss  *int `json:"prompt_cache_miss_tokens"`
 	} `json:"usage"`
 }
 
@@ -266,6 +274,14 @@ func (s *openAIStream) processEvent(payload string) []byte {
 	}
 	if parsed.Usage != nil {
 		s.output = parsed.Usage.CompletionTokens
+		s.usage.InputTokens = int64(parsed.Usage.PromptTokens)
+		s.usage.OutputTokens = int64(parsed.Usage.CompletionTokens)
+		if parsed.Usage.PromptCacheHit != nil {
+			s.usage.CacheReadTokens = int64(*parsed.Usage.PromptCacheHit)
+		}
+		if parsed.Usage.PromptCacheMiss != nil {
+			s.usage.CacheWriteTokens = int64(*parsed.Usage.PromptCacheMiss)
+		}
 	}
 
 	// reasoning_content → thinking block

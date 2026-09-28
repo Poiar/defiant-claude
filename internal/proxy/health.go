@@ -25,6 +25,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 			"avgMs":          avgMs,
 			"inputTokens":    st.InputTokens,
 			"outputTokens":   st.OutputTokens,
+			"spendUSD":       st.SpendUSD,
 			"circuitBreaker": s.breakers.State(k).String(),
 		}
 	}
@@ -67,6 +68,10 @@ func (s *Server) handleMetrics(w http.ResponseWriter, _ *http.Request) {
 		fmt.Fprintf(&b, "# HELP %s_circuit_breaker_state Circuit breaker (0=CLOSED, 1=OPEN, 2=HALF_OPEN).\n", pf)
 		fmt.Fprintf(&b, "# TYPE %s_circuit_breaker_state gauge\n", pf)
 		fmt.Fprintf(&b, "%s_circuit_breaker_state{%s} %d\n", pf, label, stateVal)
+
+		fmt.Fprintf(&b, "# HELP %s_spend_usd_total Cumulative spend in USD per provider.\n", pf)
+		fmt.Fprintf(&b, "# TYPE %s_spend_usd_total counter\n", pf)
+		fmt.Fprintf(&b, "%s_spend_usd_total{%s} %.8f\n", pf, label, st.SpendUSD)
 	}
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 	_, _ = w.Write([]byte(b.String()))

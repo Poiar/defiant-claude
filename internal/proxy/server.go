@@ -6,8 +6,10 @@ package proxy
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"strconv"
@@ -19,12 +21,25 @@ import (
 	"github.com/Poiar/defiant-claude/internal/wire"
 )
 
+// Stream-guard and retry tunables are package vars (not consts) so tests can
+// tighten them to run fast. Values match the TS proxy's stream guards.
+var (
+	firstByteTimeout = 15 * time.Second  // wait for upstream response headers
+	idleTimeout      = 180 * time.Second // abort if no bytes flow this long (SSE heartbeat)
+	maxBodyBytes     = int64(500 << 20)  // cap on a single upstream response body
+
+	maxAttemptsPerProvider = 3
+	retryBaseDelay         = 500 * time.Millisecond
+	retryMaxDelay          = 4 * time.Second
+)
+
 // Server forwards Anthropic API requests to resolved upstream providers.
 type Server struct {
 	resolver  *routing.Resolver
 	client    *http.Client
 	logger    *log.Logger
 	thinking  map[string]config.Thinking
+	pricing   map[string]config.Pricing
 	breakers  *resilience.Breakers
 	momentum  *resilience.Momentum
 	startTime time.Time
@@ -34,17 +49,19 @@ type Server struct {
 // New builds a proxy server for the named backend config.
 func New(cfg *config.Config, backend string) *Server {
 	transport := &http.Transport{
-		MaxIdleConns:        100,
-		MaxIdleConnsPerHost: 20,
-		IdleConnTimeout:     90 * time.Second,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   20,
+		IdleConnTimeout:       90 * time.Second,
+		ResponseHeaderTimeout: firstByteTimeout,
 	}
 	return &Server{
-		resolver: routing.NewResolver(cfg, backend),
-		client:   &http.Client{Transport: transport},
-		logger:   log.Default(),
-		thinking: cfg.Thinking,
-		breakers: resilience.NewBreakers(),
-		momentum: resilience.NewMomentum(),
+		resolver:  routing.NewResolver(cfg, backend),
+		client:    &http.Client{Transport: transport},
+		logger:    log.Default(),
+		thinking:  cfg.Thinking,
+		pricing:   cfg.Pricing,
+		breakers:  resilience.NewBreakers(),
+		momentum:  resilience.NewMomentum(),
 		startTime: time.Now(),
 		version:   "0.1.0",
 	}
@@ -140,26 +157,66 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, target routing.
 	for _, t := range chain {
 		attempted = append(attempted, t.ProviderKey)
 		start := time.Now()
-		resp, err := s.doRequest(r, t, body)
+		resp, status, err := s.requestWithRetry(r, t, body)
 		ms := time.Since(start).Milliseconds()
 		if err != nil {
-			s.breakers.RecordStat(t.ProviderKey, false, ms, 0)
-			s.logger.Printf("provider %s: %v", t.ProviderKey, err)
-			continue
-		}
-		lastStatus = resp.StatusCode
-		if isRetryableStatus(resp.StatusCode) {
-			s.breakers.RecordStat(t.ProviderKey, false, ms, resp.StatusCode)
-			resp.Body.Close()
-			s.logger.Printf("provider %s: HTTP %d, trying fallback", t.ProviderKey, resp.StatusCode)
+			lastStatus = status
+			s.logger.Printf("provider %s: gave up after %d attempts: %v", t.ProviderKey, maxAttemptsPerProvider, err)
 			continue
 		}
 		s.breakers.RecordStat(t.ProviderKey, true, ms, resp.StatusCode)
 		s.momentum.Record(sk, t.ProviderKey, t.Model)
-		s.streamResponse(w, resp, t, streaming)
+		u := s.streamResponse(w, resp, t, streaming)
+		s.recordUsage(t.ProviderKey, t.Model, u)
+		s.logger.Printf("request model=%q -> %s/%s status=%d ms=%d in=%d out=%d",
+			model, t.ProviderKey, t.Model, resp.StatusCode, ms, u.InputTokens, u.OutputTokens)
 		return
 	}
 	s.writeFriendlyError(w, streaming, model, attempted, lastStatus)
+}
+
+// requestWithRetry sends the request to a single provider, retrying transient
+// failures (network errors and retryable HTTP statuses) up to
+// maxAttemptsPerProvider with exponential backoff + full jitter. The first
+// non-retryable response — including 4xx client errors, which prove the
+// provider is up — is returned as success. Failed attempts are recorded
+// against the circuit breaker.
+func (s *Server) requestWithRetry(r *http.Request, t routing.Target, body []byte) (*http.Response, int, error) {
+	var lastStatus int
+	var lastErr error
+	for attempt := 1; attempt <= maxAttemptsPerProvider; attempt++ {
+		start := time.Now()
+		resp, err := s.doRequest(r, t, body)
+		ms := time.Since(start).Milliseconds()
+		switch {
+		case err != nil:
+			lastErr = err
+			s.breakers.RecordStat(t.ProviderKey, false, ms, 0)
+			s.logger.Printf("provider %s: attempt %d/%d network error: %v", t.ProviderKey, attempt, maxAttemptsPerProvider, err)
+		case isRetryableStatus(resp.StatusCode):
+			lastStatus = resp.StatusCode
+			lastErr = fmt.Errorf("HTTP %d", resp.StatusCode)
+			resp.Body.Close()
+			s.breakers.RecordStat(t.ProviderKey, false, ms, resp.StatusCode)
+			s.logger.Printf("provider %s: attempt %d/%d HTTP %d, retrying", t.ProviderKey, attempt, maxAttemptsPerProvider, resp.StatusCode)
+		default:
+			return resp, resp.StatusCode, nil
+		}
+		if attempt < maxAttemptsPerProvider {
+			time.Sleep(retryBackoff(attempt))
+		}
+	}
+	return nil, lastStatus, lastErr
+}
+
+// retryBackoff returns exponential backoff with full jitter: attempt 1 →
+// [0, 500ms), attempt 2 → [0, 1s), attempt 3 → [0, 2s), capped at retryMaxDelay.
+func retryBackoff(attempt int) time.Duration {
+	base := retryBaseDelay << (attempt - 1)
+	if base > retryMaxDelay {
+		base = retryMaxDelay
+	}
+	return time.Duration(rand.Int64N(int64(base)))
 }
 
 // buildChain assembles the primary target plus health-filtered fallbacks,
@@ -238,43 +295,118 @@ func (s *Server) doRequest(r *http.Request, target routing.Target, body []byte) 
 	return s.client.Do(req)
 }
 
-// streamResponse copies the upstream status + headers and streams the body,
-// translating non-Anthropic wire formats (OpenAI SSE → Anthropic SSE for
-// streaming; OpenAI JSON → Anthropic JSON for non-streaming).
-func (s *Server) streamResponse(w http.ResponseWriter, resp *http.Response, target routing.Target, streaming bool) {
+// streamResponse writes the upstream status + headers and the (translated)
+// body to the client, returning the token usage it observed. Non-streaming
+// responses are read whole and usage-extracted; streaming responses are
+// copied through the idle-guarded copy loop while a usage tee / stream
+// reader captures token counts.
+func (s *Server) streamResponse(w http.ResponseWriter, resp *http.Response, target routing.Target, streaming bool) wire.Usage {
 	defer resp.Body.Close()
 
-	// Non-streaming OpenAI response: translate the single JSON body.
-	if target.WireFormat == "openai" && !streaming && resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		body, err := io.ReadAll(resp.Body)
+	if !streaming {
+		body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes+1))
 		if err != nil {
 			s.logger.Printf("read response: %v", err)
-			return
+			return wire.Usage{}
 		}
-		translated, err := wire.TranslateOpenAIResponse(body, target.Model)
-		if err != nil {
-			s.logger.Printf("translate response: %v", err)
-			return
+		if int64(len(body)) > maxBodyBytes {
+			s.logger.Printf("response exceeded %d bytes, aborting", maxBodyBytes)
+			return wire.Usage{}
 		}
-		w.Header().Set("Content-Type", "application/json")
+		usage := wire.Usage{}
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			switch target.WireFormat {
+			case "openai":
+				usage = wire.ExtractOpenAIUsage(body)
+				translated, err := wire.TranslateOpenAIResponse(body, target.Model)
+				if err != nil {
+					s.logger.Printf("translate response: %v", err)
+					return usage
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(resp.StatusCode)
+				w.Write(translated)
+				return usage
+			case "anthropic":
+				usage = wire.ExtractAnthropicUsage(body)
+			}
+		}
+		copyHeaders(w.Header(), resp.Header)
 		w.WriteHeader(resp.StatusCode)
-		w.Write(translated)
-		return
+		w.Write(body)
+		return usage
 	}
 
 	copyHeaders(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 
+	var usage wire.Usage
 	var src io.Reader = resp.Body
-	if target.WireFormat == "openai" && resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		src = wire.NewOpenAIStreamReader(resp.Body, target.Model)
+	var reporter wire.UsageReporter
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		switch target.WireFormat {
+		case "openai":
+			r := wire.NewOpenAIStreamReader(resp.Body, target.Model)
+			src = r
+			if rr, ok := r.(wire.UsageReporter); ok {
+				reporter = rr
+			}
+		case "anthropic":
+			src = wire.NewAnthropicUsageTee(resp.Body, &usage)
+		}
 	}
+
+	s.copyStream(w, resp, src)
+	if reporter != nil {
+		usage = reporter.Usage()
+	}
+	return usage
+}
+
+// copyStream copies src to the client, flushing per chunk, guarded by an idle
+// watchdog (aborts if no bytes flow within idleTimeout) and a total-body cap
+// (maxBodyBytes).
+func (s *Server) copyStream(w http.ResponseWriter, resp *http.Response, src io.Reader) {
+	done := make(chan struct{})
+	defer close(done)
+	kick := make(chan struct{}, 1)
+	go func() {
+		timer := time.NewTimer(idleTimeout)
+		defer timer.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-kick:
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				timer.Reset(idleTimeout)
+			case <-timer.C:
+				_ = resp.Body.Close()
+				return
+			}
+		}
+	}()
 
 	flusher, _ := w.(http.Flusher)
 	buf := make([]byte, 32*1024)
+	var total int64
 	for {
 		n, rerr := src.Read(buf)
 		if n > 0 {
+			select {
+			case kick <- struct{}{}:
+			default:
+			}
+			total += int64(n)
+			if total > maxBodyBytes {
+				s.logger.Printf("response exceeded %d bytes, aborting", maxBodyBytes)
+				return
+			}
 			if _, werr := w.Write(buf[:n]); werr != nil {
 				return
 			}
@@ -290,6 +422,40 @@ func (s *Server) streamResponse(w http.ResponseWriter, resp *http.Response, targ
 			return
 		}
 	}
+}
+
+// recordUsage accumulates token counts and USD spend for a completed request.
+func (s *Server) recordUsage(providerKey, model string, u wire.Usage) {
+	if u.InputTokens == 0 && u.OutputTokens == 0 {
+		return
+	}
+	s.breakers.RecordUsage(providerKey, u.InputTokens, u.OutputTokens)
+	if cost := s.costUSD(model, u); cost > 0 {
+		s.breakers.RecordCost(providerKey, cost)
+	}
+}
+
+// costUSD estimates the request cost from the model's pricing entry and the
+// token breakdown. Returns 0 when the model has no pricing entry.
+func (s *Server) costUSD(model string, u wire.Usage) float64 {
+	p, ok := s.pricing[model]
+	if !ok {
+		return 0
+	}
+	const perMillion = 1_000_000.0
+	var cost float64
+	if u.CacheReadTokens > 0 || u.CacheWriteTokens > 0 {
+		miss := p.InputCacheMiss
+		if miss == 0 {
+			miss = p.Input
+		}
+		cost += float64(u.CacheReadTokens)/perMillion*p.InputCacheHit +
+			float64(u.CacheWriteTokens)/perMillion*miss
+	} else {
+		cost += float64(u.InputTokens) / perMillion * p.Input
+	}
+	cost += float64(u.OutputTokens) / perMillion * p.Output
+	return cost
 }
 
 // isRetryableStatus reports whether an upstream status should trigger a

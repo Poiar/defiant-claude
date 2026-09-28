@@ -16,6 +16,8 @@ Near parity with the TypeScript proxy:
 - [x] Routing resolver — slot detection, aliases, provider prefixes, tier-matched fallback chains
 - [x] Slot overrides — `~/.defiant-claude/slot-overrides.json`
 - [x] Proxy server — model rewrite, forwarding, SSE streaming, fallback loop
+- [x] Stream guards — first-byte timeout, idle watchdog (180s), 500MB body cap
+- [x] Retry — per-provider retry with exponential backoff + full jitter
 - [x] Wire-format translation — OpenAI (request + streaming/non-streaming + thinking injection)
 - [x] Field stripping — metadata/billing-header/cache_control/dedup for upstream cache stability
 - [x] Key encryption — AES-256-GCM (`$aes256gcm:`, scrypt KDF, `--encrypt-key`)
@@ -24,10 +26,11 @@ Near parity with the TypeScript proxy:
 - [x] Canary rollout state machine — COLD/WARMING/ACTIVE
 - [x] Health + Prometheus metrics — `/health`, `/metrics`
 - [x] Friendly errors — E012 fallback-exhausted responses
+- [x] Spend tracking + request logging — per-provider token counts + USD cost
 - [x] CLI — `--version`, `--lint-config`, `--dry-run`, `--encrypt-key`, `launch`
 - [x] Launcher — spawns Claude Code against the in-process proxy
 - [ ] Gemini wire format (1 dead-end provider: `noAutoFallback`, no configs)
-- [ ] Thinking/reasoning caches, spend tracking, dashboard, notifications
+- [ ] Thinking/reasoning caches, dashboard, notifications
 
 ## Build
 
