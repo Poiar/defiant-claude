@@ -62,7 +62,8 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Model string `json:"model"`
+		Model  string `json:"model"`
+		Stream bool   `json:"stream"`
 	}
 	if err := json.Unmarshal(body, &req); err != nil {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
@@ -87,13 +88,13 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.forward(w, r, target, body)
+	s.forward(w, r, target, body, req.Stream)
 }
 
 // forward sends the (already model-rewritten) request upstream, falling back
 // through the provider's fallback chain on transient failures, and streams
 // the response back flushing per chunk so SSE events reach the client live.
-func (s *Server) forward(w http.ResponseWriter, r *http.Request, target routing.Target, body []byte) {
+func (s *Server) forward(w http.ResponseWriter, r *http.Request, target routing.Target, body []byte, streaming bool) {
 	targets := append([]routing.Target{target}, s.resolver.FallbackTargets(target)...)
 	for _, t := range targets {
 		resp, err := s.doRequest(r, t, body)
@@ -106,7 +107,7 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, target routing.
 			s.logger.Printf("provider %s: HTTP %d, trying fallback", t.ProviderKey, resp.StatusCode)
 			continue
 		}
-		s.streamResponse(w, resp, t)
+		s.streamResponse(w, resp, t, streaming)
 		return
 	}
 	http.Error(w, "all providers failed", http.StatusBadGateway)
@@ -136,9 +137,29 @@ func (s *Server) doRequest(r *http.Request, target routing.Target, body []byte) 
 }
 
 // streamResponse copies the upstream status + headers and streams the body,
-// translating non-Anthropic wire formats (OpenAI SSE → Anthropic SSE).
-func (s *Server) streamResponse(w http.ResponseWriter, resp *http.Response, target routing.Target) {
+// translating non-Anthropic wire formats (OpenAI SSE → Anthropic SSE for
+// streaming; OpenAI JSON → Anthropic JSON for non-streaming).
+func (s *Server) streamResponse(w http.ResponseWriter, resp *http.Response, target routing.Target, streaming bool) {
 	defer resp.Body.Close()
+
+	// Non-streaming OpenAI response: translate the single JSON body.
+	if target.WireFormat == "openai" && !streaming && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			s.logger.Printf("read response: %v", err)
+			return
+		}
+		translated, err := wire.TranslateOpenAIResponse(body, target.Model)
+		if err != nil {
+			s.logger.Printf("translate response: %v", err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(resp.StatusCode)
+		w.Write(translated)
+		return
+	}
+
 	copyHeaders(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 

@@ -157,3 +157,42 @@ data: [DONE]
 		}
 	}
 }
+
+func TestTranslateOpenAIResponse(t *testing.T) {
+	in := `{"id":"chatcmpl-1","choices":[{"message":{"role":"assistant","content":"Hello world","reasoning_content":"thinking...","tool_calls":[{"id":"c1","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"Paris\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":10,"completion_tokens":5}}`
+	out, err := TranslateOpenAIResponse([]byte(in), "deepseek-v4-pro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var o map[string]any
+	if err := json.Unmarshal(out, &o); err != nil {
+		t.Fatal(err)
+	}
+	if o["type"] != "message" || o["role"] != "assistant" {
+		t.Errorf("type/role = %v/%v", o["type"], o["role"])
+	}
+	if o["model"] != "deepseek-v4-pro" {
+		t.Errorf("model = %v", o["model"])
+	}
+	if o["stop_reason"] != "tool_use" {
+		t.Errorf("stop_reason = %v, want tool_use", o["stop_reason"])
+	}
+	blocks := o["content"].([]any)
+	if len(blocks) != 3 {
+		t.Fatalf("content blocks = %d, want 3 (thinking + text + tool_use)", len(blocks))
+	}
+	if blocks[0].(map[string]any)["type"] != "thinking" {
+		t.Errorf("block[0] type = %v, want thinking", blocks[0].(map[string]any)["type"])
+	}
+	if blocks[1].(map[string]any)["type"] != "text" {
+		t.Errorf("block[1] type = %v, want text", blocks[1].(map[string]any)["type"])
+	}
+	tu := blocks[2].(map[string]any)
+	if tu["type"] != "tool_use" || tu["name"] != "get_weather" {
+		t.Errorf("block[2] = %v, want tool_use get_weather", tu)
+	}
+	usage := o["usage"].(map[string]any)
+	if usage["input_tokens"].(float64) != 10 || usage["output_tokens"].(float64) != 5 {
+		t.Errorf("usage = %v", usage)
+	}
+}
