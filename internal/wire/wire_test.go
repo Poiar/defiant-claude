@@ -6,11 +6,13 @@ import (
 	"io"
 	"strings"
 	"testing"
+
+	"github.com/poiarnoia/defiant-claude/internal/config"
 )
 
 func TestTranslateRequestAnthropicPassthrough(t *testing.T) {
 	in := []byte(`{"model":"x","messages":[]}`)
-	out, err := TranslateRequest(in, "anthropic")
+	out, err := TranslateRequest(in, "anthropic", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +33,7 @@ func TestTranslateRequestOpenAI(t *testing.T) {
 			{"role": "user", "content": [{"type": "text", "text": "What is 2+2?"}]}
 		]
 	}`
-	out, err := TranslateRequest([]byte(in), "openai")
+	out, err := TranslateRequest([]byte(in), "openai", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +68,7 @@ func TestTranslateRequestToolCalls(t *testing.T) {
 			{"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_1", "content": "sunny"}]}
 		]
 	}`
-	out, err := TranslateRequest([]byte(in), "openai")
+	out, err := TranslateRequest([]byte(in), "openai", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,5 +196,66 @@ func TestTranslateOpenAIResponse(t *testing.T) {
 	usage := o["usage"].(map[string]any)
 	if usage["input_tokens"].(float64) != 10 || usage["output_tokens"].(float64) != 5 {
 		t.Errorf("usage = %v", usage)
+	}
+}
+
+func TestThinkingInjection(t *testing.T) {
+	thinking := map[string]config.Thinking{
+		"deepseek-v4-pro": {Type: "enabled", BudgetTokens: 32000},
+	}
+	in := `{"model":"deepseek-v4-pro","stream":true,"messages":[{"role":"user","content":"hi"}]}`
+	out, err := TranslateRequest([]byte(in), "openai", thinking)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var o map[string]any
+	if err := json.Unmarshal(out, &o); err != nil {
+		t.Fatal(err)
+	}
+	th, ok := o["thinking"].(map[string]any)
+	if !ok {
+		t.Fatalf("no thinking field in %s", out)
+	}
+	if th["type"] != "enabled" || th["reasoning_effort"] != "high" {
+		t.Errorf("thinking = %v, want {enabled high}", th)
+	}
+}
+
+func TestThinkingEffortFromBudget(t *testing.T) {
+	thinking := map[string]config.Thinking{
+		"deepseek-v4-pro": {Type: "enabled", BudgetTokens: 32000},
+	}
+	in := `{"model":"deepseek-v4-pro","stream":true,"thinking":{"budget_tokens":2000},"messages":[{"role":"user","content":"hi"}]}`
+	out, err := TranslateRequest([]byte(in), "openai", thinking)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var o map[string]any
+	if err := json.Unmarshal(out, &o); err != nil {
+		t.Fatal(err)
+	}
+	th := o["thinking"].(map[string]any)
+	if th["reasoning_effort"] != "low" {
+		t.Errorf("reasoning_effort = %v, want low", th["reasoning_effort"])
+	}
+}
+
+func TestThinkingLastSegmentMatch(t *testing.T) {
+	thinking := map[string]config.Thinking{
+		"deepseek-v4-pro": {Type: "enabled", BudgetTokens: 16000},
+	}
+	// model has a provider path prefix; match by last segment
+	in := `{"model":"or/deepseek-v4-pro","stream":true,"messages":[{"role":"user","content":"hi"}]}`
+	out, err := TranslateRequest([]byte(in), "openai", thinking)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var o map[string]any
+	if err := json.Unmarshal(out, &o); err != nil {
+		t.Fatal(err)
+	}
+	th := o["thinking"].(map[string]any)
+	if th["reasoning_effort"] != "medium" {
+		t.Errorf("reasoning_effort = %v, want medium", th["reasoning_effort"])
 	}
 }

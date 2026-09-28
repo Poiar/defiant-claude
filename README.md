@@ -15,7 +15,7 @@ Foundation + proxy core done:
 - [x] Routing resolver — slot detection, aliases, provider prefixes, tier-matched fallback chains
 - [x] Proxy server — model rewrite, forwarding, SSE streaming, fallback loop
 - [x] CLI — `--version`, `--lint-config`, `--dry-run` (shows fallback chain), `launch`
-- [x] Wire-format translation — OpenAI (request + SSE streaming); Gemini pending
+- [x] Wire-format translation — OpenAI (request + streaming/non-streaming + thinking injection); Gemini pending
 - [ ] Key encryption (AES-256-GCM)
 - [ ] Caches, momentum, circuit breaker, canary
 - [ ] Metrics, dashboard, notifications, statusline

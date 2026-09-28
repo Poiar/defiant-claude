@@ -6,16 +6,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/poiarnoia/defiant-claude/internal/config"
 )
 
 // TranslateRequest converts an Anthropic Messages request body to the target
 // provider's wire format. Anthropic-format providers get the body unchanged.
-func TranslateRequest(body []byte, format string) ([]byte, error) {
+// thinking carries the per-model thinking config (from providers.json) used to
+// inject reasoning settings for OpenAI-format providers.
+func TranslateRequest(body []byte, format string, thinking map[string]config.Thinking) ([]byte, error) {
 	switch format {
 	case "anthropic", "":
 		return body, nil
 	case "openai":
-		return anthropicToOpenAI(body)
+		return anthropicToOpenAI(body, thinking)
 	case "gemini":
 		return nil, fmt.Errorf("gemini wire format not yet implemented")
 	default:
@@ -94,7 +98,13 @@ type openAIRequest struct {
 	TopP          *float64        `json:"top_p,omitempty"`
 	Stop          []string        `json:"stop,omitempty"`
 	Tools         []openAITool    `json:"tools,omitempty"`
+	Thinking      *openAIThinking `json:"thinking,omitempty"`
 	StreamOptions *streamOptions  `json:"stream_options,omitempty"`
+}
+
+type openAIThinking struct {
+	Type            string `json:"type"`
+	ReasoningEffort string `json:"reasoning_effort"`
 }
 
 type streamOptions struct {
@@ -103,7 +113,7 @@ type streamOptions struct {
 
 // anthropicToOpenAI translates an Anthropic Messages request to an OpenAI chat
 // completions request.
-func anthropicToOpenAI(body []byte) ([]byte, error) {
+func anthropicToOpenAI(body []byte, thinking map[string]config.Thinking) ([]byte, error) {
 	var in struct {
 		Model         string          `json:"model"`
 		MaxTokens     *int            `json:"max_tokens"`
@@ -114,6 +124,9 @@ func anthropicToOpenAI(body []byte) ([]byte, error) {
 		Messages      []anthMessage   `json:"messages"`
 		StopSequences []string        `json:"stop_sequences"`
 		Tools         []anthTool      `json:"tools"`
+		Thinking      *struct {
+			BudgetTokens int64 `json:"budget_tokens"`
+		} `json:"thinking"`
 	}
 	if err := json.Unmarshal(body, &in); err != nil {
 		return nil, fmt.Errorf("parse anthropic request: %w", err)
@@ -149,7 +162,42 @@ func anthropicToOpenAI(body []byte) ([]byte, error) {
 		out.StreamOptions = &streamOptions{IncludeUsage: true}
 	}
 
+	// Inject thinking mode for OpenAI-format providers that support reasoning.
+	if tc, ok := matchThinking(in.Model, thinking); ok && out.Thinking == nil {
+		budget := tc.BudgetTokens
+		if in.Thinking != nil && in.Thinking.BudgetTokens > 0 {
+			budget = in.Thinking.BudgetTokens
+		}
+		if budget <= 0 {
+			budget = 32000
+		}
+		effort := "high"
+		if budget <= 4096 {
+			effort = "low"
+		} else if budget <= 16000 {
+			effort = "medium"
+		}
+		out.Thinking = &openAIThinking{Type: tc.Type, ReasoningEffort: effort}
+	}
+
 	return json.Marshal(out)
+}
+
+// matchThinking finds the thinking config for a model, exact or by the last
+// path segment (e.g. "or/deepseek-v4-pro" → "deepseek-v4-pro").
+func matchThinking(model string, thinking map[string]config.Thinking) (config.Thinking, bool) {
+	if len(thinking) == 0 {
+		return config.Thinking{}, false
+	}
+	if tc, ok := thinking[model]; ok {
+		return tc, true
+	}
+	if i := strings.LastIndex(model, "/"); i >= 0 {
+		if tc, ok := thinking[model[i+1:]]; ok {
+			return tc, true
+		}
+	}
+	return config.Thinking{}, false
 }
 
 // systemToString extracts text from an Anthropic system prompt (string or

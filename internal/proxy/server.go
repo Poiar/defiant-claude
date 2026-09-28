@@ -23,6 +23,7 @@ type Server struct {
 	resolver *routing.Resolver
 	client   *http.Client
 	logger   *log.Logger
+	thinking map[string]config.Thinking
 }
 
 // New builds a proxy server for the named backend config.
@@ -36,6 +37,7 @@ func New(cfg *config.Config, backend string) *Server {
 		resolver: routing.NewResolver(cfg, backend),
 		client:   &http.Client{Transport: transport},
 		logger:   log.Default(),
+		thinking: cfg.Thinking,
 	}
 }
 
@@ -82,7 +84,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err = wire.TranslateRequest(body, target.WireFormat)
+	body, err = wire.TranslateRequest(body, target.WireFormat, s.thinking)
 	if err != nil {
 		http.Error(w, "translate request: "+err.Error(), http.StatusInternalServerError)
 		return
