@@ -112,6 +112,14 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Strip provider-unsupported Anthropic fields and per-request billing/cache
+	// metadata so the upstream body stays stable for disk caching.
+	body, err = wire.Strip(body, target.ProviderKey)
+	if err != nil {
+		http.Error(w, "strip fields: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	body, err = wire.TranslateRequest(body, target.WireFormat, s.thinking)
 	if err != nil {
 		http.Error(w, "translate request: "+err.Error(), http.StatusInternalServerError)
