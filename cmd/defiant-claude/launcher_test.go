@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/poiarnoia/defiant-claude/internal/config"
+	"github.com/Poiar/defiant-claude/internal/config"
 )
 
 func TestAppend1m(t *testing.T) {

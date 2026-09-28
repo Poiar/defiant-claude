@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/poiarnoia/defiant-claude/internal/config"
+	"github.com/Poiar/defiant-claude/internal/config"
 )
 
 // TranslateRequest converts an Anthropic Messages request body to the target

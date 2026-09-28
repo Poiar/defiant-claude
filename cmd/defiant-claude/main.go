@@ -13,10 +13,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/poiarnoia/defiant-claude/internal/config"
-	"github.com/poiarnoia/defiant-claude/internal/crypto"
-	"github.com/poiarnoia/defiant-claude/internal/proxy"
-	"github.com/poiarnoia/defiant-claude/internal/routing"
+	"github.com/Poiar/defiant-claude/internal/config"
+	"github.com/Poiar/defiant-claude/internal/crypto"
+	"github.com/Poiar/defiant-claude/internal/proxy"
+	"github.com/Poiar/defiant-claude/internal/routing"
 )
 
 const version = "0.1.0"

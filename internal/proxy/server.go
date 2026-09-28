@@ -13,10 +13,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/poiarnoia/defiant-claude/internal/config"
-	"github.com/poiarnoia/defiant-claude/internal/resilience"
-	"github.com/poiarnoia/defiant-claude/internal/routing"
-	"github.com/poiarnoia/defiant-claude/internal/wire"
+	"github.com/Poiar/defiant-claude/internal/config"
+	"github.com/Poiar/defiant-claude/internal/resilience"
+	"github.com/Poiar/defiant-claude/internal/routing"
+	"github.com/Poiar/defiant-claude/internal/wire"
 )
 
 // Server forwards Anthropic API requests to resolved upstream providers.

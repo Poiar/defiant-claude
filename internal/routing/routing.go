@@ -10,8 +10,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/poiarnoia/defiant-claude/internal/config"
-	"github.com/poiarnoia/defiant-claude/internal/crypto"
+	"github.com/Poiar/defiant-claude/internal/config"
+	"github.com/Poiar/defiant-claude/internal/crypto"
 )
 
 // Target is a fully-resolved upstream destination for one request.

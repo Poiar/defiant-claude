@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/poiarnoia/defiant-claude/internal/resilience"
+	"github.com/Poiar/defiant-claude/internal/resilience"
 )
 
 // handleHealth returns a JSON snapshot of proxy and per-provider health.

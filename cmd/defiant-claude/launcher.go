@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/poiarnoia/defiant-claude/internal/config"
+	"github.com/Poiar/defiant-claude/internal/config"
 )
 
 // append1m marks a model spec with [1m] when its context limit is >= 1M tokens,
