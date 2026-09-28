@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/poiarnoia/defiant-claude/internal/config"
+	"github.com/poiarnoia/defiant-claude/internal/crypto"
 )
 
 // Target is a fully-resolved upstream destination for one request.
@@ -216,11 +217,23 @@ func cutSlotPrefix(model string) (slot, rest string, ok bool) {
 	return "", "", false
 }
 
-// keyFromEnv reads the provider's API key from the environment.
-// TODO(crypto): decrypt "$aes256gcm:..." keys once the crypto package lands.
+// keyFromEnv reads the provider's API key from the environment, decrypting
+// "$aes256gcm:..." values with DEFIANT_CLAUDE_ENCRYPTION_KEY.
 func keyFromEnv(p config.Provider) string {
 	if p.KeyEnv == "" || p.NoAuth {
 		return ""
 	}
-	return os.Getenv(p.KeyEnv)
+	raw := os.Getenv(p.KeyEnv)
+	if strings.HasPrefix(raw, "$aes256gcm:") {
+		master := os.Getenv("DEFIANT_CLAUDE_ENCRYPTION_KEY")
+		if master == "" {
+			return ""
+		}
+		decrypted, err := crypto.Decrypt(raw, master)
+		if err != nil {
+			return ""
+		}
+		return decrypted
+	}
+	return raw
 }

@@ -4,8 +4,9 @@ Provider-agnostic proxy for Claude Code — routes Anthropic Messages API calls 
 whatever model provider you configure (DeepSeek, OpenRouter, Groq, xAI, Ollama,
 OpenCode, …), with automatic fallback chains and tier-matched model rewrites.
 
-A from-scratch Go rewrite of the TypeScript `defiant-claude` proxy, with **zero
-external dependencies** (pure stdlib) and a single static binary.
+A from-scratch Go rewrite of the TypeScript `defiant-claude` proxy, with one
+external dependency (`golang.org/x/crypto` for scrypt key derivation — matching
+the TS encrypted-key format) and a single static binary.
 
 ## Status
 
@@ -16,7 +17,7 @@ Foundation + proxy core done:
 - [x] Proxy server — model rewrite, forwarding, SSE streaming, fallback loop
 - [x] CLI — `--version`, `--lint-config`, `--dry-run` (shows fallback chain), `launch`
 - [x] Wire-format translation — OpenAI (request + streaming/non-streaming + thinking injection); Gemini pending
-- [ ] Key encryption (AES-256-GCM)
+- [x] Key encryption — AES-256-GCM (`$aes256gcm:`, scrypt KDF, `--encrypt-key`)
 - [ ] Caches, momentum, circuit breaker, canary
 - [ ] Metrics, dashboard, notifications, statusline
 - [ ] Launcher (spawn Claude Code with the proxy env)

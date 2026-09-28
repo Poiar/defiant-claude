@@ -4,12 +4,15 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
 	"sort"
+	"strings"
 
 	"github.com/poiarnoia/defiant-claude/internal/config"
+	"github.com/poiarnoia/defiant-claude/internal/crypto"
 	"github.com/poiarnoia/defiant-claude/internal/proxy"
 	"github.com/poiarnoia/defiant-claude/internal/routing"
 )
@@ -29,6 +32,8 @@ func main() {
 		printUsage(os.Stdout)
 	case "--lint-config", "lint-config":
 		os.Exit(runLint())
+	case "--encrypt-key", "encrypt-key":
+		os.Exit(runEncryptKey())
 	case "--dry-run", "dry-run":
 		os.Exit(runDryRun(args[1:]))
 	case "launch", "run":
@@ -58,6 +63,26 @@ func loadConfig() (*config.Config, error) {
 		return nil, err
 	}
 	return config.LoadUser(dir)
+}
+
+func runEncryptKey() int {
+	master := os.Getenv("DEFIANT_CLAUDE_ENCRYPTION_KEY")
+	if master == "" {
+		fmt.Fprintln(os.Stderr, "error: DEFIANT_CLAUDE_ENCRYPTION_KEY is not set")
+		return 1
+	}
+	key, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	encrypted, err := crypto.Encrypt(strings.TrimSpace(string(key)), master)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	fmt.Println(encrypted)
+	return 0
 }
 
 func runLint() int {
