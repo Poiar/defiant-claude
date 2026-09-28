@@ -10,17 +10,24 @@ the TS encrypted-key format) and a single static binary.
 
 ## Status
 
-Foundation + proxy core done:
+Near parity with the TypeScript proxy:
 
 - [x] Config model — `providers.json` → typed structs + loader + lint
 - [x] Routing resolver — slot detection, aliases, provider prefixes, tier-matched fallback chains
+- [x] Slot overrides — `~/.defiant-claude/slot-overrides.json`
 - [x] Proxy server — model rewrite, forwarding, SSE streaming, fallback loop
-- [x] CLI — `--version`, `--lint-config`, `--dry-run` (shows fallback chain), `launch`
-- [x] Wire-format translation — OpenAI (request + streaming/non-streaming + thinking injection); Gemini pending
+- [x] Wire-format translation — OpenAI (request + streaming/non-streaming + thinking injection)
+- [x] Field stripping — metadata/billing-header/cache_control/dedup for upstream cache stability
 - [x] Key encryption — AES-256-GCM (`$aes256gcm:`, scrypt KDF, `--encrypt-key`)
-- [ ] Caches, momentum, circuit breaker, canary
-- [ ] Metrics, dashboard, notifications, statusline
-- [ ] Launcher (spawn Claude Code with the proxy env)
+- [x] Circuit breaker — CLOSED/OPEN/HALF_OPEN, 429-immune, probe recovery
+- [x] Session momentum — provider preference reordering
+- [x] Canary rollout state machine — COLD/WARMING/ACTIVE
+- [x] Health + Prometheus metrics — `/health`, `/metrics`
+- [x] Friendly errors — E012 fallback-exhausted responses
+- [x] CLI — `--version`, `--lint-config`, `--dry-run`, `--encrypt-key`, `launch`
+- [x] Launcher — spawns Claude Code against the in-process proxy
+- [ ] Gemini wire format (1 dead-end provider: `noAutoFallback`, no configs)
+- [ ] Thinking/reasoning caches, spend tracking, dashboard, notifications
 
 ## Build
 
@@ -28,7 +35,8 @@ Foundation + proxy core done:
 
 ## Run
 
-    defiant-claude launch -b ds     # prints PORT:<n>
+    defiant-claude launch -b ds           # start proxy + spawn Claude Code
+    defiant-claude launch --no-spawn      # proxy only, prints PORT:<n>
 
 ## Test
 
