@@ -14,16 +14,19 @@ import (
 	"time"
 
 	"github.com/poiarnoia/defiant-claude/internal/config"
+	"github.com/poiarnoia/defiant-claude/internal/resilience"
 	"github.com/poiarnoia/defiant-claude/internal/routing"
 	"github.com/poiarnoia/defiant-claude/internal/wire"
 )
 
 // Server forwards Anthropic API requests to resolved upstream providers.
 type Server struct {
-	resolver *routing.Resolver
-	client   *http.Client
-	logger   *log.Logger
-	thinking map[string]config.Thinking
+	resolver  *routing.Resolver
+	client    *http.Client
+	logger    *log.Logger
+	thinking  map[string]config.Thinking
+	breakers  *resilience.Breakers
+	momentum  *resilience.Momentum
 }
 
 // New builds a proxy server for the named backend config.
@@ -38,6 +41,8 @@ func New(cfg *config.Config, backend string) *Server {
 		client:   &http.Client{Transport: transport},
 		logger:   log.Default(),
 		thinking: cfg.Thinking,
+		breakers: resilience.NewBreakers(),
+		momentum: resilience.NewMomentum(),
 	}
 }
 
@@ -97,22 +102,82 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 // through the provider's fallback chain on transient failures, and streams
 // the response back flushing per chunk so SSE events reach the client live.
 func (s *Server) forward(w http.ResponseWriter, r *http.Request, target routing.Target, body []byte, streaming bool) {
-	targets := append([]routing.Target{target}, s.resolver.FallbackTargets(target)...)
-	for _, t := range targets {
+	sk, _ := resilience.SessionKey(body)
+	chain := s.buildChain(target, sk)
+	for _, t := range chain {
+		start := time.Now()
 		resp, err := s.doRequest(r, t, body)
+		ms := time.Since(start).Milliseconds()
 		if err != nil {
+			s.breakers.RecordStat(t.ProviderKey, false, ms, 0)
 			s.logger.Printf("provider %s: %v", t.ProviderKey, err)
 			continue
 		}
 		if isRetryableStatus(resp.StatusCode) {
+			s.breakers.RecordStat(t.ProviderKey, false, ms, resp.StatusCode)
 			resp.Body.Close()
 			s.logger.Printf("provider %s: HTTP %d, trying fallback", t.ProviderKey, resp.StatusCode)
 			continue
 		}
+		s.breakers.RecordStat(t.ProviderKey, true, ms, resp.StatusCode)
+		s.momentum.Record(sk, t.ProviderKey, t.Model)
 		s.streamResponse(w, resp, t, streaming)
 		return
 	}
 	http.Error(w, "all providers failed", http.StatusBadGateway)
+}
+
+// buildChain assembles the primary target plus health-filtered fallbacks,
+// applies session-momentum reordering, and truncates to at most 3 providers.
+func (s *Server) buildChain(target routing.Target, sk string) []routing.Target {
+	fallbacks := s.resolver.FallbackTargets(target)
+	healthy := make([]routing.Target, 0, len(fallbacks))
+	for _, fb := range fallbacks {
+		if s.breakers.IsHealthy(fb.ProviderKey) {
+			healthy = append(healthy, fb)
+		}
+	}
+	chain := append([]routing.Target{target}, healthy...)
+
+	if len(chain) > 1 && sk != "" {
+		if pref, conf, ok := s.momentum.Get(sk); ok && pref != "" && conf >= 0.4 && s.breakers.IsHealthy(pref) {
+			chain = moveToIndex1(chain, pref)
+		} else {
+			chain = moveFreeToIndex1(chain)
+		}
+	}
+	if len(chain) > 3 {
+		chain = chain[:3]
+	}
+	return chain
+}
+
+// freeProviders cost $0/M and are preferred over paid fallbacks when there is
+// no session momentum.
+var freeProviders = map[string]bool{"oc": true, "um": true, "lo": true}
+
+// moveToIndex1 moves the named provider (if present at index >= 2) to index 1,
+// immediately after the primary.
+func moveToIndex1(chain []routing.Target, providerKey string) []routing.Target {
+	for i := 2; i < len(chain); i++ {
+		if chain[i].ProviderKey == providerKey {
+			item := chain[i]
+			copy(chain[2:i+1], chain[1:i])
+			chain[1] = item
+			break
+		}
+	}
+	return chain
+}
+
+// moveFreeToIndex1 promotes the first free provider found at index >= 2.
+func moveFreeToIndex1(chain []routing.Target) []routing.Target {
+	for i := 2; i < len(chain); i++ {
+		if freeProviders[chain[i].ProviderKey] {
+			return moveToIndex1(chain, chain[i].ProviderKey)
+		}
+	}
+	return chain
 }
 
 // doRequest builds and sends the upstream request for a single target.
