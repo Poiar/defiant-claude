@@ -15,6 +15,7 @@ import (
 
 	"github.com/poiarnoia/defiant-claude/internal/config"
 	"github.com/poiarnoia/defiant-claude/internal/routing"
+	"github.com/poiarnoia/defiant-claude/internal/wire"
 )
 
 // Server forwards Anthropic API requests to resolved upstream providers.
@@ -80,6 +81,12 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	body, err = wire.TranslateRequest(body, target.WireFormat)
+	if err != nil {
+		http.Error(w, "translate request: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	s.forward(w, r, target, body)
 }
 
@@ -99,7 +106,7 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, target routing.
 			s.logger.Printf("provider %s: HTTP %d, trying fallback", t.ProviderKey, resp.StatusCode)
 			continue
 		}
-		s.streamResponse(w, resp)
+		s.streamResponse(w, resp, t)
 		return
 	}
 	http.Error(w, "all providers failed", http.StatusBadGateway)
@@ -128,16 +135,22 @@ func (s *Server) doRequest(r *http.Request, target routing.Target, body []byte) 
 	return s.client.Do(req)
 }
 
-// streamResponse copies the upstream status + headers and streams the body.
-func (s *Server) streamResponse(w http.ResponseWriter, resp *http.Response) {
+// streamResponse copies the upstream status + headers and streams the body,
+// translating non-Anthropic wire formats (OpenAI SSE → Anthropic SSE).
+func (s *Server) streamResponse(w http.ResponseWriter, resp *http.Response, target routing.Target) {
 	defer resp.Body.Close()
 	copyHeaders(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 
+	var src io.Reader = resp.Body
+	if target.WireFormat == "openai" && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		src = wire.NewOpenAIStreamReader(resp.Body, target.Model)
+	}
+
 	flusher, _ := w.(http.Flusher)
 	buf := make([]byte, 32*1024)
 	for {
-		n, rerr := resp.Body.Read(buf)
+		n, rerr := src.Read(buf)
 		if n > 0 {
 			if _, werr := w.Write(buf[:n]); werr != nil {
 				return
