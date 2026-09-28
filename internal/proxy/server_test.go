@@ -102,3 +102,35 @@ func TestHealthAndMetricsEndpoints(t *testing.T) {
 		t.Errorf("/metrics missing uptime metric:\n%s", rec2.Body.String())
 	}
 }
+
+func TestFriendlyErrorWhenAllProvidersFail(t *testing.T) {
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer mock.Close()
+
+	cfg := &config.Config{
+		Providers: map[string]config.Provider{
+			"mock": {Endpoint: mock.URL, AuthHeader: "bearer", WireFormat: "openai", NoAuth: true},
+		},
+		Aliases: map[string]string{"sonnet": "claude-sonnet-4-6"},
+		Configs: map[string]config.SlotConfig{
+			"mock": {Name: "mock", Opus: "mock:m", Sonnet: "mock:m", Haiku: "mock:m", Sub: "mock:m", Fable: "mock:m"},
+		},
+	}
+	srv := New(cfg, "mock")
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages",
+		strings.NewReader(`{"model":"claude-sonnet-4-6","stream":false,"max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`))
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (friendly fallback)", rec.Code)
+	}
+	if rec.Header().Get("x-defiant-claude-error") != "E012" {
+		t.Errorf("missing E012 header: %v", rec.Header())
+	}
+	if !strings.Contains(rec.Body.String(), "unavailable") {
+		t.Errorf("missing friendly message:\n%s", rec.Body.String())
+	}
+}

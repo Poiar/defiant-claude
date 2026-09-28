@@ -113,16 +113,19 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.forward(w, r, target, body, req.Stream)
+	s.forward(w, r, target, body, req.Stream, req.Model)
 }
 
 // forward sends the (already model-rewritten) request upstream, falling back
 // through the provider's fallback chain on transient failures, and streams
 // the response back flushing per chunk so SSE events reach the client live.
-func (s *Server) forward(w http.ResponseWriter, r *http.Request, target routing.Target, body []byte, streaming bool) {
+func (s *Server) forward(w http.ResponseWriter, r *http.Request, target routing.Target, body []byte, streaming bool, model string) {
 	sk, _ := resilience.SessionKey(body)
 	chain := s.buildChain(target, sk)
+	var attempted []string
+	var lastStatus int
 	for _, t := range chain {
+		attempted = append(attempted, t.ProviderKey)
 		start := time.Now()
 		resp, err := s.doRequest(r, t, body)
 		ms := time.Since(start).Milliseconds()
@@ -131,6 +134,7 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, target routing.
 			s.logger.Printf("provider %s: %v", t.ProviderKey, err)
 			continue
 		}
+		lastStatus = resp.StatusCode
 		if isRetryableStatus(resp.StatusCode) {
 			s.breakers.RecordStat(t.ProviderKey, false, ms, resp.StatusCode)
 			resp.Body.Close()
@@ -142,7 +146,7 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, target routing.
 		s.streamResponse(w, resp, t, streaming)
 		return
 	}
-	http.Error(w, "all providers failed", http.StatusBadGateway)
+	s.writeFriendlyError(w, streaming, model, attempted, lastStatus)
 }
 
 // buildChain assembles the primary target plus health-filtered fallbacks,
