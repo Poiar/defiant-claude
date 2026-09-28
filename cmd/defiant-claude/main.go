@@ -67,6 +67,20 @@ func loadConfig() (*config.Config, error) {
 	return config.LoadUser(dir)
 }
 
+// slotOverrides loads ~/.defiant-claude/slot-overrides.json (non-fatal).
+func slotOverrides() map[string]string {
+	dir, err := config.DefaultConfigDir()
+	if err != nil {
+		return nil
+	}
+	o, err := config.LoadSlotOverrides(dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+		return nil
+	}
+	return o
+}
+
 func runEncryptKey() int {
 	master := os.Getenv("DEFIANT_CLAUDE_ENCRYPTION_KEY")
 	if master == "" {
@@ -122,6 +136,7 @@ func runDryRun(args []string) int {
 
 	if len(specs) > 0 {
 		r := routing.NewResolver(cfg, backend)
+		r.SetOverrides(slotOverrides())
 		fmt.Printf("resolving against backend %q:\n", backend)
 		for _, spec := range specs {
 			t, err := r.Resolve(spec)
@@ -172,6 +187,7 @@ func runLaunch(args []string) int {
 	}
 
 	srv := proxy.New(cfg, *backend)
+	srv.SetSlotOverrides(slotOverrides())
 	ln, err := srv.Listen(*port)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)

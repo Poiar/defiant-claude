@@ -55,6 +55,11 @@ func (s *Server) SetVersion(v string) {
 	s.version = v
 }
 
+// SetSlotOverrides installs per-slot routing overrides (slot-overrides.json).
+func (s *Server) SetSlotOverrides(m map[string]string) {
+	s.resolver.SetOverrides(m)
+}
+
 // Listen binds to 127.0.0.1 (loopback only — the proxy must never be
 // reachable from the network). port 0 selects an ephemeral port.
 func (s *Server) Listen(port int) (net.Listener, error) {
