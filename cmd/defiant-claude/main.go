@@ -2,12 +2,14 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"sort"
 	"strings"
 
@@ -160,6 +162,7 @@ func runLaunch(args []string) int {
 	fs := flag.NewFlagSet("launch", flag.ExitOnError)
 	backend := fs.String("b", "ds", "named config to use")
 	port := fs.Int("port", 0, "port to listen on (0 = ephemeral)")
+	noSpawn := fs.Bool("no-spawn", false, "start the proxy only; don't spawn Claude Code")
 	fs.Parse(args)
 
 	cfg, err := loadConfig()
@@ -175,9 +178,36 @@ func runLaunch(args []string) int {
 		return 1
 	}
 	actual := ln.Addr().(*net.TCPAddr).Port
-	fmt.Printf("PORT:%d\n", actual)
-	if err := http.Serve(ln, srv); err != nil {
-		fmt.Fprintf(os.Stderr, "serve: %v\n", err)
+
+	if *noSpawn {
+		fmt.Printf("PORT:%d\n", actual)
+		if err := http.Serve(ln, srv); err != nil {
+			fmt.Fprintf(os.Stderr, "serve: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+
+	sc, ok := cfg.Configs[*backend]
+	if !ok {
+		fmt.Fprintf(os.Stderr, "error: unknown backend %q\n", *backend)
+		return 1
+	}
+
+	// Start the proxy in the background and spawn Claude Code against it.
+	go func() {
+		if err := http.Serve(ln, srv); err != nil && err != http.ErrServerClosed {
+			fmt.Fprintf(os.Stderr, "serve: %v\n", err)
+		}
+	}()
+
+	if err := spawnClaude(buildClaudeEnv(sc, cfg.ContextLimits, actual)); err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			fmt.Printf("PORT:%d\n", actual)
+			fmt.Fprintf(os.Stderr, "claude not found — proxy is running; set ANTHROPIC_BASE_URL=http://127.0.0.1:%d\n", actual)
+			select {} // keep the proxy alive
+		}
+		fmt.Fprintf(os.Stderr, "claude: %v\n", err)
 		return 1
 	}
 	return 0
