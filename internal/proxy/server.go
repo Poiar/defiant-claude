@@ -12,7 +12,11 @@ import (
 	"math/rand/v2"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Poiar/defiant-claude/internal/config"
@@ -35,15 +39,23 @@ var (
 
 // Server forwards Anthropic API requests to resolved upstream providers.
 type Server struct {
-	resolver  *routing.Resolver
+	backend   string
+	snap      atomic.Pointer[configSnapshot]
 	client    *http.Client
 	logger    *log.Logger
-	thinking  map[string]config.Thinking
-	pricing   map[string]config.Pricing
 	breakers  *resilience.Breakers
 	momentum  *resilience.Momentum
 	startTime time.Time
 	version   string
+}
+
+// configSnapshot is an immutable bundle of config-derived state, swapped
+// atomically on hot reload so a request never sees a torn mix of old/new
+// resolver, thinking, and pricing.
+type configSnapshot struct {
+	resolver *routing.Resolver
+	thinking map[string]config.Thinking
+	pricing  map[string]config.Pricing
 }
 
 // New builds a proxy server for the named backend config.
@@ -54,17 +66,21 @@ func New(cfg *config.Config, backend string) *Server {
 		IdleConnTimeout:       90 * time.Second,
 		ResponseHeaderTimeout: firstByteTimeout,
 	}
-	return &Server{
-		resolver:  routing.NewResolver(cfg, backend),
+	s := &Server{
+		backend:   backend,
 		client:    &http.Client{Transport: transport},
 		logger:    log.Default(),
-		thinking:  cfg.Thinking,
-		pricing:   cfg.Pricing,
 		breakers:  resilience.NewBreakers(),
 		momentum:  resilience.NewMomentum(),
 		startTime: time.Now(),
 		version:   "0.1.0",
 	}
+	s.snap.Store(&configSnapshot{
+		resolver: routing.NewResolver(cfg, backend),
+		thinking: cfg.Thinking,
+		pricing:  cfg.Pricing,
+	})
+	return s
 }
 
 // SetVersion sets the version reported by /health.
@@ -73,8 +89,82 @@ func (s *Server) SetVersion(v string) {
 }
 
 // SetSlotOverrides installs per-slot routing overrides (slot-overrides.json).
+// Called once at startup, before serving.
 func (s *Server) SetSlotOverrides(m map[string]string) {
-	s.resolver.SetOverrides(m)
+	s.snap.Load().resolver.SetOverrides(m)
+}
+
+// Reload atomically swaps in a fresh resolver + thinking + pricing built from
+// cfg and slot overrides. Called by ReloadFromDir / the config watcher.
+func (s *Server) Reload(cfg *config.Config, overrides map[string]string) {
+	r := routing.NewResolver(cfg, s.backend)
+	r.SetOverrides(overrides)
+	s.snap.Store(&configSnapshot{
+		resolver: r,
+		thinking: cfg.Thinking,
+		pricing:  cfg.Pricing,
+	})
+}
+
+// ReloadFromDir loads providers.json + slot-overrides.json from dir and swaps
+// them in. On a bad config the previous snapshot stays active and an error is
+// returned for the caller to log.
+func (s *Server) ReloadFromDir(dir string) error {
+	cfg, err := config.LoadUser(dir)
+	if err != nil {
+		return err
+	}
+	if probs := cfg.Lint(); len(probs) > 0 {
+		return fmt.Errorf("config lint: %s", strings.Join(probs, "; "))
+	}
+	overrides, err := config.LoadSlotOverrides(dir)
+	if err != nil {
+		return err
+	}
+	s.Reload(cfg, overrides)
+	s.logger.Printf("config reloaded from %s", dir)
+	return nil
+}
+
+// WatchConfig polls dir every interval and hot-reloads when providers.json or
+// slot-overrides.json changes. Returns a stop function.
+func (s *Server) WatchConfig(dir string, interval time.Duration) (stop func()) {
+	providers := filepath.Join(dir, "providers.json")
+	overrides := filepath.Join(dir, "slot-overrides.json")
+	lastP, _ := fileModTime(providers)
+	lastO, _ := fileModTime(overrides)
+	done := make(chan struct{})
+	stop = func() { close(done) }
+	go func() {
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-t.C:
+				p, _ := fileModTime(providers)
+				o, _ := fileModTime(overrides)
+				if p.Equal(lastP) && o.Equal(lastO) {
+					continue
+				}
+				lastP, lastO = p, o
+				if err := s.ReloadFromDir(dir); err != nil {
+					s.logger.Printf("config reload failed: %v", err)
+				}
+			}
+		}
+	}()
+	return stop
+}
+
+// fileModTime returns a file's mod time, or the zero time if it's absent.
+func fileModTime(path string) (time.Time, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return fi.ModTime(), nil
 }
 
 // Listen binds to 127.0.0.1 (loopback only — the proxy must never be
@@ -117,7 +207,8 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	target, err := s.resolver.Resolve(req.Model)
+	snap := s.snap.Load()
+	target, err := snap.resolver.Resolve(req.Model)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -137,7 +228,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err = wire.TranslateRequest(body, target.WireFormat, s.thinking)
+	body, err = wire.TranslateRequest(body, target.WireFormat, snap.thinking)
 	if err != nil {
 		http.Error(w, "translate request: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -222,7 +313,7 @@ func retryBackoff(attempt int) time.Duration {
 // buildChain assembles the primary target plus health-filtered fallbacks,
 // applies session-momentum reordering, and truncates to at most 3 providers.
 func (s *Server) buildChain(target routing.Target, sk string) []routing.Target {
-	fallbacks := s.resolver.FallbackTargets(target)
+	fallbacks := s.snap.Load().resolver.FallbackTargets(target)
 	healthy := make([]routing.Target, 0, len(fallbacks))
 	for _, fb := range fallbacks {
 		if s.breakers.IsHealthy(fb.ProviderKey) {
@@ -438,7 +529,7 @@ func (s *Server) recordUsage(providerKey, model string, u wire.Usage) {
 // costUSD estimates the request cost from the model's pricing entry and the
 // token breakdown. Returns 0 when the model has no pricing entry.
 func (s *Server) costUSD(model string, u wire.Usage) float64 {
-	p, ok := s.pricing[model]
+	p, ok := s.snap.Load().pricing[model]
 	if !ok {
 		return 0
 	}

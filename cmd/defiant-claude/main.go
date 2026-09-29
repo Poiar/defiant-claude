@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/Poiar/defiant-claude/internal/config"
 	"github.com/Poiar/defiant-claude/internal/crypto"
@@ -188,6 +189,10 @@ func runLaunch(args []string) int {
 
 	srv := proxy.New(cfg, *backend)
 	srv.SetSlotOverrides(slotOverrides())
+	if dir, err := config.DefaultConfigDir(); err == nil {
+		stop := srv.WatchConfig(dir, 3*time.Second)
+		defer stop()
+	}
 	ln, err := srv.Listen(*port)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)

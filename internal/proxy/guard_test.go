@@ -5,6 +5,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -185,5 +187,70 @@ func TestSpendTrackingAndUsage(t *testing.T) {
 	spend, ok := p["spendUSD"].(float64)
 	if !ok || spend < 0.0199 || spend > 0.0201 {
 		t.Errorf("spendUSD = %v, want ~0.02", p["spendUSD"])
+	}
+}
+
+func TestReloadSwapsConfig(t *testing.T) {
+	mockA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		io.WriteString(w, `{"id":"a","type":"message","role":"assistant","model":"m","content":[{"type":"text","text":"AAA"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`)
+	}))
+	defer mockA.Close()
+	mockB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		io.WriteString(w, `{"id":"b","type":"message","role":"assistant","model":"m","content":[{"type":"text","text":"BBB"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`)
+	}))
+	defer mockB.Close()
+
+	srv := New(testConfig(mockA.URL, "anthropic"), "mock")
+	roundtrip := func() string {
+		req := httptest.NewRequest(http.MethodPost, "/v1/messages",
+			strings.NewReader(`{"model":"claude-sonnet-4-6","stream":false,"max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`))
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		return rec.Body.String()
+	}
+
+	if !strings.Contains(roundtrip(), "AAA") {
+		t.Fatalf("before reload, want AAA, got %s", roundtrip())
+	}
+	srv.Reload(testConfig(mockB.URL, "anthropic"), nil)
+	if !strings.Contains(roundtrip(), "BBB") {
+		t.Fatalf("after reload, want BBB, got %s", roundtrip())
+	}
+}
+
+func TestReloadFromDir(t *testing.T) {
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		io.WriteString(w, `{"id":"x","type":"message","role":"assistant","model":"m","content":[{"type":"text","text":"RELOADED"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`)
+	}))
+	defer mock.Close()
+
+	dir := t.TempDir()
+	providersJSON := `{
+	  "providers": {"mock": {"endpoint": "` + mock.URL + `", "authHeader": "bearer", "wireFormat": "anthropic", "noAuth": true}},
+	  "aliases": {"sonnet": "claude-sonnet-4-6"},
+	  "configs": {"mock": {"name": "mock", "opus": "mock:m", "sonnet": "mock:m", "haiku": "mock:m", "sub": "mock:m", "fable": "mock:m"}}
+	}`
+	if err := os.WriteFile(filepath.Join(dir, "providers.json"), []byte(providersJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Start against a dead endpoint; ReloadFromDir should point at the mock.
+	srv := New(testConfig("http://127.0.0.1:1", "anthropic"), "mock")
+	if err := srv.ReloadFromDir(dir); err != nil {
+		t.Fatalf("ReloadFromDir: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages",
+		strings.NewReader(`{"model":"claude-sonnet-4-6","stream":false,"max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`))
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if !strings.Contains(rec.Body.String(), "RELOADED") {
+		t.Fatalf("expected RELOADED response, got %s", rec.Body.String())
 	}
 }

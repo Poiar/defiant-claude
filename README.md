@@ -15,6 +15,7 @@ Near parity with the TypeScript proxy:
 - [x] Config model — `providers.json` → typed structs + loader + lint
 - [x] Routing resolver — slot detection, aliases, provider prefixes, tier-matched fallback chains
 - [x] Slot overrides — `~/.defiant-claude/slot-overrides.json`
+- [x] Hot reload — watches `providers.json` + `slot-overrides.json`, swaps config atomically
 - [x] Proxy server — model rewrite, forwarding, SSE streaming, fallback loop
 - [x] Stream guards — first-byte timeout, idle watchdog (180s), 500MB body cap
 - [x] Retry — per-provider retry with exponential backoff + full jitter
