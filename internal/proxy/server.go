@@ -35,18 +35,26 @@ var (
 	maxAttemptsPerProvider = 3
 	retryBaseDelay         = 500 * time.Millisecond
 	retryMaxDelay          = 4 * time.Second
+
+	concurrencyTimeout = 30 * time.Second // wait for a concurrency slot
+)
+
+const (
+	defaultMaxConcurrent = 25 // main chat in-flight upstream requests
+	defaultSubagentMax   = 8  // subagent in-flight upstream requests
 )
 
 // Server forwards Anthropic API requests to resolved upstream providers.
 type Server struct {
-	backend   string
-	snap      atomic.Pointer[configSnapshot]
-	client    *http.Client
-	logger    *log.Logger
-	breakers  *resilience.Breakers
-	momentum  *resilience.Momentum
-	startTime time.Time
-	version   string
+	backend     string
+	snap        atomic.Pointer[configSnapshot]
+	client      *http.Client
+	logger      *log.Logger
+	breakers    *resilience.Breakers
+	momentum    *resilience.Momentum
+	concurrency *Concurrency
+	startTime   time.Time
+	version     string
 }
 
 // configSnapshot is an immutable bundle of config-derived state, swapped
@@ -67,13 +75,14 @@ func New(cfg *config.Config, backend string) *Server {
 		ResponseHeaderTimeout: firstByteTimeout,
 	}
 	s := &Server{
-		backend:   backend,
-		client:    &http.Client{Transport: transport},
-		logger:    log.Default(),
-		breakers:  resilience.NewBreakers(),
-		momentum:  resilience.NewMomentum(),
-		startTime: time.Now(),
-		version:   "0.1.0",
+		backend:     backend,
+		client:      &http.Client{Transport: transport},
+		logger:      log.Default(),
+		breakers:    resilience.NewBreakers(),
+		momentum:    resilience.NewMomentum(),
+		concurrency: NewConcurrency(defaultMaxConcurrent, defaultSubagentMax),
+		startTime:   time.Now(),
+		version:     "0.1.0",
 	}
 	s.snap.Store(&configSnapshot{
 		resolver: routing.NewResolver(cfg, backend),
@@ -214,6 +223,19 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Bound output cost: cap max_tokens by prompt tier (CHAT/TRIVIAL/TOOL).
+	if capped, err := capMaxTokensInBody(body, classifyTier(body)); err == nil {
+		body = capped
+	}
+
+	// Concurrency guard: cap simultaneous in-flight upstream requests.
+	release, err := s.concurrency.Acquire(target.Slot, concurrencyTimeout)
+	if err != nil {
+		http.Error(w, "too many concurrent requests: "+err.Error(), http.StatusTooManyRequests)
+		return
+	}
+	defer release()
+
 	body, err = rewriteModel(body, target.Model)
 	if err != nil {
 		http.Error(w, "rewrite model: "+err.Error(), http.StatusInternalServerError)
@@ -283,7 +305,8 @@ func (s *Server) requestWithRetry(r *http.Request, t routing.Target, body []byte
 		case err != nil:
 			lastErr = err
 			s.breakers.RecordStat(t.ProviderKey, false, ms, 0)
-			s.logger.Printf("provider %s: attempt %d/%d network error: %v", t.ProviderKey, attempt, maxAttemptsPerProvider, err)
+			label, _ := classifyTransportError(err)
+			s.logger.Printf("provider %s: attempt %d/%d %s: %v", t.ProviderKey, attempt, maxAttemptsPerProvider, label, err)
 		case isRetryableStatus(resp.StatusCode):
 			lastStatus = resp.StatusCode
 			lastErr = fmt.Errorf("HTTP %d", resp.StatusCode)

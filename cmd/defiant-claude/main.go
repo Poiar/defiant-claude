@@ -225,7 +225,7 @@ func runLaunch(args []string) int {
 		}
 	}()
 
-	if err := spawnClaude(buildClaudeEnv(sc, cfg.ContextLimits, actual)); err != nil {
+	if err := spawnClaude(buildClaudeEnv(sc, cfg.ContextLimits, cfg.CompactionWindow, actual)); err != nil {
 		if errors.Is(err, exec.ErrNotFound) {
 			fmt.Printf("PORT:%d\n", actual)
 			fmt.Fprintf(os.Stderr, "claude not found — proxy is running; set ANTHROPIC_BASE_URL=http://127.0.0.1:%d\n", actual)

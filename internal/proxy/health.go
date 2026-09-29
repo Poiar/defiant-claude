@@ -29,11 +29,16 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 			"circuitBreaker": s.breakers.State(k).String(),
 		}
 	}
+	da, dw, sa, sw := s.concurrency.Status()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"status":    "ok",
-		"uptime":    int64(time.Since(s.startTime).Seconds()),
-		"version":   s.version,
+		"status":  "ok",
+		"uptime":  int64(time.Since(s.startTime).Seconds()),
+		"version": s.version,
+		"concurrency": map[string]any{
+			"default":  map[string]any{"active": da, "waiting": dw},
+			"subagent": map[string]any{"active": sa, "waiting": sw},
+		},
 		"providers": providers,
 	})
 }

@@ -25,7 +25,7 @@ func TestBuildClaudeEnv(t *testing.T) {
 		Opus: "ds:opus-m", Sonnet: "ds:sonnet-m", Haiku: "ds:haiku-m",
 		Sub: "ds:sub-m", Fable: "ds:fable-m",
 	}
-	env := buildClaudeEnv(sc, map[string]int64{}, 12345)
+	env := buildClaudeEnv(sc, map[string]int64{}, map[string]int64{}, 12345)
 	var base, model, auth, sub string
 	for _, e := range env {
 		switch {
@@ -56,4 +56,18 @@ func TestBuildClaudeEnv(t *testing.T) {
 			t.Errorf("ANTHROPIC_API_KEY should be removed from env")
 		}
 	}
+}
+
+func TestBuildClaudeEnvCompactionWindow(t *testing.T) {
+	sc := config.SlotConfig{
+		Opus: "ds:opus-m", Sonnet: "ds:s", Haiku: "ds:h", Sub: "ds:sub", Fable: "ds:f",
+	}
+	cw := map[string]int64{"opus-m": 950000}
+	env := buildClaudeEnv(sc, map[string]int64{}, cw, 12345)
+	for _, e := range env {
+		if e == "CLAUDE_CODE_AUTO_COMPACT_WINDOW=950000" {
+			return
+		}
+	}
+	t.Errorf("CLAUDE_CODE_AUTO_COMPACT_WINDOW not set; env=%v", env)
 }

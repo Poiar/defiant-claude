@@ -19,6 +19,9 @@ Near parity with the TypeScript proxy:
 - [x] Proxy server — model rewrite, forwarding, SSE streaming, fallback loop
 - [x] Stream guards — first-byte timeout, idle watchdog (180s), 500MB body cap
 - [x] Retry — per-provider retry with exponential backoff + full jitter
+- [x] Concurrency limiting — per-slot in-flight caps (25 chat / 8 subagent)
+- [x] Prompt router — tier classification + `max_tokens` cost caps
+- [x] Transport-error classification — DNS/TLS/timeout labels in logs
 - [x] Wire-format translation — OpenAI (request + streaming/non-streaming + thinking injection)
 - [x] Field stripping — metadata/billing-header/cache_control/dedup for upstream cache stability
 - [x] Key encryption — AES-256-GCM (`$aes256gcm:`, scrypt KDF, `--encrypt-key`)
@@ -30,8 +33,19 @@ Near parity with the TypeScript proxy:
 - [x] Spend tracking + request logging — per-provider token counts + USD cost
 - [x] CLI — `--version`, `--lint-config`, `--dry-run`, `--doctor`, `--encrypt-key`, `launch`
 - [x] Launcher — spawns Claude Code against the in-process proxy
-- [ ] Gemini wire format (1 dead-end provider: `noAutoFallback`, no configs)
-- [ ] Thinking/reasoning caches, dashboard, notifications
+- [x] Compaction window — sets `CLAUDE_CODE_AUTO_COMPACT_WINDOW` to preserve DeepSeek's disk cache
+
+## Not ported (deliberate)
+
+- **Gemini wire format** — the `gm` provider is a dead end (`noAutoFallback`, no configs).
+- **Thinking / reasoning / response caches** — marginal for a single-user proxy; DeepSeek's free disk cache already covers the main cost.
+- **Server-side tools (web_search/web_fetch) + SSRF** — Claude Code performs web search/fetch client-side already; the TS version is a fragile multi-engine scraper (DDG bot evasion, SearXNG instance rot).
+- **Rate limiting** — the proxy binds to loopback only (single tenant), so per-IP limits are moot.
+- **Header sanitizer / hot-swap headers** — the proxy builds fresh upstream requests and never forwards client headers (beta headers are already stripped), and there is no restart-forward lifecycle.
+- **Truncate / pre-exec-validate / model-trust / skill-filter** — tied to body logging or the server-tools path above.
+- **Dashboard / notifications** — `/health` + `/metrics` cover observability.
+- **Prompt-router route tables** — tier classification + `max_tokens` caps are ported; per-tier provider `routes` config is not.
+- **`--status` / `--logs` / `--persist`** — needs a persistent proxy + log file; the proxy runs in-process with `launch`.
 
 ## Build
 
