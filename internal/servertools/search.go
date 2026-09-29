@@ -35,25 +35,32 @@ func Search(query string) (string, error) {
 }
 
 func searchSearXNG(query string) []SearchResult {
-	var bases []string
-	if b := strings.TrimRight(os.Getenv("DEFIANT_CLAUDE_SEARXNG_URL"), "/"); b != "" {
-		bases = append(bases, b)
+	var prefixes []string
+	if p := strings.TrimSpace(os.Getenv("DEFIANT_CLAUDE_SEARXNG_URL")); p != "" {
+		prefixes = append(prefixes, p)
 	}
-	bases = append(bases,
-		"https://etsi.me",
-		"https://search.sapti.me",
-		"https://searx.tiekoetter.com",
+	prefixes = append(prefixes,
+		"https://etsi.me/search?format=json&q=",
+		"https://search.sapti.me/search?format=json&q=",
+		"https://searx.tiekoetter.com/search?format=json&q=",
 	)
-	for _, base := range bases {
-		if res := searxngOne(base, query); len(res) > 0 {
+	for _, p := range prefixes {
+		if res := searxngOne(p, query); len(res) > 0 {
 			return res
 		}
 	}
 	return nil
 }
 
-func searxngOne(base, query string) []SearchResult {
-	u := base + "/search?format=json&q=" + url.QueryEscape(query)
+// searxngOne queries one SearXNG instance. The prefix may be either a full
+// ".../search?format=json&q=" URL (the documented convention) or a bare base
+// URL, in which case the query path is appended.
+func searxngOne(prefix, query string) []SearchResult {
+	u := prefix
+	if !strings.Contains(prefix, "q=") {
+		u = strings.TrimRight(prefix, "/") + "/search?format=json&q="
+	}
+	u += url.QueryEscape(query)
 	resp, err := searchClient.Get(u)
 	if err != nil {
 		return nil
