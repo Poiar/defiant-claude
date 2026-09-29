@@ -16,6 +16,7 @@ import (
 
 	"github.com/Poiar/defiant-claude/internal/config"
 	"github.com/Poiar/defiant-claude/internal/crypto"
+	"github.com/Poiar/defiant-claude/internal/envutil"
 	"github.com/Poiar/defiant-claude/internal/proxy"
 	"github.com/Poiar/defiant-claude/internal/routing"
 )
@@ -69,6 +70,19 @@ func loadConfig() (*config.Config, error) {
 		return nil, err
 	}
 	return config.LoadUser(dir)
+}
+
+// hydrateEnvFromRegistry copies provider API keys (and the encryption key)
+// that live in the Windows User environment (HKCU\Environment) into the
+// process env, so routing's os.Getenv key lookup works from stale shells.
+func hydrateEnvFromRegistry(cfg *config.Config) {
+	names := []string{"DEFIANT_CLAUDE_ENCRYPTION_KEY"}
+	for _, p := range cfg.Providers {
+		if p.KeyEnv != "" && !p.NoAuth {
+			names = append(names, p.KeyEnv)
+		}
+	}
+	envutil.Hydrate(names)
 }
 
 // slotOverrides loads ~/.defiant-claude/slot-overrides.json (non-fatal).
@@ -189,6 +203,8 @@ func runLaunch(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
+
+	hydrateEnvFromRegistry(cfg)
 
 	srv := proxy.New(cfg, *backend)
 	srv.SetSlotOverrides(slotOverrides())

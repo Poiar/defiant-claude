@@ -27,6 +27,8 @@ func runDoctor(args []string) int {
 		return 1
 	}
 
+	hydrateEnvFromRegistry(cfg)
+
 	fmt.Printf("config: %d providers, %d named configs, %d aliases\n",
 		len(cfg.Providers), len(cfg.Configs), len(cfg.Aliases))
 	probs := cfg.Lint()

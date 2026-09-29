@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/Poiar/defiant-claude/internal/envutil"
 )
 
 // SearchResult is one web search hit.
@@ -50,7 +52,7 @@ func Search(query string) (string, error) {
 
 func searchSearXNG(query string) []SearchResult {
 	var prefixes []string
-	if p := strings.TrimSpace(envWithRegistry("DEFIANT_CLAUDE_SEARXNG_URL")); p != "" {
+	if p := strings.TrimSpace(envutil.Get("DEFIANT_CLAUDE_SEARXNG_URL")); p != "" {
 		prefixes = append(prefixes, p)
 	}
 	prefixes = append(prefixes,
@@ -160,7 +162,7 @@ func searchDDGInstant(query string) string {
 // searchBrave queries the Brave Search API (requires DEFIANT_CLAUDE_BRAVE_API_KEY,
 // 2000 free calls/month). Returns nil when no key is set or the request fails.
 func searchBrave(query string) []SearchResult {
-	apiKey := strings.TrimSpace(envWithRegistry("DEFIANT_CLAUDE_BRAVE_API_KEY"))
+	apiKey := strings.TrimSpace(envutil.Get("DEFIANT_CLAUDE_BRAVE_API_KEY"))
 	if apiKey == "" {
 		return nil
 	}

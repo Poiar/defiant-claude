@@ -97,14 +97,3 @@ func TestSearchBraveNoKey(t *testing.T) {
 		t.Fatalf("expected nil without key, got %+v", res)
 	}
 }
-
-func TestParseRegValue(t *testing.T) {
-	out := "\nHKEY_CURRENT_USER\\Environment\n    DEFIANT_CLAUDE_SEARXNG_URL    REG_SZ    http://localhost:8888/search?format=json&q=\n"
-	if got := parseRegValue(out); got != "http://localhost:8888/search?format=json&q=" {
-		t.Fatalf("got %q", got)
-	}
-	out2 := "\n    SOME_KEY    REG_EXPAND_SZ    C:\\some\\path\n"
-	if got := parseRegValue(out2); got != `C:\some\path` {
-		t.Fatalf("REG_EXPAND_SZ got %q", got)
-	}
-}

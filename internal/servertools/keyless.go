@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Poiar/defiant-claude/internal/envutil"
 )
 
 // Keyless search backends — public, anonymous free tiers (no API key), the
@@ -47,7 +49,7 @@ var ringCursor int // round-robins across the ring per request
 // keylessEnabled reports whether the keyless ring is active. Default on; set
 // DEFIANT_CLAUDE_KEYLESS_SEARCH=0/off/false to disable.
 func keylessEnabled() bool {
-	v := strings.ToLower(strings.TrimSpace(envWithRegistry("DEFIANT_CLAUDE_KEYLESS_SEARCH")))
+	v := strings.ToLower(strings.TrimSpace(envutil.Get("DEFIANT_CLAUDE_KEYLESS_SEARCH")))
 	return v != "0" && v != "false" && v != "off"
 }
 
