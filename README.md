@@ -22,7 +22,7 @@ Near parity with the TypeScript proxy:
 - [x] Concurrency limiting — per-slot in-flight caps (25 chat / 8 subagent)
 - [x] Prompt router — tier classification, `max_tokens` caps, cheap-model routing (CODE stays on primary)
 - [x] Transport-error classification — DNS/TLS/timeout labels in logs
-- [x] Server-side tools — web_search/web_fetch (SearXNG + DDG) + SSRF-safe web fetch
+- [x] Server-side tools — web_search/web_fetch + SSRF-safe fetch; search = SearXNG → keyless ring (Exa/Parallel/Firecrawl/Keenable) → Brave → DDG
 - [x] Wire-format translation — OpenAI (request + streaming/non-streaming + thinking injection)
 - [x] Field stripping — metadata/billing-header/cache_control/dedup for upstream cache stability
 - [x] Key encryption — AES-256-GCM (`$aes256gcm:`, scrypt KDF, `--encrypt-key`)

@@ -30,8 +30,15 @@ func Search(query string) (string, error) {
 	if results := searchSearXNG(query); len(results) > 0 {
 		return formatResults(results), nil
 	}
+	// Keyless ring (Exa/Parallel/Firecrawl/Keenable public free tiers) is the
+	// default no-key search, mirroring Hermes.
+	if keylessEnabled() {
+		if results := keylessRingSearch(query, 5); len(results) > 0 {
+			return formatResults(results), nil
+		}
+	}
 	// Brave is a paid-key fallback (2000 free calls/mo) — only used when the
-	// free SearXNG path returns nothing, to preserve the quota.
+	// free paths return nothing, to preserve the quota.
 	if results := searchBrave(query); len(results) > 0 {
 		return formatResults(results), nil
 	}
