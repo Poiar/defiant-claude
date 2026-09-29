@@ -61,3 +61,39 @@ func TestFormatResults(t *testing.T) {
 		t.Fatalf("format = %q", out)
 	}
 }
+
+func TestSearchBrave(t *testing.T) {
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Subscription-Token") != "testkey" {
+			t.Errorf("token = %q", r.Header.Get("X-Subscription-Token"))
+		}
+		if r.URL.Query().Get("q") != "brave query" {
+			t.Errorf("q = %q", r.URL.Query().Get("q"))
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"web": map[string]any{
+				"results": []map[string]any{
+					{"title": "Brave Result", "url": "https://brave.example", "description": "brave snippet"},
+				},
+			},
+		})
+	}))
+	defer mock.Close()
+
+	orig := braveSearchURL
+	braveSearchURL = mock.URL
+	defer func() { braveSearchURL = orig }()
+
+	t.Setenv("DEFIANT_CLAUDE_BRAVE_API_KEY", "testkey")
+	res := searchBrave("brave query")
+	if len(res) != 1 || res[0].Title != "Brave Result" || res[0].URL != "https://brave.example" {
+		t.Fatalf("results = %+v", res)
+	}
+}
+
+func TestSearchBraveNoKey(t *testing.T) {
+	t.Setenv("DEFIANT_CLAUDE_BRAVE_API_KEY", "")
+	if res := searchBrave("x"); res != nil {
+		t.Fatalf("expected nil without key, got %+v", res)
+	}
+}

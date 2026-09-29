@@ -21,11 +21,19 @@ type SearchResult struct {
 // searchClient talks to search backends (trusted endpoints, not SSRF-gated).
 var searchClient = &http.Client{Timeout: 8 * time.Second}
 
-// Search runs a web search and returns a formatted text summary. It tries
-// SearXNG (self-hosted DEFIANT_CLAUDE_SEARXNG_URL first, then public
-// instances), then falls back to DuckDuckGo's instant-answer API.
+// braveSearchURL is the Brave Search API endpoint (var so tests can override).
+var braveSearchURL = "https://api.search.brave.com/res/v1/web/search"
+
+// Search runs a web search and returns a formatted text summary. It tries the
+// free SearXNG path first, then Brave (if a key is set), then DuckDuckGo's
+// instant-answer API.
 func Search(query string) (string, error) {
 	if results := searchSearXNG(query); len(results) > 0 {
+		return formatResults(results), nil
+	}
+	// Brave is a paid-key fallback (2000 free calls/mo) — only used when the
+	// free SearXNG path returns nothing, to preserve the quota.
+	if results := searchBrave(query); len(results) > 0 {
 		return formatResults(results), nil
 	}
 	if text := searchDDGInstant(query); text != "" {
@@ -141,6 +149,59 @@ func searchDDGInstant(query string) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// searchBrave queries the Brave Search API (requires DEFIANT_CLAUDE_BRAVE_API_KEY,
+// 2000 free calls/month). Returns nil when no key is set or the request fails.
+func searchBrave(query string) []SearchResult {
+	apiKey := strings.TrimSpace(os.Getenv("DEFIANT_CLAUDE_BRAVE_API_KEY"))
+	if apiKey == "" {
+		return nil
+	}
+	u := braveSearchURL + "?q=" + url.QueryEscape(query)
+	req, err := http.NewRequest(http.MethodGet, u, nil)
+	if err != nil {
+		return nil
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-Subscription-Token", apiKey)
+	req.Header.Set("User-Agent", "defiant-claude-proxy/1.0")
+
+	resp, err := searchClient.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 500_000))
+	if err != nil {
+		return nil
+	}
+	var parsed struct {
+		Web struct {
+			Results []struct {
+				Title       string `json:"title"`
+				URL         string `json:"url"`
+				Description string `json:"description"`
+			} `json:"results"`
+		} `json:"web"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return nil
+	}
+	var out []SearchResult
+	for _, r := range parsed.Web.Results {
+		if r.URL == "" || r.Title == "" {
+			continue
+		}
+		out = append(out, SearchResult{Title: truncate(r.Title, 200), URL: r.URL, Snippet: truncate(r.Description, 500)})
+		if len(out) >= 20 {
+			break
+		}
+	}
+	return out
 }
 
 func formatResults(results []SearchResult) string {
