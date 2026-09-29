@@ -243,6 +243,14 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	defer release()
 
+	// Server-side tools: convert web tools for non-native providers and fill
+	// empty web_search/web_fetch tool_results with real output.
+	if processed, err := preprocessServerTools(body, target.WireFormat != "anthropic"); err == nil {
+		body = processed
+	} else {
+		s.logger.Printf("server tools: %v", err)
+	}
+
 	body, err = rewriteModel(body, target.Model)
 	if err != nil {
 		http.Error(w, "rewrite model: "+err.Error(), http.StatusInternalServerError)

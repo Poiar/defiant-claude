@@ -22,6 +22,7 @@ Near parity with the TypeScript proxy:
 - [x] Concurrency limiting — per-slot in-flight caps (25 chat / 8 subagent)
 - [x] Prompt router — tier classification, `max_tokens` caps, cheap-model routing (CODE stays on primary)
 - [x] Transport-error classification — DNS/TLS/timeout labels in logs
+- [x] Server-side tools — web_search/web_fetch (SearXNG + DDG) + SSRF-safe web fetch
 - [x] Wire-format translation — OpenAI (request + streaming/non-streaming + thinking injection)
 - [x] Field stripping — metadata/billing-header/cache_control/dedup for upstream cache stability
 - [x] Key encryption — AES-256-GCM (`$aes256gcm:`, scrypt KDF, `--encrypt-key`)
@@ -39,10 +40,9 @@ Near parity with the TypeScript proxy:
 
 - **Gemini wire format** — the `gm` provider is a dead end (`noAutoFallback`, no configs).
 - **Thinking / reasoning / response caches** — marginal for a single-user proxy; DeepSeek's free disk cache already covers the main cost.
-- **Server-side tools (web_search/web_fetch) + SSRF** — Claude Code performs web search/fetch client-side already; the TS version is a fragile multi-engine scraper (DDG bot evasion, SearXNG instance rot).
 - **Rate limiting** — the proxy binds to loopback only (single tenant), so per-IP limits are moot.
 - **Header sanitizer / hot-swap headers** — the proxy builds fresh upstream requests and never forwards client headers (beta headers are already stripped), and there is no restart-forward lifecycle.
-- **Truncate / pre-exec-validate / model-trust / skill-filter** — tied to body logging or the server-tools path above.
+- **Pre-exec-validate / model-trust / skill-filter / truncate** — deeper Claude Code-specific behaviors (native web_search result-format validation, tool-use trust gating, skill filtering, body-log truncation).
 - **Dashboard / notifications** — `/health` + `/metrics` cover observability.
 - **User-editable `routes.json`** — the TS used a separate `routes.json` for model→provider mapping; the Go rewrite consolidates that into `providers.json` (configs/aliases/slots). Tier-routing defaults are hardcoded (disable via `DEFIANT_CLAUDE_PROMPT_ROUTER=0`).
 - **`--status` / `--logs` / `--persist`** — needs a persistent proxy + log file; the proxy runs in-process with `launch`.
