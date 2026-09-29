@@ -223,9 +223,16 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Bound output cost: cap max_tokens by prompt tier (CHAT/TRIVIAL/TOOL).
-	if capped, err := capMaxTokensInBody(body, classifyTier(body)); err == nil {
+	// Prompt tier: cap max_tokens and route simple/mechanical tiers to
+	// cheaper providers (CODE stays on the primary for quality).
+	tier := classifyTier(body)
+	if capped, err := capMaxTokensInBody(body, tier); err == nil {
 		body = capped
+	}
+	if promptRouterEnabled() {
+		if routed, ok := resolvePromptRoute(snap.resolver, target, tier); ok {
+			target = routed
+		}
 	}
 
 	// Concurrency guard: cap simultaneous in-flight upstream requests.

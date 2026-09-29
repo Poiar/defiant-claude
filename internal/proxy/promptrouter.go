@@ -2,7 +2,10 @@ package proxy
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
+
+	"github.com/Poiar/defiant-claude/internal/routing"
 )
 
 // Prompt tiers, matching the TS prompt-router classification.
@@ -124,4 +127,59 @@ func capMaxTokensInBody(body []byte, tier string) ([]byte, error) {
 	}
 	m["max_tokens"] = quoted
 	return json.Marshal(m)
+}
+
+// promptRoute is a tier → provider/model routing entry.
+type promptRoute struct {
+	tier     string
+	provider string
+	model    string
+}
+
+// defaultTierRoutes mirrors the TS default prompt-router: simple/mechanical
+// requests go to cheap/free models (~3× cheaper on cache-miss); CODE stays on
+// the primary provider for reasoning quality.
+var defaultTierRoutes = []promptRoute{
+	{tierTrivial, "oc", "big-pickle"},
+	{tierTool, "ds", "deepseek-v4-flash"},
+	{tierChat, "ds", "deepseek-v4-flash"},
+	{tierHeavy, "ds", "deepseek-v4-flash"},
+}
+
+// defaultPromptRoutes maps each capability slot to the default tier routes.
+var defaultPromptRoutes = map[string][]promptRoute{
+	"opus":     defaultTierRoutes,
+	"sonnet":   defaultTierRoutes,
+	"haiku":    defaultTierRoutes,
+	"subagent": defaultTierRoutes,
+	"fable":    defaultTierRoutes,
+}
+
+// promptRouterEnabled reports whether tier-based routing is active. Defaults
+// on (matching the TS); set DEFIANT_CLAUDE_PROMPT_ROUTER=0/off/false to disable.
+func promptRouterEnabled() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("DEFIANT_CLAUDE_PROMPT_ROUTER")))
+	return v != "0" && v != "false" && v != "off"
+}
+
+// resolvePromptRoute returns a cheaper target for the request's tier + slot,
+// or (target, false) when no route applies (CODE tier, unknown slot, or the
+// route's provider/model fails to resolve).
+func resolvePromptRoute(resolver *routing.Resolver, target routing.Target, tier string) (routing.Target, bool) {
+	routes, ok := defaultPromptRoutes[target.Slot]
+	if !ok {
+		return target, false
+	}
+	for _, r := range routes {
+		if r.tier != tier {
+			continue
+		}
+		t, err := resolver.Resolve(r.provider + ":" + r.model)
+		if err != nil {
+			return target, false
+		}
+		t.Slot = target.Slot // preserve slot so fallbacks still tier-match
+		return t, true
+	}
+	return target, false
 }
