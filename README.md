@@ -28,7 +28,7 @@ Near parity with the TypeScript proxy:
 - [x] Health + Prometheus metrics — `/health`, `/metrics`
 - [x] Friendly errors — E012 fallback-exhausted responses
 - [x] Spend tracking + request logging — per-provider token counts + USD cost
-- [x] CLI — `--version`, `--lint-config`, `--dry-run`, `--encrypt-key`, `launch`
+- [x] CLI — `--version`, `--lint-config`, `--dry-run`, `--doctor`, `--encrypt-key`, `launch`
 - [x] Launcher — spawns Claude Code against the in-process proxy
 - [ ] Gemini wire format (1 dead-end provider: `noAutoFallback`, no configs)
 - [ ] Thinking/reasoning caches, dashboard, notifications

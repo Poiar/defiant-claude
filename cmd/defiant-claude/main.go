@@ -35,6 +35,8 @@ func main() {
 		printUsage(os.Stdout)
 	case "--lint-config", "lint-config":
 		os.Exit(runLint())
+	case "--doctor", "doctor":
+		os.Exit(runDoctor(args[1:]))
 	case "--encrypt-key", "encrypt-key":
 		os.Exit(runEncryptKey())
 	case "--dry-run", "dry-run":
@@ -54,6 +56,7 @@ Usage:
   defiant-claude -b <backend> ...   use a named config
   defiant-claude --dry-run          show the full routing table
   defiant-claude --lint-config      validate providers.json
+  defiant-claude --doctor           pre-flight check: config, keys, reachability
   defiant-claude launch             start the proxy (prints PORT:<n>)
   defiant-claude --version          print version
   defiant-claude --help             show this help
