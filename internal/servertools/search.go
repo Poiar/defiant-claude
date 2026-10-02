@@ -53,6 +53,9 @@ func Search(query string) (string, error) {
 // searchSearXNG queries the user's self-hosted SearXNG instance, and only when
 // DEFIANT_CLAUDE_SEARXNG_URL is set — public instances are flaky and add
 // latency, so SearXNG is opt-in rather than a default first stage.
+// NOTE: opting in requires the SearXNG Docker container to be running — the
+// URL alone does nothing if the instance is down (returns nil and falls
+// through to the keyless ring).
 func searchSearXNG(query string) []SearchResult {
 	p := strings.TrimSpace(envutil.Get("DEFIANT_CLAUDE_SEARXNG_URL"))
 	if p == "" {
