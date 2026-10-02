@@ -25,17 +25,17 @@ var searchClient = &http.Client{Timeout: 8 * time.Second}
 // braveSearchURL is the Brave Search API endpoint (var so tests can override).
 var braveSearchURL = "https://api.search.brave.com/res/v1/web/search"
 
-// Search runs a web search and returns a formatted text summary. It tries the
-// free SearXNG path first, then Brave (if a key is set), then DuckDuckGo's
-// instant-answer API.
+// Search runs a web search and returns a formatted text summary. Order:
+// self-hosted SearXNG (opt-in) → keyless ring (parallel fan-out + merge) →
+// Brave (if a key is set) → DuckDuckGo instant-answer.
 func Search(query string) (string, error) {
 	if results := searchSearXNG(query); len(results) > 0 {
 		return formatResults(results), nil
 	}
-	// Keyless ring (Exa/Parallel/Firecrawl/Keenable public free tiers) is the
-	// default no-key search, mirroring Hermes.
+	// Keyless ring (Exa/Parallel/Keenable/Wikipedia public free tiers) is the
+	// default no-key search — parallel fan-out, merged + consensus-ranked.
 	if keylessEnabled() {
-		if results := keylessRingSearch(query, 5); len(results) > 0 {
+		if results := keylessFanout(query, 5); len(results) > 0 {
 			return formatResults(results), nil
 		}
 	}
@@ -50,22 +50,15 @@ func Search(query string) (string, error) {
 	return fmt.Sprintf("No results found for query: %q", query), nil
 }
 
+// searchSearXNG queries the user's self-hosted SearXNG instance, and only when
+// DEFIANT_CLAUDE_SEARXNG_URL is set — public instances are flaky and add
+// latency, so SearXNG is opt-in rather than a default first stage.
 func searchSearXNG(query string) []SearchResult {
-	var prefixes []string
-	if p := strings.TrimSpace(envutil.Get("DEFIANT_CLAUDE_SEARXNG_URL")); p != "" {
-		prefixes = append(prefixes, p)
+	p := strings.TrimSpace(envutil.Get("DEFIANT_CLAUDE_SEARXNG_URL"))
+	if p == "" {
+		return nil
 	}
-	prefixes = append(prefixes,
-		"https://etsi.me/search?format=json&q=",
-		"https://search.sapti.me/search?format=json&q=",
-		"https://searx.tiekoetter.com/search?format=json&q=",
-	)
-	for _, p := range prefixes {
-		if res := searxngOne(p, query); len(res) > 0 {
-			return res
-		}
-	}
-	return nil
+	return searxngOne(p, query)
 }
 
 // searxngOne queries one SearXNG instance. The prefix may be either a full

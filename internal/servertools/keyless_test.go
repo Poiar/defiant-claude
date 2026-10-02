@@ -157,16 +157,92 @@ func TestKeenableSearchKeyless(t *testing.T) {
 	}
 }
 
-func TestKeylessRingSearchFailover(t *testing.T) {
+func TestKeylessFanoutMerge(t *testing.T) {
 	origRing := keylessRing
 	keylessRing = []keylessVendor{
-		{"empty", func(string, int) []SearchResult { return nil }},
-		{"hit", func(string, int) []SearchResult { return []SearchResult{{Title: "hit"}} }},
+		{"a", func(string, int) []SearchResult {
+			return []SearchResult{
+				{Title: "Shared", URL: "https://example.com/shared", Snippet: "short"},
+				{Title: "OnlyA", URL: "https://a.example/", Snippet: "a"},
+			}
+		}},
+		{"b", func(string, int) []SearchResult {
+			return []SearchResult{
+				{Title: "Shared", URL: "https://www.example.com/shared?utm_source=x", Snippet: "much longer snippet from b"},
+			}
+		}},
+		{"c", func(string, int) []SearchResult { return nil }},
 	}
 	defer func() { keylessRing = origRing }()
 
-	if res := keylessRingSearch("q", 5); len(res) != 1 || res[0].Title != "hit" {
-		t.Fatalf("res = %+v, want failover to 'hit'", res)
+	res := keylessFanout("q", 5)
+	if len(res) != 2 {
+		t.Fatalf("got %d results: %+v", len(res), res)
+	}
+	// Shared URL (seen by both a and b) dedupes and ranks first on consensus.
+	if res[0].URL != "https://example.com/shared" || res[0].Title != "Shared" {
+		t.Fatalf("res[0] = %+v, want deduped shared hit", res[0])
+	}
+	// The consensus hit keeps the longest snippet (from b).
+	if res[0].Snippet != "much longer snippet from b" {
+		t.Fatalf("res[0].Snippet = %q", res[0].Snippet)
+	}
+	// Single-source result ranks after the consensus hit.
+	if res[1].URL != "https://a.example/" || res[1].Title != "OnlyA" {
+		t.Fatalf("res[1] = %+v", res[1])
+	}
+}
+
+func TestFirecrawlLatent(t *testing.T) {
+	for _, v := range keylessRing {
+		if v.name == "firecrawl" {
+			t.Fatal("firecrawl should be latent (not in the active ring)")
+		}
+	}
+}
+
+func TestNormalizeURL(t *testing.T) {
+	cases := map[string]string{
+		"https://example.com":                    "https://example.com/",
+		"https://www.example.com/":               "https://example.com/",
+		"https://Example.COM/Path/":              "https://example.com/Path",
+		"https://example.com/p?utm_source=x&q=1": "https://example.com/p?q=1",
+		"https://example.com/p#fragment":         "https://example.com/p",
+	}
+	for in, want := range cases {
+		if got := normalizeURL(in); got != want {
+			t.Errorf("normalizeURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestWikipediaSearch(t *testing.T) {
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("srsearch") != "go lang" {
+			t.Errorf("srsearch = %q", r.URL.Query().Get("srsearch"))
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"query": map[string]any{
+				"search": []map[string]any{
+					{"title": "Go (programming language)", "snippet": "Go is a <span class=\"searchmatch\">programming</span> language"},
+				},
+			},
+		})
+	}))
+	defer mock.Close()
+	orig := wikipediaAPIURL
+	wikipediaAPIURL = mock.URL + "/w/api.php"
+	defer func() { wikipediaAPIURL = orig }()
+
+	res := wikipediaSearch("go lang", 5)
+	if len(res) != 1 || res[0].Title != "Go (programming language)" {
+		t.Fatalf("res = %+v", res)
+	}
+	if res[0].URL != "https://en.wikipedia.org/wiki/Go_(programming_language)" {
+		t.Fatalf("url = %q", res[0].URL)
+	}
+	if strings.Contains(res[0].Snippet, "searchmatch") || strings.Contains(res[0].Snippet, "<") {
+		t.Fatalf("snippet not stripped: %q", res[0].Snippet)
 	}
 }
 
